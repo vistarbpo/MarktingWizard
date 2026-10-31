@@ -5,11 +5,13 @@ Run:  uvicorn marketing_wizard.api:app --reload
 
 from __future__ import annotations
 
+import base64
+import secrets
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -33,12 +35,40 @@ class LaunchKitRequest(BaseModel):
     inputs: dict[str, dict[str, Any]] = {}
 
 
+def _authorized(request: Request, username: str, password: str) -> bool:
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("basic "):
+        return False
+    try:
+        user, _, pwd = base64.b64decode(header[6:]).decode().partition(":")
+    except ValueError:
+        return False
+    return secrets.compare_digest(user.encode(), username.encode()) & secrets.compare_digest(
+        pwd.encode(), password.encode()
+    )
+
+
 def create_app(store: Optional[Store] = None, engine: Optional[Engine] = None) -> FastAPI:
     settings = get_settings()
     store = store or Store(settings.db_path)
     engine = engine or Engine(store, get_provider(settings))
 
     app = FastAPI(title="Marketing Wizard", version="0.1.0")
+
+    if settings.password:
+        @app.middleware("http")
+        async def require_login(request: Request, call_next):
+            # /api/ping stays open so hosting platforms can run health checks.
+            if request.url.path == "/api/ping" or _authorized(request, settings.username, settings.password):
+                return await call_next(request)
+            return Response(
+                "Login required", status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Marketing Wizard"'},
+            )
+
+    @app.get("/api/ping")
+    def ping() -> dict:
+        return {"ok": True}
 
     def _ws(ws_id: int) -> Workspace:
         ws = store.get_workspace(ws_id)

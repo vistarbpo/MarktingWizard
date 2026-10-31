@@ -142,3 +142,13 @@ def test_data_api_and_gaps(engine):
 
     assert client.delete(f"{base}/notes/{note['id']}").status_code == 204
     assert client.get("/static/app.js").status_code == 200
+
+
+def test_password_protection(engine, monkeypatch):
+    monkeypatch.setenv("MWIZ_PASSWORD", "s3cret")
+    client = TestClient(create_app(engine.store, engine))
+    assert client.get("/api/workspaces").status_code == 401
+    assert client.get("/").status_code == 401
+    assert client.get("/api/ping").status_code == 200
+    assert client.get("/api/workspaces", auth=("admin", "wrong")).status_code == 401
+    assert client.get("/api/workspaces", auth=("admin", "s3cret")).status_code == 200

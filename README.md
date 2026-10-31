@@ -99,6 +99,8 @@ HTTP API (interactive docs at `/docs`):
 | `MWIZ_EFFORT` | `high` | `low` / `medium` / `high` / `xhigh` / `max`: depth vs. cost |
 | `MWIZ_MAX_TOKENS` | `32000` | per-generation output cap |
 | `MWIZ_DB` | `data/marketing_wizard.db` | SQLite path |
+| `MWIZ_PASSWORD` | | When set, the whole app asks for a login (always set this when deployed) |
+| `MWIZ_USERNAME` | `admin` | Login username |
 | `MWIZ_PROVIDER` | auto | `claude` or `offline` (placeholder output for demos and tests) |
 
 Claude requests use adaptive thinking, streaming and structured outputs. They also opt in to

@@ -17,6 +17,9 @@ class Settings:
     # "claude", "offline" (schema-valid placeholder output for demos/tests),
     # or "" to auto-detect: Claude when credentials exist, else offline.
     provider: str = ""
+    # When set, every page and API call requires HTTP Basic login.
+    username: str = "admin"
+    password: str = ""
 
 
 def get_settings() -> Settings:
@@ -26,4 +29,6 @@ def get_settings() -> Settings:
         max_tokens=int(os.getenv("MWIZ_MAX_TOKENS", Settings.max_tokens)),
         db_path=os.getenv("MWIZ_DB", Settings.db_path),
         provider=os.getenv("MWIZ_PROVIDER", Settings.provider),
+        username=os.getenv("MWIZ_USERNAME", Settings.username),
+        password=os.getenv("MWIZ_PASSWORD", Settings.password),
     )
