@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
 import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
 import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
 import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, SAMPLE_TEAM, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
@@ -475,6 +476,173 @@ export function createApp({ store, provider, password }) {
     if (!Object.hasOwn(FIN_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
     await streamDraft(req, res, { prompt: financePrompt(w, finSnap(w), store.listExpenses(w.id), req.params.task),
       onDone: (text) => store.addFinanceReport(w.id, { task: req.params.task, title: FIN_TASKS[req.params.task].title, text }).id });
+  });
+
+  // ---- operations
+  const opsData = (wsId) => ({ tasks: store.listOps("ops_tasks", wsId), deadlines: store.listOps("ops_deadlines", wsId), vendors: store.listOps("ops_vendors", wsId), incidents: store.listOps("ops_incidents", wsId) });
+  const isoDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ""));
+  const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
+  const cleanTask = (b, partial) => {
+    const o = {};
+    if (b.title !== undefined) o.title = str(b.title);
+    if (b.owner_kind !== undefined) o.owner_kind = b.owner_kind === "human" ? "human" : "ai";
+    if (b.owner !== undefined) o.owner = str(b.owner, 120);
+    if (b.area !== undefined) o.area = AREAS.includes(b.area) ? b.area : "Operations";
+    if (b.priority !== undefined) o.priority = [1, 2, 3].includes(Number(b.priority)) ? Number(b.priority) : 2;
+    if (b.due !== undefined) o.due = isoDate(b.due) ? b.due : null;
+    if (b.notes !== undefined) o.notes = str(b.notes, 2000);
+    if (b.status !== undefined) { if (!TASK_STATUS_IDS.includes(b.status)) return { err: "unknown status" }; o.status = b.status; o.done_at = b.status === "done" ? new Date().toISOString() : null; }
+    if (!partial && !o.title) return { err: "title is required" };
+    if (partial && b.title !== undefined && !o.title) return { err: "title cannot be empty" };
+    return { o };
+  };
+  app.get("/api/ops/meta", (req, res) => res.json({ areas: AREAS, statuses: TASK_STATUS, repeats: REPEATS, severity: SEVERITY, incident_status: INCIDENT_STATUS, reports: Object.fromEntries(Object.entries(OPS_TASKS).map(([k, t]) => [k, t.title])) }));
+  app.get("/api/workspaces/:ws/ops", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const d = opsData(w.id);
+    res.json({ ...d, snapshot: opsSnapshot(d), reports: store.listOps("ops_reports", w.id).map(({ text, ...r }) => r).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      people: store.listHrRoles(w.id).map((r) => ({ kind: r.kind, name: r.kind === "ai" ? r.title : (r.holder ? `${r.title} – ${r.holder}` : r.title) })) });
+  });
+  // tasks
+  app.post("/api/workspaces/:ws/ops/tasks", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { o, err } = cleanTask({ owner_kind: "ai", area: "Operations", priority: 2, status: "todo", owner: "", notes: "", due: null, ...req.body }, false);
+    if (err) return res.status(422).json({ detail: err });
+    res.status(201).json(store.addOps("ops_tasks", w.id, { ...o, source: "manual" }));
+  });
+  app.post("/api/workspaces/:ws/ops/tasks/bulk", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 30) : [];
+    let n = 0;
+    for (const it of items) {
+      const due = it.due_in_days != null ? new Date(Date.now() + Number(it.due_in_days) * 864e5).toISOString().slice(0, 10) : it.due;
+      const { o, err } = cleanTask({ status: "todo", notes: it.why || "", ...it, due }, false);
+      if (!err) { store.addOps("ops_tasks", w.id, { ...o, goal: str(req.body?.goal, 300), source: "ai_plan" }, false); n++; }
+    }
+    store.save();
+    res.status(201).json({ saved: n });
+  });
+  app.put("/api/workspaces/:ws/ops/tasks/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { o, err } = cleanTask(req.body || {}, true);
+    if (err) return res.status(422).json({ detail: err });
+    const t = store.updateOps("ops_tasks", w.id, req.params.id, o);
+    t ? res.json(t) : res.status(404).json({ detail: "Task not found" });
+  });
+  app.delete("/api/workspaces/:ws/ops/tasks/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("ops_tasks", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Task not found" }); });
+  app.post("/api/workspaces/:ws/ops/plan", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const goal = str(req.body?.goal, 500);
+    if (!goal) return res.status(422).json({ detail: "Write the goal first" });
+    try {
+      const raw = await provider.generate({ system: "You plan work for an AI-first company and return only JSON.", prompt: planPrompt(w, goal, store.listHrRoles(w.id)), onText: () => {} });
+      const items = parsePlan(raw);
+      if (!items || !items.length) return res.status(422).json({ detail: "AI couldn't turn that into tasks. Try a more specific goal." });
+      res.json({ items });
+    } catch (e) { res.status(502).json({ detail: e instanceof LLMError ? e.message : "Something went wrong reaching Claude. Try again." }); }
+  });
+  // deadlines
+  app.post("/api/workspaces/:ws/ops/deadlines", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const b = req.body || {};
+    if (!str(b.title) || !isoDate(b.due)) return res.status(422).json({ detail: "title and due (YYYY-MM-DD) are required" });
+    res.status(201).json(store.addOps("ops_deadlines", w.id, { title: str(b.title), category: ["compliance", "tax", "renewal", "other"].includes(b.category) ? b.category : "other", due: b.due, repeats: REPEATS.includes(b.repeats) ? b.repeats : "none", owner: str(b.owner, 120), notes: str(b.notes, 1000), done_at: null }));
+  });
+  app.post("/api/workspaces/:ws/ops/deadlines/starter", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const have = new Set(store.listOps("ops_deadlines", w.id).map((d) => d.title));
+    const add = saudiStarter().filter((d) => !have.has(d.title));
+    add.forEach((d) => store.addOps("ops_deadlines", w.id, { ...d, done_at: null }, false));
+    store.save();
+    res.status(201).json({ added: add.length });
+  });
+  app.put("/api/workspaces/:ws/ops/deadlines/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const d = store.getOps("ops_deadlines", w.id, req.params.id);
+    if (!d) return res.status(404).json({ detail: "Deadline not found" });
+    const b = req.body || {}, o = {};
+    if (b.done) {
+      // A repeating deadline rolls forward to its next date; a one-off is closed.
+      const next = rollForward(d.due, d.repeats);
+      if (next) { o.due = next; o.last_done_at = new Date().toISOString(); } else o.done_at = new Date().toISOString();
+    }
+    if (b.title !== undefined && str(b.title)) o.title = str(b.title);
+    if (b.due !== undefined) { if (!isoDate(b.due)) return res.status(422).json({ detail: "due must be YYYY-MM-DD" }); o.due = b.due; o.starter = false; } // a person set the real date
+    if (b.repeats !== undefined) o.repeats = REPEATS.includes(b.repeats) ? b.repeats : "none";
+    if (b.owner !== undefined) o.owner = str(b.owner, 120);
+    if (b.notes !== undefined) o.notes = str(b.notes, 1000);
+    res.json(store.updateOps("ops_deadlines", w.id, d.id, o));
+  });
+  app.delete("/api/workspaces/:ws/ops/deadlines/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("ops_deadlines", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Deadline not found" }); });
+  // vendors (tool stack)
+  const cleanVendor = (b) => ({ name: str(b.name, 120), purpose: str(b.purpose), cost_sar: Math.max(0, Number(b.cost_sar) || 0), renewal_date: isoDate(b.renewal_date) ? b.renewal_date : null, owner: str(b.owner, 120), critical: !!b.critical, notes: str(b.notes, 1000) });
+  app.post("/api/workspaces/:ws/ops/vendors", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const v = cleanVendor(req.body || {});
+    if (!v.name) return res.status(422).json({ detail: "name is required" });
+    res.status(201).json(store.addOps("ops_vendors", w.id, v));
+  });
+  app.post("/api/workspaces/:ws/ops/vendors/from-finance", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const have = new Set(store.listOps("ops_vendors", w.id).map((v) => v.name.toLowerCase()));
+    let n = 0;
+    for (const e of store.listExpenses(w.id).filter((e) => e.recurring !== "one-off" && e.category !== "payroll")) {
+      if (have.has(e.vendor.toLowerCase())) continue;
+      have.add(e.vendor.toLowerCase());
+      store.addOps("ops_vendors", w.id, cleanVendor({ name: e.vendor, purpose: e.category, cost_sar: e.recurring === "yearly" ? Math.round(e.amount_sar / 12) : e.amount_sar }), false); n++;
+    }
+    store.save();
+    res.status(201).json({ added: n });
+  });
+  app.put("/api/workspaces/:ws/ops/vendors/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const cur = store.getOps("ops_vendors", w.id, req.params.id);
+    if (!cur) return res.status(404).json({ detail: "Vendor not found" });
+    const v = cleanVendor({ ...cur, ...req.body });
+    if (!v.name) return res.status(422).json({ detail: "name cannot be empty" });
+    res.json(store.updateOps("ops_vendors", w.id, cur.id, v));
+  });
+  app.delete("/api/workspaces/:ws/ops/vendors/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("ops_vendors", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Vendor not found" }); });
+  // incidents
+  app.post("/api/workspaces/:ws/ops/incidents", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const b = req.body || {};
+    if (!str(b.title)) return res.status(422).json({ detail: "title is required" });
+    res.status(201).json(store.addOps("ops_incidents", w.id, { title: str(b.title), severity: SEVERITY.includes(b.severity) ? b.severity : "SEV2", status: "open", started_at: new Date().toISOString(), resolved_at: null, impact: str(b.impact, 1000), notes: "", updates: [] }));
+  });
+  app.put("/api/workspaces/:ws/ops/incidents/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const inc = store.getOps("ops_incidents", w.id, req.params.id);
+    if (!inc) return res.status(404).json({ detail: "Incident not found" });
+    const b = req.body || {}, o = {};
+    if (b.status !== undefined) { if (!INCIDENT_STATUS.includes(b.status)) return res.status(422).json({ detail: "unknown status" }); o.status = b.status; o.resolved_at = b.status === "resolved" ? new Date().toISOString() : null; }
+    if (b.severity !== undefined && SEVERITY.includes(b.severity)) o.severity = b.severity;
+    if (b.impact !== undefined) o.impact = str(b.impact, 1000);
+    if (b.update) o.updates = [...(inc.updates || []), { at: new Date().toISOString(), text: str(b.update, 1000) }];
+    res.json(store.updateOps("ops_incidents", w.id, inc.id, o));
+  });
+  app.delete("/api/workspaces/:ws/ops/incidents/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("ops_incidents", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Incident not found" }); });
+  // AI reports
+  app.get("/api/workspaces/:ws/ops/reports/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const r = store.getOps("ops_reports", w.id, req.params.id);
+    r ? res.json(r) : res.status(404).json({ detail: "Report not found" });
+  });
+  app.post("/api/workspaces/:ws/ops/ai/:task", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const d = opsData(w.id);
+    if (req.params.task === "incident") {
+      const inc = d.incidents.find((i) => i.id === String(req.body?.incident_id || req.query.incident_id));
+      if (!inc) return res.status(404).json({ detail: "Incident not found" });
+      return streamDraft(req, res, { prompt: incidentPrompt(w, inc), onDone: (text) => store.addOps("ops_reports", w.id, { task: "incident", title: `Incident: ${inc.title}`, incident_id: inc.id, text }).id });
+    }
+    if (!Object.hasOwn(OPS_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
+    const snap = opsSnapshot(d);
+    const ctx = [`Open tasks:\n${d.tasks.filter((t) => t.status !== "done").map((t) => `- [${t.owner_kind === "ai" ? "AI" : "person"}: ${t.owner || "?"}] ${t.title} (${t.area}, due ${t.due || "-"}, ${t.status})`).join("\n") || "none"}`,
+      `Deadlines:\n${snap.deadlines.slice(0, 20).map((x) => `- ${x.due} ${x.title} (${x.repeats}, owner ${x.owner || "-"})`).join("\n") || "none"}`,
+      `Tool stack:\n${d.vendors.map((v) => `- ${v.name}: ${v.purpose}, SAR ${v.cost_sar}/mo${v.critical ? ", critical" : ""}`).join("\n") || "none"}`,
+      `Incidents (open): ${snap.incidents.open}`].join("\n\n");
+    await streamDraft(req, res, { prompt: opsReportPrompt(w, req.params.task, ctx), onDone: (text) => store.addOps("ops_reports", w.id, { task: req.params.task, title: OPS_TASKS[req.params.task].title, text }).id });
   });
 
   // ---- command center

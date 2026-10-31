@@ -19,8 +19,9 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 5 | Answer every open question on the Overview until data completeness is 100%. | Head of Growth | Overview |
 | 6 | Run the full launch kit (positioning → ICP → messaging → landing page → emails → social → ads → GTM plan). | Head of Growth | Playbooks |
 | 7 | Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat. | Founder | AI Support |
-| 8 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
-| 9 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
+| 8 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
+| 9 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
+| 10 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
 
 ## Weekly cycle
 
@@ -37,8 +38,9 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 6 | Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under "Needs you". | Founder | Sales pipeline |
 | 7 | Daily: clear AI Support's "Needs you" list; Friday: turn repeated questions into new help articles. | Customer Success | AI Support |
 | 8 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
-| 9 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
-| 10 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
+| 9 | Monday: run the AI weekly operations brief, plan the week's goals with the AI planner, and clear Operations "Needs you" (deadlines, incidents, tasks waiting on a person). | Founder | Operations |
+| 10 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
+| 11 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
 
 ## Monthly review
 

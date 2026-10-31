@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_cash: [], finance_reports: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_cash: [], finance_reports: [], ops_tasks: [], ops_deadlines: [], ops_vendors: [], ops_incidents: [], ops_reports: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -313,6 +313,24 @@ export class Store {
     this.save();
     return ws.finance;
   }
+  // ---- operations: generic per-workspace collections (tasks, deadlines, vendors, incidents, reports)
+  listOps(coll, wsId) { return this.db[coll].filter((x) => x.workspace_id === String(wsId)); }
+  getOps(coll, wsId, id) { return this.db[coll].find((x) => x.workspace_id === String(wsId) && x.id === String(id)) || null; }
+  addOps(coll, wsId, fields, persist = true) {
+    const x = { id: this.#id(), workspace_id: String(wsId), created_at: this.#now(), ...fields };
+    this.db[coll].push(x);
+    if (persist) this.save();
+    return x;
+  }
+  updateOps(coll, wsId, id, fields) {
+    const x = this.getOps(coll, wsId, id);
+    if (!x) return null;
+    Object.assign(x, fields, { updated_at: this.#now() });
+    this.save();
+    return x;
+  }
+  deleteOps(coll, wsId, id) { return this.#removeWs(coll, wsId, id); }
+
   #removeWs(coll, wsId, id) {
     const before = this.db[coll].length;
     this.db[coll] = this.db[coll].filter((x) => !(x.workspace_id === String(wsId) && x.id === String(id)));
@@ -358,7 +376,7 @@ export class Store {
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
     const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
     this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets", "finance_expenses", "finance_cash", "finance_reports"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets", "finance_expenses", "finance_cash", "finance_reports", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "ops_reports"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }

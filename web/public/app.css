@@ -462,7 +462,7 @@ td.right, th.right { text-align: right; }
 .cc-mod { width: 4px; align-self: stretch; border-radius: 2px; flex: none; min-height: 18px; }
 .cc-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cc-clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.cc-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-4); }
+.cc-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s-4); }
 .cc-tile { text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .cc-tile .subtle { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cc-bars { display: flex; flex-direction: column; gap: 10px; margin: var(--s-4) 0 var(--s-3); }
@@ -525,3 +525,20 @@ td.right, th.right { text-align: right; }
 .f-vat { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: baseline; }
 .f-vat b { font-size: var(--fs-lg); }
 @media (max-width: 640px) { .f-cat { grid-template-columns: 100px minmax(0, 1fr); } .f-cat > .num { grid-column: 2; } .f-unit { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------- Operations module */
+.o-areas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--s-4); }
+.o-area { font-size: var(--fs-xs); color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+.o-area b { color: var(--text); font-weight: 600; }
+.o-board { grid-auto-columns: minmax(250px, 1fr); }
+@media (min-width: 1300px) { .o-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
+.o-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.o-date { font: inherit; color: inherit; background: var(--surface); cursor: pointer; width: 52px; flex: none; text-align: center; border: 1px solid var(--border); border-radius: var(--r-md); padding: 4px 0; display: flex; flex-direction: column; line-height: 1.2; }
+.o-date b { font-size: var(--fs-lg); }
+.o-date span { font-size: 11px; color: var(--text-3); }
+.o-date.soon { border-color: var(--warn); }
+.o-date.late { border-color: var(--bad); background: var(--bad-soft); }
+.o-late { color: var(--bad); font-weight: 600; }
+@media (max-width: 1400px) { .cc-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .o-board { grid-auto-columns: 82%; } }
+.o-dateform { flex-basis: 100%; justify-content: flex-end; }

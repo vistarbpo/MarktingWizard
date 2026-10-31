@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -343,7 +343,7 @@ test("command center: one snapshot across modules", async () => {
   assert.ok(d.goal.next_milestone > d.goal.arr);
   assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Hiring"]);
   assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
-  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance"].includes(n.module)));
+  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations"].includes(n.module)));
   assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
   assert.equal(d.sop.length, 4);
   assert.ok(d.feed.length > 0 && d.feed.length <= 14);
@@ -396,4 +396,63 @@ test("finance: burn, runway, budgets, forecast, VAT and AI import", async () => 
   const cc = await json(`/api/workspaces/${ws.id}/command`);
   assert.equal(cc.finance.cash_sar, 200000);
   assert.ok(cc.needs.some((n) => n.module === "Finance"));
+});
+
+test("operations: tasks, AI plan parsing, deadlines roll forward, stack and incidents", async () => {
+  const [ws] = await json("/api/workspaces");
+  const ob = `/api/workspaces/${ws.id}/ops`;
+  assert.equal((await post(`${ob}/tasks`, { title: "" })).status, 422);
+  const t = await (await post(`${ob}/tasks`, { title: "Sign the Salla partner agreement", owner_kind: "human", owner: "Founder & CEO", area: "Sales", due: "2020-01-01" })).json();
+  await post(`${ob}/tasks`, { title: "Draft the Salla app listing copy", owner_kind: "ai", owner: "AI Marketer", area: "Marketing" });
+  let o = await json(ob);
+  assert.equal(o.snapshot.tasks.open, 2);
+  assert.equal(o.snapshot.tasks.ai_owned_pct, 50);
+  assert.ok(o.snapshot.needs.some((n) => /Overdue task: Sign the Salla/.test(n.text)));
+  await call(`${ob}/tasks/${t.id}`, { method: "PUT", body: JSON.stringify({ status: "done" }) });
+  o = await json(ob);
+  assert.equal(o.snapshot.tasks.done_week, 1);
+
+  // AI planner: demo output isn't JSON, so nothing is proposed.
+  assert.equal((await post(`${ob}/plan`, { goal: "Launch the Salla app" })).status, 422);
+  const { parsePlan, rollForward } = await import("../lib/ops.js");
+  const plan = parsePlan('[{"title":"Write app listing","owner_kind":"ai","owner":"AI Marketer","area":"Marketing","priority":1,"due_in_days":3,"why":"x"},{"title":"Sign agreement","owner_kind":"human","owner":"Founder & CEO","area":"Nope","priority":9}]');
+  assert.equal(plan[1].area, "Operations");
+  assert.equal(plan[1].priority, 2);
+  assert.equal((await (await post(`${ob}/tasks/bulk`, { items: plan, goal: "Launch" })).json()).saved, 2);
+
+  // Saudi starter calendar loads once; repeating deadlines roll forward when done.
+  assert.ok((await (await post(`${ob}/deadlines/starter`, {})).json()).added >= 6);
+  assert.equal((await (await post(`${ob}/deadlines/starter`, {})).json()).added, 0);
+  assert.equal(rollForward("2026-01-31", "quarterly"), "2026-05-01");
+  assert.equal(rollForward("2026-03-15", "monthly"), "2026-04-15");
+  assert.equal(rollForward("2026-03-15", "none"), null);
+  o = await json(ob);
+  const gosi = o.deadlines.find((d) => d.title.startsWith("GOSI"));
+  const rolled = await (await call(`${ob}/deadlines/${gosi.id}`, { method: "PUT", body: JSON.stringify({ done: true }) })).json();
+  assert.equal(rolled.due, rollForward(gosi.due, "monthly"));
+  assert.equal(rolled.done_at, null);
+  const fixed = await (await call(`${ob}/deadlines/${gosi.id}`, { method: "PUT", body: JSON.stringify({ due: "2027-01-15" }) })).json();
+  assert.equal(fixed.starter, false); // a person set the real date
+
+  // Tool stack: renewal shows as a deadline.
+  const soon = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+  await post(`${ob}/vendors`, { name: "Render", purpose: "Rendering servers", cost_sar: 900, renewal_date: soon, critical: true });
+  o = await json(ob);
+  assert.ok(o.snapshot.deadlines.some((d) => d.from_vendor && d.title === "Renew Render"));
+  assert.ok(o.snapshot.needs.some((n) => /Renew Render/.test(n.text)));
+  assert.ok(o.snapshot.stack.cost_sar >= 900);
+
+  // Incidents: open SEV1 needs a person; AI drafts notice + postmortem.
+  const inc = await (await post(`${ob}/incidents`, { title: "Video renders failing", severity: "SEV1", impact: "All Salla stores" })).json();
+  await call(`${ob}/incidents/${inc.id}`, { method: "PUT", body: JSON.stringify({ update: "Queue worker restarted" }) });
+  o = await json(ob);
+  assert.ok(o.snapshot.needs.some((n) => /SEV1 open/.test(n.text)));
+  const draft = await (await post(`${ob}/ai/incident`, { incident_id: inc.id })).text();
+  assert.match(draft, /\[\[MWIZ_SAVED\]\]/);
+  assert.match(prompts.at(-1), /Queue worker restarted/);
+  await call(`${ob}/incidents/${inc.id}`, { method: "PUT", body: JSON.stringify({ status: "resolved" }) });
+  o = await json(ob);
+  assert.equal(o.snapshot.incidents.open, 0);
+  const cc = await json(`/api/workspaces/${ws.id}/command`);
+  assert.ok(cc.ops.open_tasks >= 3);
 });
