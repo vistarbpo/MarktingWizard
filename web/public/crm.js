@@ -227,7 +227,7 @@ function crmStepHtml(s, i) {
     ${s.channel === "whatsapp" ? `<input class="input input-sm" data-s="wa_template" placeholder="Approved template name" value="${esc(s.wa_template || "")}" style="width:200px" title="First WhatsApp to a store must be an approved template (Meta). The text below is used inside a 24h chat window.">` : ""}
     <button class="btn btn-sm btn-ghost" data-caction="del-step" data-i="${i}" style="margin-left:auto">Remove</button></div>
     ${s.channel === "email" ? `<input class="input" data-s="subject" placeholder="Subject" value="${esc(s.subject || "")}" dir="auto">` : ""}
-    <textarea class="input" data-s="body" rows="6" dir="auto" placeholder="Message. Placeholders: {{store_name}} {{owner_name}} {{category}} {{city}} {{products}} {{sender_name}}">${esc(s.body || "")}</textarea></div>`;
+    <textarea class="input" data-s="body" rows="6" dir="auto" placeholder="Message. Placeholders: {{store_name}} {{owner_name}} {{category_ar}} {{category}} {{city}} {{products}} {{sender_name}}">${esc(s.body || "")}</textarea></div>`;
 }
 function crmReadSteps() {
   return [...document.querySelectorAll("#ceSteps .c-step")].map((el) => {

@@ -41,6 +41,10 @@ export const INTENTS = ["interested", "question", "not_now", "not_interested", "
 export const SALLA_CATEGORIES = ["Fashion & abayas", "Perfumes & oud", "Beauty & cosmetics", "Electronics & accessories", "Home & furniture",
   "Food & sweets", "Coffee & dates", "Kids & toys", "Gifts & flowers", "Health & supplements", "Sports", "Jewelry & watches", "Books & stationery", "Other"];
 
+export const CATEGORY_AR = { "Fashion & abayas": "الأزياء والعبايات", "Perfumes & oud": "العطور والعود", "Beauty & cosmetics": "التجميل والعناية", "Electronics & accessories": "الإلكترونيات والإكسسوارات",
+  "Home & furniture": "المنزل والأثاث", "Food & sweets": "الأغذية والحلويات", "Coffee & dates": "القهوة والتمور", "Kids & toys": "الأطفال والألعاب", "Gifts & flowers": "الهدايا والورد",
+  "Health & supplements": "الصحة والمكملات", "Sports": "الرياضة", "Jewelry & watches": "المجوهرات والساعات", "Books & stationery": "الكتب والقرطاسية", Other: "التجارة الإلكترونية" };
+
 // ---- CSV import -------------------------------------------------------------------------
 export function splitCsv(text) {
   const src = String(text || "").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
@@ -196,7 +200,7 @@ export function matches(c, f, now = Date.now()) {
 // ---- templates -----------------------------------------------------------------------------
 // {{store_name}} {{owner_name}} {{category}} {{city}} {{products}} {{domain}} {{sender_name}} {{company}}
 export function renderTemplate(tpl, c, extra = {}) {
-  const vars = { store_name: c.store_name, owner_name: c.owner_name || (/[؀-ۿ]/.test(tpl) ? "" : "there"), category: c.category, city: c.city || "", products: c.products || "", domain: c.domain || "", ...extra };
+  const vars = { store_name: c.store_name, owner_name: c.owner_name || (/[؀-ۿ]/.test(tpl) ? "" : "there"), category: c.category, category_ar: CATEGORY_AR[c.category] || c.category, city: c.city || "", products: c.products || "", domain: c.domain || "", ...extra };
   return String(tpl || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (vars[k] ?? "")).replace(/ +([،,])/g, "$1").replace(/[ \t]+\n/g, "\n").replace(/  +/g, " ");
 }
 
@@ -208,7 +212,7 @@ export const STARTER_CAMPAIGNS = [
       { channel: "email", delay_days: 0, subject: "إعلانات مصممة لكل منتج في {{store_name}}",
         body: "السلام عليكم {{owner_name}}،\n\nشفت متجر {{store_name}} على سلة، وعندكم {{products}} منتج. أغلب إعلانات الكتالوج في سناب وميتا وتيك توك تطلع صورة منتج عادية على خلفية بيضاء.\n\nDPA AD يحوّل كتالوجكم تلقائياً إلى إعلانات صور وفيديو مصممة بالعربي، مع السعر والخصم محدّثين دائماً.\n\nأقدر أرسل لكم ٣ نماذج مجانية من منتجاتكم أنتم؟ ردّوا بـ \"نعم\" فقط.\n\nتحياتي،\n{{sender_name}}" },
       { channel: "email", delay_days: 3, subject: "نماذج {{store_name}}",
-        body: "أهلاً {{owner_name}}،\n\nأتابع رسالتي السابقة. متاجر {{category}} اللي تستخدم إعلانات مصممة بدل الصورة العادية تقدر تختبر أكثر من تصميم لكل منتج وتعرف وش يبيع.\n\nتبون أجهّز لكم ٣ نماذج مجانية؟ ما تحتاجون تسوون شي، نأخذ المنتجات من متجركم مباشرة.\n\n{{sender_name}}" },
+        body: "أهلاً {{owner_name}}،\n\nأتابع رسالتي السابقة. متاجر {{category_ar}} اللي تستخدم إعلانات مصممة بدل الصورة العادية تقدر تختبر أكثر من تصميم لكل منتج وتعرف وش يبيع.\n\nتبون أجهّز لكم ٣ نماذج مجانية؟ ما تحتاجون تسوون شي، نأخذ المنتجات من متجركم مباشرة.\n\n{{sender_name}}" },
       { channel: "whatsapp", delay_days: 4, subject: "", wa_template: "dpa_intro_ar",
         body: "السلام عليكم، معك {{sender_name}} من DPA AD. جهزنا فكرة إعلانات مصممة لمنتجات {{store_name}} لسناب وتيك توك. تحب أرسل لك ٣ نماذج مجانية؟" },
       { channel: "email", delay_days: 6, subject: "آخر رسالة مني",
@@ -216,10 +220,10 @@ export const STARTER_CAMPAIGNS = [
     ],
   },
   {
-    name: "Monthly newsletter · tips + results", type: "newsletter",
+    name: "Monthly newsletter · White Friday tips", type: "newsletter",
     filter: { stage: ["contacted", "engaged", "qualified", "onboarding", "active", "not_now"], has_email: true },
-    steps: [{ channel: "email", delay_days: 0, subject: "٣ أفكار إعلانات لمتاجر {{category}} هذا الشهر",
-      body: "أهلاً {{owner_name}}،\n\nهذا ملخص الشهر من DPA AD:\n\n١. فكرة الشهر: ...\n٢. نتيجة من متجر سعودي: ...\n٣. مناسبة قادمة جهّز لها: ...\n\nفريق DPA AD" }],
+    steps: [{ channel: "email", delay_days: 0, subject: "الجمعة البيضاء قربت: ٣ أفكار لإعلانات {{store_name}}",
+      body: "أهلاً {{owner_name}}،\n\nباقي أقل من شهر على الجمعة البيضاء، وهي أزحم فترة إعلانات في السنة. هذه ٣ أفكار سريعة لمتاجر {{category_ar}}:\n\n١. خلّ السعر والخصم داخل التصميم\nالصورة العادية ما توضح العرض. إعلان فيه السعر قبل وبعد ونسبة الخصم يوصل الرسالة من أول نظرة، خصوصاً في سناب وتيك توك.\n\n٢. جهّز أكثر من تصميم لكل منتج\nلا تعتمد على إعلان واحد. جرّب ٢-٣ تصاميم مختلفة لنفس المنتج من الحين، وخلّ الميزانية الأكبر في الجمعة البيضاء للتصميم اللي يبيع أكثر.\n\n٣. حدّث الأسعار تلقائياً\nأكبر مشكلة في مواسم الخصومات إعلانات بأسعار قديمة. اربط الإعلانات بالكتالوج عشان أي تغيير في السعر يتحدّث في الإعلان مباشرة.\n\nومن الحين ابدأ تفكّر في رمضان: يبدأ تقريباً في فبراير، والمتاجر اللي تجهّز تصاميمها بدري تختبر أكثر قبل الموسم.\n\nتبون نجهّز لكم ٣ نماذج مجانية بتصاميم الجمعة البيضاء من منتجات {{store_name}}؟ ردّوا على هذا الإيميل بـ \"نعم\".\n\n{{sender_name}}\nفريق DPA AD" }],
   },
   {
     name: "Onboarding · first ads live in 7 days", type: "onboarding", trigger: "stage:onboarding",
@@ -227,7 +231,7 @@ export const STARTER_CAMPAIGNS = [
     steps: [
       { channel: "email", delay_days: 0, subject: "أهلاً بكم في DPA AD 👋 خطوتكم الأولى", body: "أهلاً {{owner_name}}،\n\nسعداء بانضمام {{store_name}}. أول خطوة: ثبّتوا تطبيق DPA AD من متجر تطبيقات سلة، وبنسحب الكتالوج تلقائياً.\n\nأي سؤال؟ ردّوا على هذا الإيميل.\n\n{{sender_name}}" },
       { channel: "whatsapp", delay_days: 1, subject: "", wa_template: "dpa_onboarding_ar", body: "أهلاً {{owner_name}}، هنا {{sender_name}} من DPA AD. هل تم استيراد منتجات {{store_name}}؟ إذا احتجتم مساعدة في اختيار أول قالب أنا موجود." },
-      { channel: "email", delay_days: 2, subject: "اختاروا أول قالب لإعلاناتكم", body: "{{owner_name}}، جهّزنا قوالب مناسبة لمتاجر {{category}}. اختاروا واحد واضغطوا \"توليد\" وبتطلع إعلانات لكل المنتجات.\n\n{{sender_name}}" },
+      { channel: "email", delay_days: 2, subject: "اختاروا أول قالب لإعلاناتكم", body: "{{owner_name}}، جهّزنا قوالب مناسبة لمتاجر {{category_ar}}. اختاروا واحد واضغطوا \"توليد\" وبتطلع إعلانات لكل المنتجات.\n\n{{sender_name}}" },
       { channel: "email", delay_days: 2, subject: "اربطوا الإعلانات بسناب وميتا", body: "الخطوة الأخيرة: اربطوا كتالوج DPA AD بحسابكم الإعلاني في سناب/ميتا/تيك توك. الدليل خطوة بخطوة: https://dpa.ad\n\n{{sender_name}}" },
       { channel: "email", delay_days: 7, subject: "كيف أداء الإعلانات المصممة؟", body: "{{owner_name}}، مر أسبوع. نقدر نقارن أداء الإعلانات المصممة مع الصور العادية ونرسل لكم تقرير ROAS. تبون؟\n\n{{sender_name}}" },
     ],
@@ -241,7 +245,7 @@ export function sequencePrompt(ws, { type, category, goal, channels, steps, lang
 Write a ${steps}-step ${type} sequence for Saudi online stores${category ? ` in the "${category}" category` : ""} on Salla/Zid.
 Goal: ${goal || "get a reply asking for free sample ads from their own catalog"}.
 Channels allowed: ${channels.join(", ")}. Language: ${language === "en" ? "English" : "Saudi Arabic (natural, short, respectful), no English except the brand name"}.
-Rules: short (email bodies under 110 words, WhatsApp under 50 words), one clear yes/no ask per message, no fake numbers or results, no invented customers, each step adds a new angle (pain, idea for their category, social proof only if real, breakup). Use the placeholders {{store_name}}, {{owner_name}}, {{category}}, {{products}}, {{sender_name}} where natural. Don't write an unsubscribe line; it is added automatically.
+Rules: short (email bodies under 110 words, WhatsApp under 50 words), one clear yes/no ask per message, no fake numbers or results, no invented customers, each step adds a new angle (pain, idea for their category, social proof only if real, breakup). Use the placeholders {{store_name}}, {{owner_name}}, {{category_ar}} (Arabic category name; {{category}} is English), {{products}}, {{sender_name}} where natural. Don't write an unsubscribe line; it is added automatically.
 Return ONLY JSON, no prose: {"steps":[{"channel":"email|whatsapp","delay_days":0,"subject":"(email only)","body":"..."}]}
 </task>`;
 }
