@@ -1,7 +1,7 @@
 # DPA AD: Pricing Strategy
 
 > **Update, 31 Oct 2026, after competitor research** (details and sources in `docs/competitive-analysis.md`). Proposed changes for the founder to decide:
-> - **Starter $149 → $199.** Marpipe charges $199 and Confect $299 for ~500 SKUs; give founding stores 30% off for 12 months instead.
+> - **Done: Starter is now $199** (was $149). Marpipe charges $199 and Confect $299 for ~500 SKUs; give founding stores 30% off for 12 months instead.
 > - **New Performance tier:** ~2% of catalog ad spend run through DPA AD, minimum $2,000/month, for large retailers and agencies. This is how Smartly and Hunch grow with clients; their figures are unverified, so pilot with 3 accounts.
 > - **Keep catalog video in Growth.** Competitors gate video behind higher tiers or add-ons, so it's our clearest upgrade reason.
 > - **Prove ROAS:** template-level ROAS and creative testing in Growth and up. It's the feature that justifies paying over Meta's free overlays.
@@ -42,8 +42,8 @@ Annual billing = 2 months free (~17% off). Prices are in USD.
 
 | | **Starter** | **Growth** ⭐ | **Scale** | **Enterprise** |
 |---|---|---|---|---|
-| Monthly | **$149** | **$449** | **$1,299** | **from $4,000** |
-| Annual (per mo) | $124 | $374 | $1,083 | custom (annual only) |
+| Monthly | **$199** | **$449** | **$1,299** | **from $4,000** |
+| Annual (per mo) | $166 | $374 | $1,083 | custom (annual only) |
 | Active SKUs | up to 500 | up to 5,000 | up to 50,000 | unlimited |
 | Channels | 1 (Meta) | 3 | all | all + custom feeds |
 | Image templates | 5 | unlimited | unlimited | unlimited + custom design |
@@ -57,7 +57,7 @@ Annual billing = 2 months free (~17% off). Prices are in USD.
 | **Upgrade trigger** | 2nd channel or >500 SKUs | video at scale, more markets | SSO, API, volume | – |
 
 **Why these numbers:**
-- **Starter at $149** (not $99): still the cheapest designed-catalog tool in the category, and the
+- **Starter at $199** (not $99): level with Marpipe and below Confect ($299) for ~500 SKUs, and the
   limits push brands that are growing up to Growth. Keep current $99 customers grandfathered for 12
   months so you don't churn them.
 - **Growth at $449** is the "hero" plan. Anchor the pricing page on it.
@@ -80,15 +80,15 @@ Annual billing = 2 months free (~17% off). Prices are in USD.
 
 | Segment | Customers | ARPA / yr | ARR |
 |---|---:|---:|---:|
-| Starter | 3,000 | $1,600 | $4.8M |
+| Starter | 2,250 | $2,150 | $4.8M |
 | Growth | 3,500 | $5,000 | $17.5M |
 | Scale | 2,000 | $15,000 | $30.0M |
 | Enterprise | 450 | $70,000 | $31.5M |
 | Agency plans | 400 | $15,000 | $6.0M |
 | Add-ons & overage | – | – | $10.2M |
-| **Total** | **~9,350** | **~$10.7k blended** | **$100M** |
+| **Total** | **~8,600** | **~$11.6k blended** | **$100M** |
 
-That's **~9k customers instead of 84k**. 60%+ of ARR comes from Scale, Enterprise and agencies, so the
+That's **~8,600 customers instead of 84k**. 60%+ of ARR comes from Scale, Enterprise and agencies, so the
 GTM has to add a sales-assisted motion for 5k+ SKU retailers alongside product-led self-serve.
 
 **Health targets:** net revenue retention ≥ 115%, logo churn under 2.5%/mo on Starter and under 1%/mo
@@ -106,7 +106,7 @@ These figures are from memory and change often. **Check each one on the competit
 | Canva + designer | ~$15/mo + designer hours | Doesn't scale past ~50 SKUs and doesn't auto-update prices |
 
 ## 7. Pricing experiments (first 90 days)
-1. **Starter price:** $129 vs $149 vs $179 on new sign-ups. Metric: trial→paid × 6-month retention.
+1. **Starter price:** $179 vs $199 vs $229 on new sign-ups. Metric: trial→paid × 6-month retention.
 2. **Annual discount:** 2 months free vs 20% off. Metric: % choosing annual.
 3. **Anchor:** show Scale first vs Growth first. Metric: Growth+ mix.
 4. **Video as an add-on vs bundled** on Growth. Metric: ARPA and activation.

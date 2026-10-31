@@ -573,3 +573,15 @@ details > summary { cursor: pointer; }
 .cc-sop-owner { color: var(--text-2); }
 .cc-sop-list .btn { white-space: nowrap; }
 @media (max-width: 900px) { .cc-sop-list li { grid-template-columns: 20px minmax(0, 1fr); } .cc-sop-owner, .cc-sop-list li > .btn, .cc-sop-list li > .subtle { grid-column: 2; justify-self: start; } }
+
+/* ---------------------------------------------------------------- ROAS results */
+.r-big { font-size: 40px; font-weight: 700; letter-spacing: -.03em; margin: 6px 0 14px; }
+.r-big span { font-size: var(--fs-md); font-weight: 500; color: var(--text-2); letter-spacing: 0; }
+.r-lift-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) 64px; gap: 12px; align-items: center; }
+.r-lift-sub { margin: 4px 0 12px 142px; }
+.r-bar { display: block; height: 16px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.r-bar i { display: block; height: 100%; border-radius: 4px; }
+.r-tpl { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.r-tpl-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) 56px 120px; gap: 10px; align-items: center; }
+.r-tpl-name { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { .r-lift-row, .r-tpl-row { grid-template-columns: 100px minmax(0, 1fr) 56px; } .r-tpl-row > .subtle { display: none; } .r-lift-sub { margin-left: 0; } }

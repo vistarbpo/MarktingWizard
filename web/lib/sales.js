@@ -17,7 +17,7 @@ export const OPEN = ["lead", "contacted", "demo", "beta", "trial"];
 
 // Matches the DPA AD pricing plan (docs/dpa-ad-pricing.md).
 export const PLANS = [
-  { name: "Starter", max: 500, usd: 149 },
+  { name: "Starter", max: 500, usd: 199 },
   { name: "Growth", max: 5000, usd: 449 },
   { name: "Scale", max: 50000, usd: 1299 },
   { name: "Enterprise", max: Infinity, usd: 4000 },

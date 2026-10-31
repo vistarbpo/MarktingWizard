@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -58,6 +58,7 @@ export const SOP = [
       { id: "ads", text: "Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles.", owner: "Performance marketer", go: "playbooks", param: "ad_campaign" },
       { id: "seo", text: "Update the SEO Content Plan and publish the planned articles.", owner: "Content", go: "playbooks", param: "seo_content_plan" },
       { id: "battlecards", text: "Refresh Competitor Battlecards with this month's competitor notes.", owner: "Sales", go: "playbooks", param: "competitor_battlecards" },
+      { id: "roas", text: "ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs.", owner: "Customer Success", go: "results" },
       { id: "finance", text: "Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions.", owner: "Founder", go: "finance" },
       { id: "hiring", text: "Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent.", owner: "Founder", go: "team" },
       { id: "brief", text: "Update the Brief with anything that changed: pricing, features, markets, proof points.", owner: "Founder", go: "brief" },

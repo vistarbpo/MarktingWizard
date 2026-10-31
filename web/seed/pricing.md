@@ -14,8 +14,8 @@ Annual billing gets 2 months free.
 
 | | Starter | **Growth** (main plan) | Scale | Enterprise |
 |---|---|---|---|---|
-| Monthly | $149 | **$449** | $1,299 | from $4,000 |
-| Annual, per month | $124 | $374 | $1,083 | custom |
+| Monthly | $199 | **$449** | $1,299 | from $4,000 |
+| Annual, per month | $166 | $374 | $1,083 | custom |
 | Active products | 500 | 5,000 | 50,000 | unlimited |
 | Ad platforms | 1 (Meta) | 3 | all | all + custom feeds |
 | Video renders / month | 25 | 250 | 1,500 | custom |
@@ -42,13 +42,13 @@ Keep current $99 customers on their price for 12 months.
 
 | Segment | Customers | Revenue per customer / yr | ARR |
 |---|---:|---:|---:|
-| Starter | 3,000 | $1,600 | $4.8M |
+| Starter | 2,250 | $2,150 | $4.8M |
 | Growth | 3,500 | $5,000 | $17.5M |
 | Scale | 2,000 | $15,000 | $30.0M |
 | Enterprise | 450 | $70,000 | $31.5M |
 | Agency plans | 400 | $15,000 | $6.0M |
 | Add-ons & overage | – | – | $10.2M |
-| **Total** | **~9,350** | **~$10.7k** | **$100M** |
+| **Total** | **~8,600** | **~$11.6k** | **$100M** |
 
 Over 60% of revenue comes from Scale, Enterprise and agencies, so add a sales team for large retailers alongside self-serve sign-up. Health targets: net revenue retention of 115% or more, payback on acquisition cost under 12 months.
 
@@ -63,7 +63,7 @@ These are from memory and change often. Check each pricing page.
 | Canva + designer | ~$15/month plus designer hours | Doesn't scale past ~50 products or update prices |
 
 ## Pricing tests for the first 90 days
-1. Starter at $129 vs $149 vs $179. Measure trial-to-paid and 6-month retention.
+1. Starter at $179 vs $199 vs $229. Measure trial-to-paid and 6-month retention.
 2. Annual offer: 2 months free vs 20% off. Measure share choosing annual.
 3. Show Scale first vs Growth first. Measure Growth-and-up mix.
 4. Video as add-on vs included on Growth. Measure revenue per customer and activation.

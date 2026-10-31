@@ -131,7 +131,7 @@ export function loadSampleData(store, wsId, now = Date.now()) {
   ]) { tag(store.addExpense(id, { date: dateAgo(age, now), vendor: S(vendor), category, amount_sar, recurring, vat_sar, note: "", source: "manual" }, false)); counts.expenses++; }
   counts.income = 0;
   for (const [source, type, amount_sar, recurring, vat_sar, age, note] of [
-    ["Coast Optics", "subscription", 1683.75, "monthly", 219.62, 20, "Growth plan"], ["Lavender Spa", "subscription", 558.75, "monthly", 72.88, 15, "Starter plan"],
+    ["Coast Optics", "subscription", 1683.75, "monthly", 219.62, 20, "Growth plan"], ["Lavender Spa", "subscription", 746.25, "monthly", 97.34, 15, "Starter plan"],
     ["Pearl Jewels", "subscription", 1683.75, "monthly", 219.62, 10, "Growth plan"], ["Pearl Jewels", "setup", 1875, "one-off", 244.57, 10, "Template setup"],
     ["Angel investor", "investment", 187500, "one-off", 0, 75, "Pre-seed SAFE"],
   ]) { tag(store.addOps("finance_income", id, { date: dateAgo(age, now), source: S(source), type, amount_sar, vat_sar, recurring, note, deal_id: null, ended_at: null, entry: "manual" }, false)); counts.income++; }
@@ -172,6 +172,25 @@ export function loadSampleData(store, wsId, now = Date.now()) {
   tag(store.addOps("product_releases", id, { version: "Sample v0.3", date: dateAgo(14, now), item_ids: [], notes: "Feed import speed-up, brand fonts", status: "released" }, false));
   tag(store.addOps("product_releases", id, { version: "Sample v0.4", date: day(10), item_ids: [find("Salla app")].filter(Boolean), notes: "", status: "draft" }, false));
 
+  // ---- ROAS results: 4 weeks of ad-level results for three sample stores
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  counts.roas_rows = 0;
+  for (const [storeName, channel, aov] of [["Coast Optics", "Snapchat", 260], ["Pearl Jewels", "Meta", 410], ["Red Sea Beauty", "TikTok", 180]]) {
+    const deal = store.listDeals(id).find((d) => d.name === S(storeName));
+    const batch = tag(store.addOps("roas_batches", id, { store: S(storeName), deal_id: deal?.id || null, channel, rows: 0, from: dateAgo(28, now), to: dateAgo(1, now) }, false));
+    for (const [template, type, cvr, ctr] of [["Bold Price Tag", "designed", 0.034, 0.015], ["Ramadan Gold", "designed", 0.031, 0.016], ["Story Video", "video", 0.036, 0.019], ["Plain packshot", "plain", 0.024, 0.011]]) {
+      for (let dAgo = 28; dAgo >= 1; dAgo--) {
+        const spend = Math.round(90 + rnd() * 110);
+        const impressions = Math.round((spend / 18) * 1000);
+        const clicks = Math.round(impressions * ctr * (0.85 + rnd() * 0.3));
+        const purchases = Math.round(clicks * cvr * (0.7 + rnd() * 0.6));
+        tag(store.addOps("roas_rows", id, { batch_id: batch.id, store: S(storeName), deal_id: deal?.id || null, channel, date: dateAgo(dAgo, now), ad_name: `${storeName} | [tpl:${template}] | ${type}`, template, creative_type: type, spend_sar: spend, revenue_sar: Math.round(purchases * aov * (0.9 + rnd() * 0.2)), impressions, clicks, purchases }, false));
+        batch.rows++; counts.roas_rows++;
+      }
+    }
+  }
+
   // ---- SOP: a few ticks this period
   for (const [cadence, step] of [["setup", "brief"], ["setup", "kpis"], ["weekly", "log"], ["weekly", "report"]]) {
     const period = periodFor(cadence, new Date(now)), key = `${cadence}:${step}`;
@@ -193,7 +212,7 @@ export function removeSampleData(store, wsId) {
   const myKpis = new Set(db.kpis.filter(mine).map((k) => k.id));
   db.kpi_values = db.kpi_values.filter((v) => !(myKpis.has(v.kpi_id) && (v.sample || kpiIds.has(v.kpi_id))));
   removed.kpis = drop("kpis");
-  for (const c of ["notes", "support_articles", "support_tickets", "finance_expenses", "finance_income", "finance_cash", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "product_feedback", "product_releases", "sop_checks"]) removed[c] = drop(c);
+  for (const c of ["notes", "support_articles", "support_tickets", "finance_expenses", "finance_income", "finance_cash", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "product_feedback", "product_releases", "sop_checks", "roas_rows", "roas_batches"]) removed[c] = drop(c);
   // Product items added by samples go; feedback links to them are cleared.
   const itemIds = new Set(db.product_items.filter((i) => mine(i) && i.sample).map((i) => i.id));
   for (const f of db.product_feedback) if (itemIds.has(f.item_id)) f.item_id = null;

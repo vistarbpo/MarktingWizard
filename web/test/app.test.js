@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -558,7 +558,7 @@ test("finance income: billed MRR replaces the estimate; investment isn't revenue
   await call(`/api/workspaces/${w.id}/deals/${d.id}`, { method: "PUT", body: JSON.stringify({ stage: "paying" }) });
   let s = (await json(fb)).snapshot;
   assert.equal(s.revenue.source, "estimated");
-  assert.equal(s.revenue.mrr_sar, Math.round(149 * 3.75));
+  assert.equal(s.revenue.mrr_sar, Math.round(199 * 3.75));
   assert.ok(s.needs.some((n) => /no subscription income is logged/.test(n.text)));
   assert.equal((await post(`${fb}/income`, { amount_sar: 10 })).status, 422);
   const sub = await (await post(`${fb}/income`, { source: "Paying Store", type: "subscription", amount_sar: 600, recurring: "monthly", vat_sar: 78.26 })).json();
@@ -583,4 +583,51 @@ test("finance income: billed MRR replaces the estimate; investment isn't revenue
   assert.deepEqual([r.expenses, r.income], [1, 2]);
   assert.equal((await json(fb)).income.filter((i) => i.entry === "ai_import").length, 2);
   await call(`/api/workspaces/${w.id}`, { method: "DELETE" });
+});
+
+test("ROAS: CSV parsing, template mapping, lift with confidence, KPI and case study", async () => {
+  const { parseAdsCsv, classifyAd, zTest, roasSummary } = await import("../lib/roas.js");
+  const csv = `"Day","Ad name","Amount spent (SAR)","Impressions","Link clicks","Purchases","Purchase conversion value"
+2026-10-01,"Oud | [tpl:Bold Price Tag] | designed","1,200.50",80000,2400,120,"31,200"
+2026-10-01,"Oud | plain packshot",1000,70000,2000,60,"15,000"
+Total,,2200,,,,`;
+  const p = parseAdsCsv(csv);
+  assert.equal(p.channel, "Meta");
+  assert.equal(p.rows.length, 2);
+  assert.equal(p.rows[0].spend_sar, 1200.5);
+  assert.equal(p.rows[0].revenue_sar, 31200);
+  assert.deepEqual(classifyAd(p.rows[0].ad_name), { template: "Bold Price Tag", creative_type: "designed" });
+  assert.equal(classifyAd("Store | Story slideshow").creative_type, "video");
+  assert.equal(classifyAd("Oud | plain packshot").template, "Plain packshot");
+  assert.match(parseAdsCsv("a,b\n1,2").error, /Couldn't find these columns/);
+  assert.equal(parseAdsCsv("Ad name,Spend,Purchase conversion value\nx,10,30", { currency: "USD" }).rows[0].spend_sar, 37.5);
+  assert.ok(zTest(48, 1200, 20, 800).p > 0.05); // 4% vs 2.5% on these numbers: not sure yet
+  const t = zTest(120, 2400, 60, 2000);
+  assert.ok(t.p < 0.05 && t.z > 0);
+  assert.equal(zTest(10, 100, 10, 100).p, 1);
+
+  const [ws] = await json("/api/workspaces");
+  const rb = `/api/workspaces/${ws.id}/roas`;
+  assert.equal((await post(`${rb}/parse`, { text: "nope" })).status, 422);
+  const parsed = await (await post(`${rb}/parse`, { text: csv })).json();
+  assert.equal(parsed.ads.length, 2);
+  assert.equal((await post(`${rb}/import`, { rows: parsed.rows })).status, 422); // no store
+  const imp = await (await post(`${rb}/import`, { store: "Oud House", channel: "Meta", rows: parsed.rows, mapping: { [parsed.ads[1].ad_name]: { template: "Plain packshot", creative_type: "plain" } } })).json();
+  assert.equal(imp.rows, 2);
+  let r = await json(rb);
+  const st = r.summary.stores.find((x) => x.store === "Oud House");
+  assert.ok(st.roas_lift > 0.5); // 26x vs 15x
+  assert.equal(st.verdict, "designed wins");
+  const k = await (await post(`${rb}/log-kpi`, {})).json();
+  assert.equal(k.kpi, "Merchant ROAS");
+  const cs = await (await post(`${rb}/case-study`, { store: "Oud House" })).text();
+  assert.match(cs, /\[\[MWIZ_SAVED\]\]/);
+  assert.match(prompts.at(-1), /never invent a quote/);
+  assert.ok((await json(`/api/workspaces/${ws.id}/notes`)).some((n) => n.title === "Case study: Oud House"));
+  const cc = await json(`/api/workspaces/${ws.id}/command`);
+  assert.ok(cc.roas.lift > 0);
+  assert.equal((await call(`${rb}/batches/${imp.batch_id}`, { method: "DELETE" })).status, 204);
+  r = await json(rb);
+  assert.ok(!r.summary.stores.some((x) => x.store === "Oud House"));
+  assert.equal(roasSummary([]).overall.verdict, "not enough data");
 });

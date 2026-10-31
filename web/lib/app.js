@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { CHANNELS as AD_CHANNELS, CREATIVE_TYPES, caseStudyPrompt, classifyAd, parseAdsCsv, roasSummary } from "./roas.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -846,6 +847,82 @@ export function createApp({ store, provider, password }) {
     arts.forEach((a) => store.addArticle(w.id, a, false));
     store.save();
     res.status(201).json({ added: arts.length });
+  });
+
+  // ---- ROAS reporting: designed vs plain catalog creative, from ad-level CSV exports
+  app.get("/api/workspaces/:ws/roas", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const rows = store.listOps("roas_rows", w.id);
+    res.json({ summary: roasSummary(rows), batches: store.listOps("roas_batches", w.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      stores: store.listDeals(w.id).filter((d) => ["beta", "trial", "paying"].includes(d.stage)).map((d) => ({ id: d.id, name: d.name, stage: d.stage })),
+      channels: AD_CHANNELS, types: CREATIVE_TYPES });
+  });
+  app.post("/api/workspaces/:ws/roas/parse", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const r = parseAdsCsv(String(req.body?.text || "").slice(0, 2_000_000), { currency: req.body?.currency === "USD" ? "USD" : "SAR", channel: AD_CHANNELS.includes(req.body?.channel) ? req.body.channel : "" });
+    if (r.error) return res.status(422).json({ detail: r.error });
+    // One line per unique ad, with a best-guess template and type for the person to check.
+    const ads = new Map();
+    for (const row of r.rows) {
+      const a = ads.get(row.ad_name) || { ad_name: row.ad_name, ...classifyAd(row.ad_name), spend_sar: 0, revenue_sar: 0, purchases: 0, days: 0 };
+      a.spend_sar += row.spend_sar; a.revenue_sar += row.revenue_sar; a.purchases += row.purchases; a.days++;
+      ads.set(row.ad_name, a);
+    }
+    res.json({ channel: r.channel, rows: r.rows, ads: [...ads.values()].map((a) => ({ ...a, spend_sar: Math.round(a.spend_sar), revenue_sar: Math.round(a.revenue_sar) })) });
+  });
+  app.post("/api/workspaces/:ws/roas/import", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const b = req.body || {};
+    const deal = b.deal_id ? store.getDeal(w.id, b.deal_id) : null;
+    const storeName = String(deal?.name || b.store || "").trim().slice(0, 120);
+    if (!storeName) return res.status(422).json({ detail: "Pick the store these results belong to" });
+    const rows = Array.isArray(b.rows) ? b.rows.slice(0, 20000) : [];
+    if (!rows.length) return res.status(422).json({ detail: "No rows to import" });
+    const map = b.mapping && typeof b.mapping === "object" ? b.mapping : {};
+    const channel = AD_CHANNELS.includes(b.channel) ? b.channel : "Other";
+    const batch = store.addOps("roas_batches", w.id, { store: storeName, deal_id: deal?.id || null, channel, rows: rows.length, from: null, to: null }, false);
+    let from = "9999", to = "0000";
+    for (const r of rows) {
+      const m = map[r.ad_name] || classifyAd(r.ad_name);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(r.date || "") ? r.date : new Date().toISOString().slice(0, 10);
+      if (date < from) from = date; if (date > to) to = date;
+      store.addOps("roas_rows", w.id, { batch_id: batch.id, store: storeName, deal_id: deal?.id || null, channel, date, ad_name: String(r.ad_name || "").slice(0, 200),
+        template: String(m.template || "Untitled").slice(0, 80), creative_type: CREATIVE_TYPES.includes(m.creative_type) ? m.creative_type : "designed",
+        spend_sar: Math.max(0, Number(r.spend_sar) || 0), revenue_sar: Math.max(0, Number(r.revenue_sar) || 0), impressions: Math.max(0, Math.round(Number(r.impressions) || 0)),
+        clicks: Math.max(0, Math.round(Number(r.clicks) || 0)), purchases: Math.max(0, Math.round(Number(r.purchases) || 0)) }, false);
+    }
+    Object.assign(batch, { from, to });
+    store.save();
+    res.status(201).json({ batch_id: batch.id, rows: rows.length });
+  });
+  app.delete("/api/workspaces/:ws/roas/batches/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    if (!store.deleteOps("roas_batches", w.id, req.params.id)) return res.status(404).json({ detail: "Import not found" });
+    store.db.roas_rows = store.db.roas_rows.filter((r) => !(r.workspace_id === String(w.id) && r.batch_id === req.params.id));
+    store.save();
+    res.status(204).end();
+  });
+  // Log the pooled ROAS of designed creatives as this month's "Merchant ROAS" KPI.
+  app.post("/api/workspaces/:ws/roas/log-kpi", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const s = roasSummary(store.listOps("roas_rows", w.id));
+    if (s.overall.designed.roas == null) return res.status(422).json({ detail: "No designed-creative results yet" });
+    let k = store.listKpis(w.id).find((x) => x.name === "Merchant ROAS");
+    if (!k) k = store.addKpi(w.id, DEFAULT_KPIS.find((x) => x.name === "Merchant ROAS") || { stage: "Value", name: "Merchant ROAS", unit: "x", frequency: "monthly" });
+    const period = periodFor("monthly");
+    store.logKpiValue(k.id, { period, value: s.overall.designed.roas, note: "from ROAS results (designed creatives)" });
+    res.json({ kpi: k.name, period, value: s.overall.designed.roas });
+  });
+  app.post("/api/workspaces/:ws/roas/case-study", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const s = roasSummary(store.listOps("roas_rows", w.id));
+    const st = s.stores.find((x) => x.store === String(req.body?.store || ""));
+    if (!st) return res.status(404).json({ detail: "No results for that store" });
+    await streamDraft(req, res, { prompt: caseStudyPrompt(w, st, s), onDone: (text) => {
+      const n = store.addNote(w.id, { category: "results", title: `Case study: ${st.store}`, content: text });
+      if (st.sample) { n.sample = true; store.save(); }
+      return n.id;
+    } });
   });
 
   // ---- command center + sample data for every module

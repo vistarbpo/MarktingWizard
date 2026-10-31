@@ -57,9 +57,10 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 4 | Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles. | Performance marketer | Playbooks → Paid Ads Campaign |
 | 5 | Update the SEO Content Plan and publish the planned articles. | Content | Playbooks → SEO Content Plan |
 | 6 | Refresh Competitor Battlecards with this month's competitor notes. | Sales | Playbooks → Competitor Battlecards |
-| 7 | Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions. | Founder | Finance |
-| 8 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
-| 9 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
+| 7 | ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs. | Customer Success | ROAS results |
+| 8 | Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions. | Founder | Finance |
+| 9 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
+| 10 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
 
 ## Quarterly strategy
 

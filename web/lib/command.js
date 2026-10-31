@@ -7,6 +7,7 @@ import { supportSummary } from "./support.js";
 import { financeSnapshot } from "./finance.js";
 import { opsSnapshot } from "./ops.js";
 import { productSnapshot } from "./product.js";
+import { roasSummary } from "./roas.js";
 
 export const ARR_GOAL = 100_000_000;
 export const MILESTONES = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
@@ -89,6 +90,7 @@ export function commandSnapshot(store, ws, now = Date.now()) {
     revenue: { paying_mrr: sales.paying_mrr, expected_mrr: sales.expected_mrr, paying: sales.paying_count, open_deals: sales.open_count, open_value: sales.open_value, funnel },
     work: { modules: work, ai: aiTotal, people: peopleTotal, ai_share: aiTotal + peopleTotal ? Math.round((aiTotal / (aiTotal + peopleTotal)) * 100) : null },
     team: { agents: hr.agents, humans: hr.humans, ai_share_roles: hr.ai_share, open_roles: hr.open_roles, planned_roles: hr.planned_roles, candidates: hr.candidates, payroll_sar: hr.planned_payroll_sar },
+    roas: (() => { const r = roasSummary(store.listOps("roas_rows", id)); return { lift: r.overall.roas_lift, verdict: r.overall.verdict, designed: r.overall.designed.roas, plain: r.overall.plain.roas, stores: r.stores.length }; })(),
     product: { now: prod.counts.now, next: prod.counts.next, later: prod.counts.later, feedback_unlinked: prod.feedback.unlinked, last_release: prod.last_release ? prod.last_release.version : null },
     ops: { open_tasks: ops.tasks.open, overdue: ops.tasks.overdue, ai_owned_pct: ops.tasks.ai_owned_pct, open_incidents: ops.incidents.open, next_deadline: ops.next_deadline },
     finance: { cash_sar: fin.cash.balance_sar, cash_as_of: fin.cash.as_of, runway_months: fin.runway_months, net_burn_sar: fin.costs.net_burn_sar, month_costs_sar: fin.costs.month_burn_sar, cash_zero_month: fin.forecast.cash_zero_month },

@@ -41,7 +41,7 @@ On top of that they:
 **Our threats.**
 - Meta's free overlays: we must show ROAS lift, or "designed" isn't worth paying for.
 - Salla's own free feeds and **Salla Ads**. Position as the creative layer on top of Salla, not a replacement.
-- Being too cheap: our Starter ($149) is below Marpipe ($199) and Confect ($299) for 500 SKUs.
+- Being too cheap: our Starter was $149, below Marpipe ($199) and Confect ($299) for 500 SKUs. **Raised to $199 on 31 Oct 2026.**
 
 **The $100M ARR reality.** Pure creative tools have mostly exited at $30–150M (AdCreative.ai, Feedonomics). Salla and Zid together have ~90k merchants. $100M ARR needs spend-based or enterprise revenue and markets beyond KSA, the way Smartly and Celtra grew, not SMB subscriptions alone.
 
@@ -61,10 +61,10 @@ The pricing recommendation (`docs/dpa-ad-pricing.md`) has a new section with the
 
 ## Decisions for the founder
 
-1. **Raise Starter from $149 to $199** (equal to Marpipe Startup, still below Confect). Offer founding stores 30% off for 12 months instead of a low list price.
+1. **Done: Starter raised from $149 to $199** (equal to Marpipe Startup, still below Confect). Offer founding stores 30% off for 12 months instead of a low list price.
 2. **Add a Performance tier for large retailers and agencies:** ~2% of catalog ad spend managed through DPA AD, minimum $2,000/month. Mirrors Smartly/Hunch; their numbers are unverified, so test with 3 accounts first.
 3. **Keep video in Growth.** Competitors gate it, so it's our clearest upgrade reason.
-4. **Make ROAS proof the next big build** after the Salla app. Without it, Meta's free overlays are "good enough" for many stores.
+4. **ROAS proof:** the dashboard now has ROAS reporting from exported ad results (Results page); build it into the DPA AD app next, after the Salla app. Without it, Meta's free overlays are "good enough" for many stores.
 5. **Distribution: Salla/Zid app stores first, GCC agencies second, enterprise retailers third.** Apply to Snap's partner program and TikTok Marketing Partners (Creative) early. Treat Salla as partner, channel and possible acquirer.
 
 ## To verify before acting
