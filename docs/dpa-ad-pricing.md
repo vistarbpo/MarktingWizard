@@ -1,5 +1,12 @@
 # DPA AD: Pricing Strategy
 
+> **Update, 31 Oct 2026, after competitor research** (details and sources in `docs/competitive-analysis.md`). Proposed changes for the founder to decide:
+> - **Starter $149 → $199.** Marpipe charges $199 and Confect $299 for ~500 SKUs; give founding stores 30% off for 12 months instead.
+> - **New Performance tier:** ~2% of catalog ad spend run through DPA AD, minimum $2,000/month, for large retailers and agencies. This is how Smartly and Hunch grow with clients; their figures are unverified, so pilot with 3 accounts.
+> - **Keep catalog video in Growth.** Competitors gate video behind higher tiers or add-ons, so it's our clearest upgrade reason.
+> - **Prove ROAS:** template-level ROAS and creative testing in Growth and up. It's the feature that justifies paying over Meta's free overlays.
+> - **Free feed health checker** as a sign-up funnel, and **GCC multi-market catalogs** as a Growth+ add-on.
+
 **Goal:** $100M ARR · **Current price:** $99/month flat · **ICP:** ecommerce brands with 20+ SKUs running catalog ads
 
 ## 1. Why $99 flat can't get you there

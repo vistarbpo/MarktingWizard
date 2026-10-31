@@ -97,5 +97,6 @@ Claude requests use adaptive thinking, streaming, and server-side refusal fallba
 
 ## Docs
 
+* `docs/competitive-analysis.md`: who earns more in catalog/creative ad-tech and what DPA AD should change.
 * `docs/SOP.md`: the marketing operating SOP (also the dashboard home page).
 * `docs/dpa-ad-pricing.md`: the DPA AD pricing recommendation.
