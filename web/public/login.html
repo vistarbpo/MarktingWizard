@@ -23,16 +23,18 @@
     <span>Marketing Wizard</span>
   </div>
   <form class="card card-body stack" method="post" action="/login">
-    <div><h1>Sign in</h1><p class="muted" style="margin-top:4px">Enter the team password to continue.</p></div>
+    <div><h1>Sign in</h1><p class="muted" style="margin-top:4px">Sign in with your email and password. Owner: leave email empty and use the team password.</p></div>
     <p class="err" id="err" role="alert" hidden></p>
+    <div class="field"><label for="email">Email</label>
+      <input class="input" id="email" name="email" type="email" autocomplete="username" placeholder="you@dpa.ad" autofocus></div>
     <div class="field"><label for="password">Password</label>
-      <input class="input" id="password" name="password" type="password" autocomplete="current-password" required autofocus></div>
+      <input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
     <button class="btn btn-primary" type="submit" style="height:40px">Sign in</button>
   </form>
 </main>
 <script>
 const e = new URLSearchParams(location.search).get("e");
-const m = { bad: "That password is wrong. Try again.", locked: "Too many attempts. Wait 15 minutes and try again.", unset: "No password is set yet. Add DASHBOARD_PASSWORD in hPanel's environment variables." }[e];
+const m = { bad: "That email or password is wrong. Try again.", locked: "Too many attempts. Wait 15 minutes and try again.", unset: "No password is set yet. Add DASHBOARD_PASSWORD in hPanel's environment variables." }[e];
 if (m) { const el = document.getElementById("err"); el.textContent = m; el.hidden = false; }
 </script>
 </body>

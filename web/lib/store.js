@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanBrief } from "./catalog.js";
+import { DEFAULT_ROLES, MODULE_IDS } from "./access.js";
 
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "seed");
 
@@ -30,7 +31,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_income: [], finance_cash: [], finance_reports: [], ops_tasks: [], ops_deadlines: [], ops_vendors: [], ops_incidents: [], ops_reports: [], product_items: [], product_feedback: [], product_releases: [], product_docs: [], roas_rows: [], roas_batches: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_income: [], finance_cash: [], finance_reports: [], ops_tasks: [], ops_deadlines: [], ops_vendors: [], ops_incidents: [], ops_reports: [], product_items: [], product_feedback: [], product_releases: [], product_docs: [], roas_rows: [], roas_batches: [], users: [], roles: [], teams: [], audit: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -39,12 +40,32 @@ export class Store {
     fs.mkdirSync(dataDir, { recursive: true });
     if (fs.existsSync(this.file)) {
       this.db = { ...EMPTY(), ...JSON.parse(fs.readFileSync(this.file, "utf8")) };
-      if (this.#migrate()) this.save();
+      if (this.#migrate() | this.ensureRoles(false)) this.save();
     } else {
       this.db = EMPTY();
+      this.ensureRoles(false);
       this.#seed();
       this.save();
     }
+  }
+
+  // ---- access: people, roles, teams, activity log (company-wide, not per workspace)
+  ensureRoles(persist = true) {
+    let changed = false;
+    for (const r of DEFAULT_ROLES) {
+      const cur = this.db.roles.find((x) => x.id === r.id);
+      if (!cur) { this.db.roles.push({ ...r, perms: { ...r.perms }, builtin: true }); changed = true; }
+      else for (const m of MODULE_IDS) if (!(m in cur.perms)) { cur.perms[m] = r.perms[m]; changed = true; } // new modules get the default
+    }
+    if (changed && persist) this.save();
+    return changed;
+  }
+  newId() { return this.#id(); }
+  now() { return this.#now(); }
+  logAudit(entry) {
+    this.db.audit.push({ at: this.#now(), ...entry });
+    if (this.db.audit.length > 2000) this.db.audit.splice(0, this.db.audit.length - 2000);
+    this.save();
   }
 
   save() {

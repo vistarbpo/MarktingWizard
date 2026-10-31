@@ -89,12 +89,30 @@ function go(route, param = null) {
   location.hash = `#/${id}/${route}${param ? "/" + encodeURIComponent(param) : ""}`;
 }
 
+/* ---------------------------------------------------------------- access */
+const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
+  pipeline: "sales", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
+const levelFor = (route) => (S.me ? S.me.perms[ROUTE_MODULE[route] || "command"] || "none" : "edit");
+const canSee = (route) => levelFor(route) !== "none";
+function applyAccess() {
+  document.querySelectorAll("#nav a").forEach((a) => (a.hidden = !canSee(a.dataset.route)));
+  // Hide group headings with nothing visible under them.
+  document.querySelectorAll("#nav .nav-group").forEach((g) => {
+    let n = g.nextElementSibling, any = false;
+    while (n && !n.classList.contains("nav-group")) { if (n.tagName === "A" && !n.hidden) any = true; n = n.nextElementSibling; }
+    g.hidden = !any;
+  });
+  const who = $("#whoami");
+  if (who && S.me) who.innerHTML = `<button class="btn btn-sm btn-ghost who-btn" data-action="account" title="Your account">${esc(S.me.user.name)}<span class="subtle">${esc(S.me.role)}</span></button>`;
+}
+
 async function onRoute() {
   const [, wsId, route, param] = location.hash.split("/");
   if (wsId && (!S.ws || String(S.ws.id) !== wsId)) {
     try { S.ws = await api(`/api/workspaces/${wsId}`); } catch { S.ws = null; }
   }
   S.route = ROUTES[route] ? route : "command";
+  if (S.me && !canSee(S.route)) { const first = Object.keys(ROUTE_MODULE).find((r) => ROUTES[r] && canSee(r)); if (first && !route) S.route = first; }
   S.param = param ? decodeURIComponent(param) : null;
   render();
 }
@@ -114,8 +132,12 @@ function render() {
     return;
   }
   const r = ROUTES[S.route];
-  $("#crumb").textContent = `${S.ws.brief.company_name} · ${r.crumb}`;
+  $("#crumb").textContent = `${S.ws.brief.company_name} · ${r.crumb}${levelFor(S.route) === "view" ? " · view only" : ""}`;
   $("#pageTitle").textContent = r.title;
+  if (!canSee(S.route)) {
+    $("#view").innerHTML = `<div class="card empty"><h2>No access</h2><p>Your role (${esc(S.me.role)}) can't open ${esc(r.title)}. Ask an Owner or Admin to change your role in Teams & roles.</p></div>`;
+    return;
+  }
   r.render($("#view"));
 }
 
@@ -608,7 +630,8 @@ $("#wsSelect").addEventListener("change", (e) => { location.hash = `#/${e.target
 window.addEventListener("hashchange", onRoute);
 
 (async function init() {
-  const [health, pb, cats] = await Promise.all([api("/api/health"), api("/api/playbooks"), api("/api/note-categories")]);
+  const [health, pb, cats, me] = await Promise.all([api("/api/health"), api("/api/playbooks"), api("/api/note-categories"), api("/api/me")]);
+  S.me = me; applyAccess();
   S.health = health; S.playbooks = pb.playbooks; S.launchKit = pb.launch_kit; S.categories = cats;
   const live = health.provider === "claude";
   $("#providerDot").className = "status-dot " + (live ? "live" : "demo");
@@ -628,3 +651,23 @@ window.addEventListener("hashchange", onRoute);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shell.classList.contains("nav-open")) set(false); });
   matchMedia("(min-width: 1025px)").addEventListener("change", (m) => { if (m.matches) set(false); });
 })();
+
+/* ---------------------------------------------------------------- my account */
+document.addEventListener("click", (e) => {
+  if (!e.target.closest('[data-action="account"]')) return;
+  const d = $("#dialog"), me = S.me;
+  d.innerHTML = `<form method="dialog" id="acctForm">
+    <div class="card-head" style="padding:20px 24px 0"><div><h2>${esc(me.user.name)}</h2><p class="subtle" style="font-size:13px">${esc(me.role)}${me.user.email ? " · " + esc(me.user.email) : ""}</p></div></div>
+    <div class="card-body stack" style="padding:16px 24px">${me.shared_login
+      ? `<p class="muted">You're signed in with the shared team password as Owner. Create your own Owner account in <b>Teams & roles</b>, sign in with it, and give everyone else their own login.</p>`
+      : `<div class="field"><label for="ac-cur">Current password</label><input class="input" id="ac-cur" type="password" autocomplete="current-password"></div>
+         <div class="field"><label for="ac-new">New password (10+ characters)</label><input class="input" id="ac-new" type="password" autocomplete="new-password" minlength="10"></div>`}</div>
+    <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" value="cancel">Close</button>${me.shared_login ? "" : `<button class="btn btn-primary" value="ok">Change password</button>`}</div>
+  </form>`;
+  d.showModal();
+  d.onclose = async () => {
+    if (d.returnValue !== "ok") return;
+    try { await api("/api/me/password", { method: "POST", body: JSON.stringify({ current: $("#ac-cur").value, password: $("#ac-new").value }) }); toast("Password changed"); }
+    catch (err) { toast(err.message, true); }
+  };
+});

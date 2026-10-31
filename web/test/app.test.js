@@ -631,3 +631,68 @@ Total,,2200,,,,`;
   assert.ok(!r.summary.stores.some((x) => x.store === "Oud House"));
   assert.equal(roasSummary([]).overall.verdict, "not enough data");
 });
+
+test("teams & roles: personal logins, per-module access, last-owner guard, activity log", async () => {
+  const [ws] = await json("/api/workspaces");
+  const signIn = async (email, password) => {
+    const r = await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email, password }) });
+    const c = r.headers.get("set-cookie");
+    return c ? c.split(";")[0] : null;
+  };
+  const as = (c, p, opts = {}) => fetch(base + p, { redirect: "manual", ...opts, headers: { "Content-Type": "application/json", cookie: c } });
+
+  // The team password is the Owner.
+  const me = await json("/api/me");
+  assert.equal(me.user.id, "owner"); assert.equal(me.shared_login, true); assert.equal(me.perms.finance, "edit");
+
+  assert.equal((await post("/api/admin/users", { name: "Short", email: "s@dpa.ad", password: "short", role_id: "viewer" })).status, 422);
+  const own = await (await post("/api/admin/users", { name: "Founder", email: "Founder@dpa.ad", password: "founder-pass-1", role_id: "owner" })).json();
+  assert.equal(own.email, "founder@dpa.ad"); assert.equal(own.hash, undefined);
+  const viewer = await (await post("/api/admin/users", { name: "Investor", email: "inv@dpa.ad", password: "viewer-pass-1", role_id: "viewer" })).json();
+  assert.equal((await post("/api/admin/users", { name: "Dup", email: "inv@dpa.ad", password: "viewer-pass-1", role_id: "viewer" })).status, 422);
+
+  assert.equal(await signIn("inv@dpa.ad", "wrong-password"), null);
+  const vc = await signIn("inv@dpa.ad", "viewer-pass-1");
+  assert.ok(vc);
+  const vme = await (await as(vc, "/api/me")).json();
+  assert.equal(vme.role, "Viewer"); assert.equal(vme.perms.finance, "none");
+  assert.equal((await as(vc, `/api/workspaces/${ws.id}/deals`)).status, 200);
+  const r403 = await as(vc, `/api/workspaces/${ws.id}/deals`, { method: "POST", body: JSON.stringify({ name: "X" }) });
+  assert.equal(r403.status, 403); assert.match((await r403.json()).detail, /Viewer/);
+  assert.equal((await as(vc, `/api/workspaces/${ws.id}/finance`)).status, 403);
+  assert.equal((await as(vc, "/api/admin")).status, 403);
+
+  // Custom role and a change to it take effect at once.
+  const role = await (await post("/api/admin/roles", { name: "Agency partner", perms: { sales: "edit" } })).json();
+  assert.equal(role.perms.finance, "none");
+  await call(`/api/admin/users/${viewer.id}`, { method: "PUT", body: JSON.stringify({ role_id: role.id }) });
+  assert.equal((await as(vc, `/api/workspaces/${ws.id}/deals`, { method: "POST", body: JSON.stringify({ name: "Partner store", skus: 100 }) })).status, 201);
+  assert.equal((await call(`/api/admin/roles/${role.id}`, { method: "DELETE" })).status, 422); // still has people
+  assert.equal((await call("/api/admin/roles/owner", { method: "PUT", body: JSON.stringify({ perms: { finance: "none" } }) })).status, 422);
+
+  // Deactivated people are signed out and can't sign in.
+  await call(`/api/admin/users/${viewer.id}`, { method: "PUT", body: JSON.stringify({ active: false }) });
+  assert.equal((await as(vc, "/api/me")).status, 401);
+  assert.equal(await signIn("inv@dpa.ad", "viewer-pass-1"), null);
+
+  // At least one active Owner account stays.
+  assert.equal((await call(`/api/admin/users/${own.id}`, { method: "PUT", body: JSON.stringify({ role_id: "admin" }) })).status, 422);
+
+  // Teams, members and the activity log.
+  assert.equal((await (await post("/api/admin/teams/starter")).json()).added, 4);
+  assert.equal((await (await post("/api/admin/teams/starter")).json()).added, 0);
+  const adm = await json("/api/admin");
+  const lead = adm.teams.find((t) => t.name === "Leadership");
+  await call(`/api/admin/teams/${lead.id}`, { method: "PUT", body: JSON.stringify({ lead_id: own.id, member_ids: [own.id] }) });
+  const adm2 = await json("/api/admin");
+  assert.deepEqual(adm2.users.find((u) => u.id === own.id).team_ids, [lead.id]);
+  assert.ok(adm2.audit.some((a) => a.user_name === "Investor" && a.module === "sales"));
+  assert.ok(adm2.audit.some((a) => a.module === "admin"));
+
+  // Own password change.
+  const oc = await signIn("founder@dpa.ad", "founder-pass-1");
+  assert.equal((await as(oc, "/api/me/password", { method: "POST", body: JSON.stringify({ current: "nope", password: "new-founder-pass" }) })).status, 422);
+  assert.equal((await as(oc, "/api/me/password", { method: "POST", body: JSON.stringify({ current: "founder-pass-1", password: "new-founder-pass" }) })).status, 200);
+  assert.ok(await signIn("founder@dpa.ad", "new-founder-pass"));
+  assert.equal((await post("/api/me/password", { current: "", password: "whatever-long" })).status, 422);
+});

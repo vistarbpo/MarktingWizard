@@ -585,3 +585,15 @@ details > summary { cursor: pointer; }
 .r-tpl-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) 56px 120px; gap: 10px; align-items: center; }
 .r-tpl-name { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) { .r-lift-row, .r-tpl-row { grid-template-columns: 100px minmax(0, 1fr) 56px; } .r-tpl-row > .subtle { display: none; } .r-lift-sub { margin-left: 0; } }
+
+/* ---- Teams & roles */
+#whoami { padding: 0 var(--s-3) var(--s-2); }
+.who-btn { width: 100%; justify-content: flex-start; flex-direction: column; align-items: flex-start; height: auto; padding: 6px 10px; gap: 0; text-align: left; }
+.who-btn .subtle { font-size: 11px; font-weight: 400; }
+.acc-matrix th, .acc-matrix td { white-space: nowrap; }
+.acc-matrix td:first-child { font-weight: 500; white-space: normal; min-width: 180px; }
+.acc-lvl { min-width: 84px; }
+.acc-lvl.lvl-edit { color: var(--good); }
+.acc-lvl.lvl-view { color: var(--accent); }
+.acc-lvl.lvl-none { color: var(--text-3); }
+.chip input { margin: 0 4px 0 0; }

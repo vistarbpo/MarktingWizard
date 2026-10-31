@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { LEVELS, MODULES, MODULE_IDS, STARTER_TEAMS, checkPassword, describe, hashPassword, levelOk, moduleFor } from "./access.js";
 import { CHANNELS as AD_CHANNELS, CREATIVE_TYPES, caseStudyPrompt, classifyAd, parseAdsCsv, roasSummary } from "./roas.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
@@ -24,14 +25,21 @@ export function createApp({ store, provider, password }) {
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
-  const validSession = (req) => {
+  // Cookie value is "<userId>~<expiry>" (signed). An older cookie with only "<expiry>" is the Owner.
+  const OWNER = { id: "owner", name: "Owner (team password)", email: "", role_id: "owner", team_ids: [], active: true };
+  const userById = (id) => (id === "owner" ? OWNER : store.db.users.find((u) => u.id === id && u.active) || null);
+  const sessionUser = (req) => {
     const m = /(?:^|;\s*)mwiz=([^;]+)/.exec(req.headers.cookie || "");
-    if (!m || !password) return false;
+    if (!m || !password) return null;
     const value = m[1].slice(0, m[1].lastIndexOf("."));
     const expected = sign(value);
-    if (expected.length !== m[1].length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(m[1]))) return false;
-    return Number(value) > Date.now();
+    if (expected.length !== m[1].length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(m[1]))) return null;
+    const [a, b] = value.split("~");
+    const uid = b === undefined ? "owner" : a, exp = Number(b === undefined ? a : b);
+    return exp > Date.now() ? userById(uid) : null;
   };
+  const validSession = (req) => !!sessionUser(req);
+  const permsOf = (user) => ({ ...Object.fromEntries(MODULE_IDS.map((m) => [m, "none"])), ...(store.db.roles.find((r) => r.id === user.role_id)?.perms || {}) });
 
   const app = express();
   app.disable("x-powered-by");
@@ -47,12 +55,18 @@ export function createApp({ store, provider, password }) {
     if (Date.now() - a.t > 15 * 60e3) { a.n = 0; a.t = Date.now(); }
     if (a.n >= 10) return res.redirect("/login?e=locked");
     const given = String(req.body.password || "");
-    const ok = password && given.length === password.length &&
-      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(password));
-    if (!ok) { a.n++; attempts.set(ip, a); return res.redirect("/login?e=" + (password ? "bad" : "unset")); }
+    const email = String(req.body.email || "").trim().toLowerCase();
+    let uid = null;
+    if (email) {
+      // A person's own login.
+      const u = store.db.users.find((x) => x.email === email && x.active);
+      if (password && u && checkPassword(given, u)) uid = u.id;
+    } else if (password && given.length === password.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(password))) uid = "owner";
+    if (!uid) { a.n++; attempts.set(ip, a); return res.redirect("/login?e=" + (password ? "bad" : "unset")); }
     attempts.delete(ip);
+    if (uid !== "owner") { const u = store.db.users.find((x) => x.id === uid); u.last_login_at = new Date().toISOString(); store.save(); }
     const expires = Date.now() + 30 * 864e5;
-    res.setHeader("Set-Cookie", `mwiz=${sign(String(expires))}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`);
+    res.setHeader("Set-Cookie", `mwiz=${sign(`${uid}~${expires}`)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`);
     res.redirect("/");
   });
   app.post("/logout", (req, res) => {
@@ -112,11 +126,143 @@ export function createApp({ store, provider, password }) {
     }
   });
 
-  // Everything below needs a session.
+  // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
-    if (validSession(req)) return next();
-    if (req.path.startsWith("/api/")) return res.status(401).json({ detail: "Please log in again." });
-    res.redirect("/login");
+    const user = sessionUser(req);
+    if (!user) {
+      if (req.path.startsWith("/api/")) return res.status(401).json({ detail: "Please log in again." });
+      return res.redirect("/login");
+    }
+    req.user = user; req.perms = permsOf(user);
+    if (req.path.startsWith("/api/")) {
+      const mod = moduleFor(req.method, req.path);
+      const need = req.method === "GET" ? "view" : "edit";
+      if (mod && !levelOk(req.perms[mod], need)) {
+        const name = MODULES.find((m) => m.id === mod)?.name || mod;
+        return res.status(403).json({ detail: `Your role (${store.db.roles.find((r) => r.id === user.role_id)?.name || user.role_id}) can't ${need === "view" ? "see" : "change"} ${name}. Ask an Owner or Admin.` });
+      }
+      if (req.method !== "GET") res.on("finish", () => {
+        if (res.statusCode < 400 && !req.path.startsWith("/api/me")) store.logAudit({ user_id: user.id, user_name: user.name, method: req.method, path: req.path.slice(0, 200), module: mod || "", summary: describe(req.method, req.path) });
+      });
+    }
+    next();
+  });
+
+  // ---- me
+  app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
+    role: store.db.roles.find((r) => r.id === req.user.role_id)?.name || req.user.role_id, perms: req.perms, modules: MODULES, shared_login: req.user.id === "owner" }));
+  app.post("/api/me/password", (req, res) => {
+    if (req.user.id === "owner") return res.status(422).json({ detail: "The team password is set in hPanel (DASHBOARD_PASSWORD). Create your own Owner account in Teams & roles instead." });
+    const u = store.db.users.find((x) => x.id === req.user.id);
+    if (!checkPassword(String(req.body?.current || ""), u)) return res.status(422).json({ detail: "Your current password is wrong." });
+    const pw = String(req.body?.password || "");
+    if (pw.length < 10) return res.status(422).json({ detail: "Use at least 10 characters." });
+    Object.assign(u, hashPassword(pw)); store.save();
+    res.json({ ok: true });
+  });
+
+  // ---- admin: people, roles, teams, activity
+  const isOwner = (req) => req.user.role_id === "owner";
+  const owners = () => store.db.users.filter((u) => u.active && u.role_id === "owner");
+  const publicUser = ({ hash, salt, ...u }) => u;
+  app.get("/api/admin", (req, res) => res.json({
+    users: store.db.users.map(publicUser), roles: store.db.roles, teams: store.db.teams, modules: MODULES, levels: LEVELS,
+    audit: store.db.audit.slice(-300).reverse(), me: req.user.id,
+  }));
+  app.post("/api/admin/users", (req, res) => {
+    const b = req.body || {};
+    const name = String(b.name || "").trim().slice(0, 100), email = String(b.email || "").trim().toLowerCase().slice(0, 200), pw = String(b.password || "");
+    if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(422).json({ detail: "Name and a valid email are required." });
+    if (store.db.users.some((u) => u.email === email)) return res.status(422).json({ detail: "Someone already uses that email." });
+    if (pw.length < 10) return res.status(422).json({ detail: "Set a temporary password of at least 10 characters." });
+    const role = store.db.roles.find((r) => r.id === b.role_id);
+    if (!role) return res.status(422).json({ detail: "Pick a role." });
+    if (role.id === "owner" && !isOwner(req)) return res.status(403).json({ detail: "Only an Owner can add another Owner." });
+    const u = { id: store.newId(), name, email, role_id: role.id, team_ids: (b.team_ids || []).map(String).filter((t) => store.db.teams.some((x) => x.id === t)), active: true, created_at: store.now(), last_login_at: null, ...hashPassword(pw) };
+    store.db.users.push(u); store.save();
+    res.status(201).json(publicUser(u));
+  });
+  app.put("/api/admin/users/:id", (req, res) => {
+    const u = store.db.users.find((x) => x.id === req.params.id);
+    if (!u) return res.status(404).json({ detail: "Person not found" });
+    const b = req.body || {};
+    const touchesOwner = u.role_id === "owner" || b.role_id === "owner";
+    if (touchesOwner && !isOwner(req)) return res.status(403).json({ detail: "Only an Owner can change an Owner." });
+    const losingOwner = u.role_id === "owner" && u.active && ((b.role_id && b.role_id !== "owner") || b.active === false);
+    if (losingOwner && owners().length <= 1) return res.status(422).json({ detail: "Keep at least one active Owner account." });
+    if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 100); if (!n) return res.status(422).json({ detail: "Name can't be empty." }); u.name = n; }
+    if (b.role_id !== undefined) { if (!store.db.roles.some((r) => r.id === b.role_id)) return res.status(422).json({ detail: "Unknown role" }); u.role_id = b.role_id; }
+    if (b.team_ids !== undefined) u.team_ids = (b.team_ids || []).map(String).filter((t) => store.db.teams.some((x) => x.id === t));
+    if (b.active !== undefined) u.active = !!b.active;
+    if (b.password) { if (String(b.password).length < 10) return res.status(422).json({ detail: "Use at least 10 characters." }); Object.assign(u, hashPassword(b.password)); }
+    store.save();
+    res.json(publicUser(u));
+  });
+  const cleanPerms = (p) => Object.fromEntries(MODULE_IDS.map((m) => [m, LEVELS.includes(p?.[m]) ? p[m] : "none"]));
+  app.post("/api/admin/roles", (req, res) => {
+    const name = String(req.body?.name || "").trim().slice(0, 60);
+    if (!name) return res.status(422).json({ detail: "Name the role." });
+    const r = { id: "r" + store.newId(), name, description: String(req.body?.description || "").slice(0, 200), perms: cleanPerms(req.body?.perms), builtin: false };
+    store.db.roles.push(r); store.save();
+    res.status(201).json(r);
+  });
+  app.put("/api/admin/roles/:id", (req, res) => {
+    const r = store.db.roles.find((x) => x.id === req.params.id);
+    if (!r) return res.status(404).json({ detail: "Role not found" });
+    if (r.locked) return res.status(422).json({ detail: "The Owner role always has full access." });
+    if (req.body?.name !== undefined) { const n = String(req.body.name).trim().slice(0, 60); if (n) r.name = n; }
+    if (req.body?.description !== undefined) r.description = String(req.body.description).slice(0, 200);
+    if (req.body?.perms) r.perms = cleanPerms({ ...r.perms, ...req.body.perms });
+    store.save();
+    res.json(r);
+  });
+  app.delete("/api/admin/roles/:id", (req, res) => {
+    const r = store.db.roles.find((x) => x.id === req.params.id);
+    if (!r) return res.status(404).json({ detail: "Role not found" });
+    if (r.builtin) return res.status(422).json({ detail: "Built-in roles can't be deleted; change their access instead." });
+    if (store.db.users.some((u) => u.role_id === r.id)) return res.status(422).json({ detail: "Move the people in this role to another role first." });
+    store.db.roles = store.db.roles.filter((x) => x.id !== r.id); store.save();
+    res.status(204).end();
+  });
+  const cleanTeam = (b, cur = {}) => ({
+    name: String(b.name ?? cur.name ?? "").trim().slice(0, 80), description: String(b.description ?? cur.description ?? "").slice(0, 300),
+    lead_id: b.lead_id !== undefined ? (store.db.users.some((u) => u.id === String(b.lead_id)) ? String(b.lead_id) : null) : (cur.lead_id ?? null),
+    modules: b.modules !== undefined ? (b.modules || []).filter((m) => MODULE_IDS.includes(m)) : (cur.modules || []),
+  });
+  app.post("/api/admin/teams", (req, res) => {
+    const t = { id: "t" + store.newId(), ...cleanTeam(req.body || {}), created_at: store.now() };
+    if (!t.name) return res.status(422).json({ detail: "Name the team." });
+    store.db.teams.push(t); store.save();
+    res.status(201).json(t);
+  });
+  app.post("/api/admin/teams/starter", (req, res) => {
+    const have = new Set(store.db.teams.map((t) => t.name.toLowerCase()));
+    const add = STARTER_TEAMS.filter((t) => !have.has(t.name.toLowerCase()));
+    add.forEach((t) => store.db.teams.push({ id: "t" + store.newId(), ...t, lead_id: null, created_at: store.now() }));
+    store.save();
+    res.status(201).json({ added: add.length });
+  });
+  app.put("/api/admin/teams/:id", (req, res) => {
+    const t = store.db.teams.find((x) => x.id === req.params.id);
+    if (!t) return res.status(404).json({ detail: "Team not found" });
+    const c = cleanTeam(req.body || {}, t);
+    if (!c.name) return res.status(422).json({ detail: "Name the team." });
+    Object.assign(t, c);
+    // Members: set the list of people in this team.
+    if (Array.isArray(req.body?.member_ids)) for (const u of store.db.users) {
+      const want = req.body.member_ids.map(String).includes(u.id), has = (u.team_ids || []).includes(t.id);
+      if (want && !has) u.team_ids = [...(u.team_ids || []), t.id];
+      if (!want && has) u.team_ids = u.team_ids.filter((x) => x !== t.id);
+    }
+    store.save();
+    res.json(t);
+  });
+  app.delete("/api/admin/teams/:id", (req, res) => {
+    if (!store.db.teams.some((x) => x.id === req.params.id)) return res.status(404).json({ detail: "Team not found" });
+    store.db.teams = store.db.teams.filter((x) => x.id !== req.params.id);
+    for (const u of store.db.users) u.team_ids = (u.team_ids || []).filter((x) => x !== req.params.id);
+    store.save();
+    res.status(204).end();
   });
 
   // marked does not export its browser build path, so resolve it from the package root.
