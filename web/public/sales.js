@@ -9,7 +9,7 @@ const HUES = ["#0f766e", "#7c3aed", "#b45309", "#be123c", "#1d4ed8", "#4d7c0f", 
 const LABEL_SIDE = { Makkah: "below", Khobar: "right", Jeddah: "left", Dammam: "above", Riyadh: "below", Buraidah: "above", Hail: "above", Taif: "below", "Al Ahsa": "below" };
 const usd = (n) => "$" + Math.round(n).toLocaleString("en-US");
 const hueFor = (id) => HUES[[...String(id)].reduce((a, c) => a + c.charCodeAt(0), 0) % HUES.length];
-const initials = (n) => String(n).split(/[\s&]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+const initials = (n) => String(n).replace(/^Sample · /, "").split(/[\s&]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 const ownerBadge = (o) => `<span class="s-owner ${o === "you" ? "you" : "ai"}">${o === "you" ? "YOU" : "AI"}</span>`;
 
 ROUTES.pipeline = { title: "Sales pipeline", crumb: "Sales", render: renderSales };

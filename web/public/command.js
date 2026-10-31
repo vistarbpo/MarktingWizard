@@ -16,8 +16,8 @@ const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   const d = await api(`/api/workspaces/${S.ws.id}/command`);
-  $("#pageActions").innerHTML = `<span class="subtle s-small">Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><button class="btn btn-sm" data-cmd="refresh">Refresh</button>`;
-  view.innerHTML = `<div class="cc">
+  $("#pageActions").innerHTML = `${d.has_samples ? `<span class="badge warn">Sample data loaded</span><button class="btn btn-sm btn-ghost btn-danger" data-cmd="unsample">Remove sample data</button>` : `<button class="btn btn-sm" data-cmd="sample">Load sample data</button>`}<span class="subtle s-small">Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><button class="btn btn-sm" data-cmd="refresh">Refresh</button>`;
+  view.innerHTML = `${d.has_samples ? `<div class="notice" style="margin-bottom:16px">You're looking at sample data in every module (names start with "Sample ·"). Remove it from the top-right before entering real data, so reports and AI drafts only use your real numbers.</div>` : ""}<div class="cc">
     ${ccGoal(d)}
     ${ccNeeds(d)}
     ${ccTiles(d)}
@@ -178,8 +178,23 @@ function ccFeed(d) {
   </section>`;
 }
 
-document.addEventListener("click", (e) => {
-  if (e.target.closest('[data-cmd="refresh"]') && S.route === "command") renderCommand($("#view"));
+document.addEventListener("click", async (e) => {
+  if (S.route !== "command") return;
+  if (e.target.closest('[data-cmd="refresh"]')) return renderCommand($("#view"));
+  const b = e.target.closest('[data-cmd="sample"],[data-cmd="unsample"]');
+  if (!b) return;
+  try {
+    if (b.dataset.cmd === "sample") {
+      b.disabled = true; b.textContent = "Loading…";
+      const c = await api(`/api/workspaces/${S.ws.id}/sample-data`, { method: "POST", body: "{}" });
+      toast(`Loaded sample data: ${c.deals} deals, ${c.tickets} conversations, ${c.candidates} candidates, ${c.expenses} expenses, ${c.tasks} tasks, ${c.feedback} requests and more`);
+    } else {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Click again: remove all sample data"; return; }
+      await api(`/api/workspaces/${S.ws.id}/sample-data`, { method: "DELETE" });
+      toast("Sample data removed. Your own data is untouched.");
+    }
+    renderCommand($("#view"));
+  } catch (err) { toast(err.message, true); renderCommand($("#view")); }
 });
 
 if (S.route === "command" && S.ws) render();

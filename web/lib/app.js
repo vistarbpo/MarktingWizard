@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
 import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
@@ -809,8 +810,14 @@ export function createApp({ store, provider, password }) {
     res.status(201).json({ added: arts.length });
   });
 
-  // ---- command center
-  app.get("/api/workspaces/:ws/command", (req, res) => { const w = ws(req, res); if (w) res.json(commandSnapshot(store, w)); });
+  // ---- command center + sample data for every module
+  app.get("/api/workspaces/:ws/command", (req, res) => { const w = ws(req, res); if (w) res.json({ ...commandSnapshot(store, w), has_samples: hasSampleData(store, w.id) }); });
+  app.post("/api/workspaces/:ws/sample-data", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    if (hasSampleData(store, w.id)) return res.status(409).json({ detail: "Sample data is already loaded. Remove it first to reload." });
+    res.status(201).json(loadSampleData(store, w.id));
+  });
+  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json(removeSampleData(store, w.id)); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));

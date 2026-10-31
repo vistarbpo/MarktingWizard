@@ -181,7 +181,7 @@ async function hOpenCand(id) {
   const c = data.candidate, M = HR.meta;
   const screen = data.activities.find((a) => a.task === "screen");
   hShow(`
-    <div class="row gap-12"><span class="s-logo lg" style="background:var(--accent)">${esc(String(c.name).split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase())}</span>
+    <div class="row gap-12"><span class="s-logo lg" style="background:var(--accent)">${esc(String(c.name).replace(/^Sample · /, "").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase())}</span>
       <div style="flex:1;min-width:0"><h2>${esc(c.name)}</h2><span class="subtle">${esc(c.role_title)}${c.source ? " · " + esc(c.source) : ""}</span></div><button class="btn btn-sm" data-haction="close">Close</button></div>
     <div class="s-facts">
       <div class="card s-fact"><span class="eyebrow">AI fit score</span><b class="num">${c.score == null ? "–" : c.score + "/10"}</b></div>

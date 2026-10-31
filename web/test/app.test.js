@@ -516,3 +516,37 @@ test("product: roadmap, feedback from support, AI clusters, specs and releases",
   const cc = await json(`/api/workspaces/${ws.id}/command`);
   assert.equal(cc.product.last_release, "v0.4");
 });
+
+test("sample data: loads into every module and removes cleanly", async () => {
+  const fresh = await (await post("/api/workspaces", { company_name: "Sample Co" })).json();
+  const W = `/api/workspaces/${fresh.id}`;
+  // Some real data first: it must survive removal.
+  await post(`${W}/deals`, { name: "Real Store", skus: 100 });
+  await post(`${W}/finance/expenses`, { vendor: "Real tool", amount_sar: 50 });
+  const counts = await (await post(`${W}/sample-data`, {})).json();
+  assert.ok(counts.deals >= 10 && counts.tickets >= 5 && counts.expenses >= 8 && counts.tasks >= 5 && counts.feedback >= 6 && counts.kpi_values >= 40);
+  assert.equal((await post(`${W}/sample-data`, {})).status, 409);
+  const cc = await json(`${W}/command`);
+  assert.equal(cc.has_samples, true);
+  assert.ok(cc.revenue.paying >= 3);
+  assert.ok(cc.finance.cash_sar === 365000);
+  assert.ok(cc.kpis.length >= 6);
+  assert.ok(cc.needs.length > 0);
+  for (const m of ["Sales", "Support", "Hiring", "Finance", "Operations", "Product"]) assert.ok(cc.feed.length || m, m);
+  const inc = (await json(`${W}/ops`)).incidents[0];
+  assert.ok(inc.resolved_at > inc.started_at);
+  assert.ok((await json(`${W}/support`)).summary.ai_resolved_pct > 0);
+
+  await call(`${W}/sample-data`, { method: "DELETE" });
+  const after = await json(`${W}/command`);
+  assert.equal(after.has_samples, false);
+  const deals = (await json(`${W}/deals`)).deals;
+  assert.deepEqual(deals.map((d) => d.name), ["Real Store"]);
+  assert.deepEqual((await json(`${W}/finance`)).expenses.map((e) => e.vendor), ["Real tool"]);
+  assert.equal((await json(`${W}/support`)).tickets.length, 0);
+  assert.equal((await json(`${W}/hr`)).candidates.length, 0);
+  assert.equal((await json(`${W}/product`)).items.length, 0);
+  assert.equal((await json(`${W}/ops`)).tasks.length, 0);
+  assert.equal((await json(`${W}/kpis`)).kpis.length, 0);
+  await call(W, { method: "DELETE" });
+});
