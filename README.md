@@ -104,3 +104,20 @@ pytest
 - Performance loop: pull campaign metrics back in and have the engine suggest the next experiment
 - Brand-voice training from existing website and content
 - Multi-user auth and client-facing share links for agencies
+
+## Hosted dashboard (Node.js, `web/`)
+
+`web/` is a small Express version of the dashboard for hosts that run Node.js but not Python
+(e.g. Hostinger Business web hosting). It password-protects the UI, streams playbooks from Claude
+and saves results to `DATA_DIR/assets.json`.
+
+| Env var | |
+|---|---|
+| `ANTHROPIC_API_KEY` | required to generate |
+| `DASHBOARD_PASSWORD` | required to log in |
+| `MWIZ_MODEL` / `MWIZ_EFFORT` | default `claude-opus-5-5` / `high` |
+| `DATA_DIR` | default `~/marketing-wizard-data` |
+
+```bash
+cd web && npm install && DASHBOARD_PASSWORD=... ANTHROPIC_API_KEY=... npm start
+```
