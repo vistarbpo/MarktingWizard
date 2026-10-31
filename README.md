@@ -23,6 +23,7 @@ team ticks steps off together; ticks reset each week, month and quarter. The sam
 | Sales pipeline | Deals by stage, insights, AI drafts | Openers, prospect pages, follow-ups, objection answers | Big-deal calls, discounts, contracts |
 | AI Support | Inbox, help center, optional live website chat | Answers from the help center in Arabic/English | Refunds, cancellations, legal, data, bugs, upset customers |
 | Finance | Cash, burn, runway, 12-month forecast, budgets, expenses, VAT | Reads bank statements, monthly report, cost review, investor update | Approve payments, file VAT with ZATCA, payroll, sign |
+| Product | Roadmap (Now/Next/Later), impact-vs-effort chart, customer feedback, releases | Imports and groups feedback, scores ideas, writes specs, changelogs (EN + AR) and help articles | What gets built, release go/no-go, partner agreements |
 | Operations | Task board, Saudi compliance + renewal deadlines, tool stack, incidents | Plans goals into tasks and owns most of them, weekly ops brief, automation review, incident notice + postmortem | Approvals, filings, signatures, live calls, incident decisions |
 | Team & hiring | AI-first org chart, hiring board | Job posts, CV screening, interview kits, onboarding | Interviews, offers, contracts |
 

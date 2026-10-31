@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -343,7 +343,7 @@ test("command center: one snapshot across modules", async () => {
   assert.ok(d.goal.next_milestone > d.goal.arr);
   assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Hiring"]);
   assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
-  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations"].includes(n.module)));
+  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations", "Product"].includes(n.module)));
   assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
   assert.equal(d.sop.length, 4);
   assert.ok(d.feed.length > 0 && d.feed.length <= 14);
@@ -455,4 +455,64 @@ test("operations: tasks, AI plan parsing, deadlines roll forward, stack and inci
   assert.equal(o.snapshot.incidents.open, 0);
   const cc = await json(`/api/workspaces/${ws.id}/command`);
   assert.ok(cc.ops.open_tasks >= 3);
+});
+
+test("product: roadmap, feedback from support, AI clusters, specs and releases", async () => {
+  const [ws] = await json("/api/workspaces");
+  const pb = `/api/workspaces/${ws.id}/product`;
+  assert.ok((await (await post(`${pb}/items/starter`, {})).json()).added >= 8);
+  assert.equal((await (await post(`${pb}/items/starter`, {})).json()).added, 0);
+  let p = await json(pb);
+  const salla = p.items.find((i) => i.title === "Salla app");
+  assert.equal(salla.status, "building");
+  assert.ok(p.snapshot.counts.now >= 1);
+
+  // Declining needs a reason.
+  const api2 = p.items.find((i) => i.title === "Public API");
+  assert.equal((await call(`${pb}/items/${api2.id}`, { method: "PUT", body: JSON.stringify({ status: "not_doing" }) })).status, 422);
+  const declined = await (await call(`${pb}/items/${api2.id}`, { method: "PUT", body: JSON.stringify({ status: "not_doing", reason: "Focus on Salla first" }) })).json();
+  assert.equal(declined.starter, false);
+
+  // Feedback: manual + imported from Support feature requests.
+  const sup = `/api/workspaces/${ws.id}/support`;
+  const t = await (await post(`${sup}/tickets`, { customer_name: "Abaya Lane", message: "Please add Zid support, we're moving from Salla" })).json();
+  await call(`${sup}/tickets/${t.id}`, { method: "PUT", body: JSON.stringify({ category: "feature-request" }) });
+  assert.equal((await (await post(`${pb}/feedback/import-support`, {})).json()).added, 1);
+  assert.equal((await (await post(`${pb}/feedback/import-support`, {})).json()).added, 0);
+  await post(`${pb}/feedback`, { text: "Want TikTok video ads from my catalog", customer: "Sahara Sport", source: "sales" });
+  p = await json(pb);
+  assert.equal(p.snapshot.feedback.unlinked, 2);
+  // Clustering: demo output isn't JSON, so nothing is proposed.
+  assert.equal((await post(`${pb}/feedback/cluster`, {})).status, 422);
+  const { parseClusters, score } = await import("../lib/product.js");
+  const zid = p.items.find((i) => i.title === "Zid app");
+  const fids = p.feedback.map((f) => f.id);
+  const clusters = parseClusters(JSON.stringify([
+    { theme: "Zid", feedback_ids: [fids[0], "999"], existing_item_id: zid.id, new_item: null },
+    { theme: "Video", feedback_ids: [fids[1]], existing_item_id: null, new_item: { title: "TikTok catalog video", type: "feature", area: "Video", effort: "M", impact: 7, confidence: 60 } },
+  ]), fids, p.items.map((i) => i.id));
+  assert.deepEqual(clusters[0].feedback_ids, [fids[0]]);
+  const applied = await (await post(`${pb}/feedback/apply-clusters`, { clusters })).json();
+  assert.deepEqual(applied, { created: 1, linked: 2 });
+  p = await json(pb);
+  assert.equal(p.snapshot.items.find((i) => i.id === zid.id).votes, 1);
+  assert.ok(p.snapshot.needs.some((n) => /AI-suggested idea/.test(n.text)));
+  assert.ok(score({ impact: 8, confidence: 50, effort: "S" }, 3) > score({ impact: 8, confidence: 50, effort: "L" }, 3));
+
+  // Spec uses linked feedback; release ships items and feeds the help center.
+  await (await post(`${pb}/items/${zid.id}/ai/spec`, {})).text();
+  assert.match(prompts.at(-1), /moving from Salla/);
+  const rel = await (await post(`${pb}/releases`, { version: "v0.4", item_ids: [salla.id, "nope"] })).json();
+  assert.deepEqual(rel.item_ids, [salla.id]);
+  p = await json(pb);
+  assert.ok(p.snapshot.needs.some((n) => /v0.4 is a draft/.test(n.text)));
+  await (await post(`${pb}/releases/${rel.id}/ai`, {})).text();
+  await call(`${pb}/releases/${rel.id}`, { method: "PUT", body: JSON.stringify({ status: "released" }) });
+  p = await json(pb);
+  assert.equal(p.items.find((i) => i.id === salla.id).status, "released");
+  assert.equal(p.snapshot.last_release.version, "v0.4");
+  const doc = p.docs.find((d) => d.kind === "release");
+  assert.equal((await post(`${pb}/docs/${doc.id}/to-help-center`, {})).status, 422); // demo text has no article
+  const cc = await json(`/api/workspaces/${ws.id}/command`);
+  assert.equal(cc.product.last_release, "v0.4");
 });

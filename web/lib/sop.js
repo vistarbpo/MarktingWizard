@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -20,6 +20,7 @@ export const SOP = [
       { id: "gaps", text: "Answer every open question on the Overview until data completeness is 100%.", owner: "Head of Growth", go: "overview" },
       { id: "launch", text: "Run the full launch kit (positioning → ICP → messaging → landing page → emails → social → ads → GTM plan).", owner: "Head of Growth", go: "playbooks" },
       { id: "helpcenter", text: "Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat.", owner: "Founder", go: "support" },
+      { id: "roadmapstart", text: "Product: load the starter roadmap and confirm what's Now, Next and Later.", owner: "Founder", go: "product" },
       { id: "ops", text: "Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login.", owner: "Founder", go: "ops" },
       { id: "pricing", text: "Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price.", owner: "Founder", go: "playbooks", param: "pricing_strategy" },
       { id: "review", text: "Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts.", owner: "Founder", go: "library" },
@@ -40,6 +41,7 @@ export const SOP = [
       { id: "support", text: "Daily: clear AI Support's \"Needs you\" list; Friday: turn repeated questions into new help articles.", owner: "Customer Success", go: "support" },
       { id: "listing", text: "Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes.", owner: "Marketplace Manager" },
       { id: "opsweek", text: "Monday: run the AI weekly operations brief, plan the week's goals with the AI planner, and clear Operations \"Needs you\" (deadlines, incidents, tasks waiting on a person).", owner: "Founder", go: "ops" },
+      { id: "product", text: "Friday: import new requests from Support into Product, let AI group them, approve or decline AI-suggested ideas, and update what's Now / Next.", owner: "Founder", go: "product" },
       { id: "learnings", text: "Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves.", owner: "Sales + Customer Success", go: "knowledge" },
       { id: "library", text: "Friday: clear the Library: everything generated this week is reviewed, used, or deleted.", owner: "Head of Growth", go: "library" },
     ],
@@ -73,6 +75,7 @@ export const SOP = [
       { id: "pricing", text: "Re-run Pricing & Packaging Strategy; decide on any price or plan change.", owner: "Founder", go: "playbooks", param: "pricing_strategy" },
       { id: "gtm", text: "Generate the next 90-Day Go-To-Market Plan and set next quarter's KPI targets.", owner: "Founder", go: "playbooks", param: "gtm_plan" },
       { id: "vat", text: "Finance → Reports & VAT: check the quarter's VAT position; if registered, a person files and pays the ZATCA return before the due date.", owner: "Founder", go: "finance" },
+      { id: "roadmap", text: "Product: re-score the roadmap with the quarter's feedback, decide the Now / Next / Later list, and write specs for what's Next.", owner: "Founder", go: "product" },
       { id: "team", text: "Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring.", owner: "Founder", go: "team" },
       { id: "targets", text: "Update KPI targets on the KPIs page to match the new plan.", owner: "Head of Growth", go: "kpis" },
     ],

@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
 import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
 import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
@@ -643,6 +644,169 @@ export function createApp({ store, provider, password }) {
       `Tool stack:\n${d.vendors.map((v) => `- ${v.name}: ${v.purpose}, SAR ${v.cost_sar}/mo${v.critical ? ", critical" : ""}`).join("\n") || "none"}`,
       `Incidents (open): ${snap.incidents.open}`].join("\n\n");
     await streamDraft(req, res, { prompt: opsReportPrompt(w, req.params.task, ctx), onDone: (text) => store.addOps("ops_reports", w.id, { task: req.params.task, title: OPS_TASKS[req.params.task].title, text }).id });
+  });
+
+  // ---- product
+  const prodData = (wsId) => ({ items: store.listOps("product_items", wsId), feedback: store.listOps("product_feedback", wsId), releases: store.listOps("product_releases", wsId) });
+  app.get("/api/product/meta", (req, res) => res.json({ statuses: ITEM_STATUS, types: ITEM_TYPES, areas: PRODUCT_AREAS, effort: Object.keys(EFFORT) }));
+  app.get("/api/workspaces/:ws/product", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const d = prodData(w.id);
+    res.json({ ...d, snapshot: productSnapshot(d), docs: store.listOps("product_docs", w.id).map(({ text, ...x }) => x).sort((a, b) => b.created_at.localeCompare(a.created_at)) });
+  });
+  app.post("/api/workspaces/:ws/product/items", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const it = cleanItem(req.body || {});
+    if (!it.title) return res.status(422).json({ detail: "title is required" });
+    const status = ITEM_STATUS_IDS.includes(req.body?.status) ? req.body.status : "idea";
+    res.status(201).json(store.addOps("product_items", w.id, { ...it, status, target: /^\d{4}-\d{2}$/.test(req.body?.target || "") ? req.body.target : null, notes: "", source: "manual", reviewed: true }));
+  });
+  app.post("/api/workspaces/:ws/product/items/starter", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const have = new Set(store.listOps("product_items", w.id).map((i) => i.title.toLowerCase()));
+    const add = STARTER_ROADMAP.filter((i) => !have.has(i.title.toLowerCase()));
+    add.forEach((i) => store.addOps("product_items", w.id, { ...i, target: null, notes: "", source: "starter", reviewed: true }, false));
+    store.save();
+    res.status(201).json({ added: add.length });
+  });
+  app.put("/api/workspaces/:ws/product/items/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const cur = store.getOps("product_items", w.id, req.params.id);
+    if (!cur) return res.status(404).json({ detail: "Item not found" });
+    const b = req.body || {}, o = {};
+    const merged = cleanItem({ ...cur, ...b });
+    for (const k of ["title", "type", "area", "problem", "effort", "impact", "confidence"]) if (b[k] !== undefined) o[k] = merged[k];
+    if (o.title === "") return res.status(422).json({ detail: "title cannot be empty" });
+    if (b.status !== undefined) {
+      if (!ITEM_STATUS_IDS.includes(b.status)) return res.status(422).json({ detail: "unknown status" });
+      if (b.status === "not_doing" && !String(b.reason || cur.reason || "").trim()) return res.status(422).json({ detail: "Say why it's not being done" });
+      o.status = b.status; o.reviewed = true; if (b.status === "released" && !cur.released_at) o.released_at = new Date().toISOString();
+    }
+    if (b.reason !== undefined) o.reason = String(b.reason).slice(0, 500);
+    if (b.reviewed !== undefined) o.reviewed = !!b.reviewed;
+    if (b.target !== undefined) o.target = /^\d{4}-\d{2}$/.test(b.target || "") ? b.target : null;
+    if (b.notes !== undefined) o.notes = String(b.notes).slice(0, 4000);
+    if (b.owner !== undefined) o.owner = String(b.owner).slice(0, 120);
+    if (cur.starter) o.starter = false; // a person has looked at it
+    res.json(store.updateOps("product_items", w.id, cur.id, o));
+  });
+  app.delete("/api/workspaces/:ws/product/items/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    if (!store.deleteOps("product_items", w.id, req.params.id)) return res.status(404).json({ detail: "Item not found" });
+    for (const f of store.listOps("product_feedback", w.id)) if (f.item_id === req.params.id) f.item_id = null;
+    for (const r of store.listOps("product_releases", w.id)) r.item_ids = (r.item_ids || []).filter((x) => x !== req.params.id);
+    store.save();
+    res.status(204).end();
+  });
+  // feedback
+  app.post("/api/workspaces/:ws/product/feedback", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const text = String(req.body?.text || "").trim().slice(0, 2000);
+    if (!text) return res.status(422).json({ detail: "Write the feedback first" });
+    const item = req.body?.item_id ? store.getOps("product_items", w.id, req.body.item_id) : null;
+    res.status(201).json(store.addOps("product_feedback", w.id, { text, source: ["support", "sales", "manual"].includes(req.body?.source) ? req.body.source : "manual", customer: String(req.body?.customer || "").slice(0, 120), item_id: item?.id || null, dismissed: false }));
+  });
+  app.post("/api/workspaces/:ws/product/feedback/import-support", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const seen = new Set(store.listOps("product_feedback", w.id).map((f) => f.source_ref).filter(Boolean));
+    let n = 0;
+    for (const t of store.listTickets(w.id).filter((t) => ["feature-request", "bug"].includes(t.category))) {
+      for (const m of t.messages.filter((m) => m.from === "customer")) {
+        const ref = `ticket:${t.id}:${m.id}`;
+        if (seen.has(ref)) continue;
+        store.addOps("product_feedback", w.id, { text: m.text.slice(0, 2000), source: "support", customer: t.customer_name || t.store || "", item_id: null, dismissed: false, source_ref: ref, kind: t.category }, false); n++;
+      }
+    }
+    store.save();
+    res.status(201).json({ added: n });
+  });
+  app.put("/api/workspaces/:ws/product/feedback/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const o = {};
+    if (req.body?.item_id !== undefined) { const it = req.body.item_id ? store.getOps("product_items", w.id, req.body.item_id) : null; if (req.body.item_id && !it) return res.status(422).json({ detail: "Unknown roadmap item" }); o.item_id = it?.id || null; }
+    if (req.body?.dismissed !== undefined) o.dismissed = !!req.body.dismissed;
+    const f = store.updateOps("product_feedback", w.id, req.params.id, o);
+    f ? res.json(f) : res.status(404).json({ detail: "Feedback not found" });
+  });
+  app.delete("/api/workspaces/:ws/product/feedback/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("product_feedback", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Feedback not found" }); });
+  app.post("/api/workspaces/:ws/product/feedback/cluster", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const fb = store.listOps("product_feedback", w.id).filter((f) => !f.item_id && !f.dismissed).slice(0, 150), items = store.listOps("product_items", w.id);
+    if (!fb.length) return res.status(422).json({ detail: "There's no ungrouped feedback to cluster." });
+    try {
+      const raw = await provider.generate({ system: "You are a product analyst. You group customer feedback precisely and return only JSON.", prompt: clusterPrompt(w, fb, items), onText: () => {} });
+      const clusters = parseClusters(raw, fb.map((f) => f.id), items.map((i) => i.id));
+      if (!clusters || !clusters.length) return res.status(422).json({ detail: "AI couldn't group that feedback. Try again, or link items by hand." });
+      res.json({ clusters });
+    } catch (e) { res.status(502).json({ detail: e instanceof LLMError ? e.message : "Something went wrong reaching Claude. Try again." }); }
+  });
+  app.post("/api/workspaces/:ws/product/feedback/apply-clusters", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const clusters = Array.isArray(req.body?.clusters) ? req.body.clusters.slice(0, 30) : [];
+    let created = 0, linked = 0;
+    for (const c of clusters) {
+      let itemId = c.existing_item_id && store.getOps("product_items", w.id, c.existing_item_id) ? String(c.existing_item_id) : null;
+      if (!itemId && c.new_item) {
+        const it = cleanItem(c.new_item);
+        if (!it.title) continue;
+        itemId = store.addOps("product_items", w.id, { ...it, status: "idea", target: null, notes: `Theme: ${String(c.theme || "").slice(0, 120)}`, source: "ai", reviewed: false }, false).id; created++;
+      }
+      if (!itemId) continue;
+      for (const fid of c.feedback_ids || []) { const f = store.getOps("product_feedback", w.id, fid); if (f && !f.item_id) { f.item_id = itemId; linked++; } }
+    }
+    store.save();
+    res.status(201).json({ created, linked });
+  });
+  // releases
+  app.post("/api/workspaces/:ws/product/releases", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const version = String(req.body?.version || "").trim().slice(0, 40);
+    if (!version) return res.status(422).json({ detail: "version is required" });
+    const ids = (Array.isArray(req.body?.item_ids) ? req.body.item_ids : []).map(String).filter((id) => store.getOps("product_items", w.id, id));
+    res.status(201).json(store.addOps("product_releases", w.id, { version, date: /^\d{4}-\d{2}-\d{2}$/.test(req.body?.date || "") ? req.body.date : null, item_ids: ids, notes: String(req.body?.notes || "").slice(0, 2000), status: "draft" }));
+  });
+  app.put("/api/workspaces/:ws/product/releases/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const r = store.getOps("product_releases", w.id, req.params.id);
+    if (!r) return res.status(404).json({ detail: "Release not found" });
+    const b = req.body || {}, o = {};
+    if (b.item_ids !== undefined) o.item_ids = (Array.isArray(b.item_ids) ? b.item_ids : []).map(String).filter((id) => store.getOps("product_items", w.id, id));
+    if (b.notes !== undefined) o.notes = String(b.notes).slice(0, 2000);
+    if (b.date !== undefined) o.date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || "") ? b.date : null;
+    if (b.status === "released" && r.status !== "released") {
+      // A person approved go: ship it and mark its items released.
+      o.status = "released"; o.date = o.date || r.date || new Date().toISOString().slice(0, 10);
+      for (const id of o.item_ids || r.item_ids || []) store.updateOps("product_items", w.id, id, { status: "released", released_at: new Date().toISOString(), reviewed: true });
+    } else if (b.status === "draft") o.status = "draft";
+    res.json(store.updateOps("product_releases", w.id, r.id, o));
+  });
+  app.delete("/api/workspaces/:ws/product/releases/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("product_releases", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Release not found" }); });
+  // AI documents: specs and release notes
+  app.get("/api/workspaces/:ws/product/docs/:id", (req, res) => { const w = ws(req, res); if (!w) return; const d = store.getOps("product_docs", w.id, req.params.id); d ? res.json(d) : res.status(404).json({ detail: "Not found" }); });
+  app.post("/api/workspaces/:ws/product/items/:id/ai/spec", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const it = store.getOps("product_items", w.id, req.params.id);
+    if (!it) return res.status(404).json({ detail: "Item not found" });
+    const fb = store.listOps("product_feedback", w.id).filter((f) => f.item_id === it.id).slice(0, 40);
+    await streamDraft(req, res, { prompt: specPrompt(w, it, fb), onDone: (text) => store.addOps("product_docs", w.id, { kind: "spec", item_id: it.id, title: `Spec: ${it.title}`, text }).id });
+  });
+  app.post("/api/workspaces/:ws/product/releases/:id/ai", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const r = store.getOps("product_releases", w.id, req.params.id);
+    if (!r) return res.status(404).json({ detail: "Release not found" });
+    const items = (r.item_ids || []).map((id) => store.getOps("product_items", w.id, id)).filter(Boolean);
+    await streamDraft(req, res, { prompt: releasePrompt(w, r, items), onDone: (text) => store.addOps("product_docs", w.id, { kind: "release", release_id: r.id, title: `Release notes ${r.version}`, text }).id });
+  });
+  app.post("/api/workspaces/:ws/product/docs/:id/to-help-center", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const d = store.getOps("product_docs", w.id, req.params.id);
+    if (!d) return res.status(404).json({ detail: "Not found" });
+    const i = d.text.search(/^##\s*Help[- ]center/im);
+    const arts = i >= 0 ? parseArticles(d.text.slice(i).replace(/^##[^\n]*\n/, "")) : [];
+    if (!arts.length) return res.status(422).json({ detail: "No help-center article found in this draft." });
+    arts.forEach((a) => store.addArticle(w.id, a, false));
+    store.save();
+    res.status(201).json({ added: arts.length });
   });
 
   // ---- command center

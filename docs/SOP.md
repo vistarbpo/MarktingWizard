@@ -19,9 +19,10 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 5 | Answer every open question on the Overview until data completeness is 100%. | Head of Growth | Overview |
 | 6 | Run the full launch kit (positioning → ICP → messaging → landing page → emails → social → ads → GTM plan). | Head of Growth | Playbooks |
 | 7 | Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat. | Founder | AI Support |
-| 8 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
-| 9 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
-| 10 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
+| 8 | Product: load the starter roadmap and confirm what's Now, Next and Later. | Founder | Product |
+| 9 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
+| 10 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
+| 11 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
 
 ## Weekly cycle
 
@@ -39,8 +40,9 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 7 | Daily: clear AI Support's "Needs you" list; Friday: turn repeated questions into new help articles. | Customer Success | AI Support |
 | 8 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
 | 9 | Monday: run the AI weekly operations brief, plan the week's goals with the AI planner, and clear Operations "Needs you" (deadlines, incidents, tasks waiting on a person). | Founder | Operations |
-| 10 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
-| 11 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
+| 10 | Friday: import new requests from Support into Product, let AI group them, approve or decline AI-suggested ideas, and update what's Now / Next. | Founder | Product |
+| 11 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
+| 12 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
 
 ## Monthly review
 
@@ -72,5 +74,6 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 4 | Re-run Pricing & Packaging Strategy; decide on any price or plan change. | Founder | Playbooks → Pricing & Packaging Strategy |
 | 5 | Generate the next 90-Day Go-To-Market Plan and set next quarter's KPI targets. | Founder | Playbooks → 90-Day Go-To-Market Plan |
 | 6 | Finance → Reports & VAT: check the quarter's VAT position; if registered, a person files and pays the ZATCA return before the due date. | Founder | Finance |
-| 7 | Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring. | Founder | Team & hiring |
-| 8 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |
+| 7 | Product: re-score the roadmap with the quarter's feedback, decide the Now / Next / Later list, and write specs for what's Next. | Founder | Product |
+| 8 | Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring. | Founder | Team & hiring |
+| 9 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |

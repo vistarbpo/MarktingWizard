@@ -6,6 +6,7 @@ import { SOP, periodFor } from "./sop.js";
 import { supportSummary } from "./support.js";
 import { financeSnapshot } from "./finance.js";
 import { opsSnapshot } from "./ops.js";
+import { productSnapshot } from "./product.js";
 
 export const ARR_GOAL = 100_000_000;
 export const MILESTONES = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
@@ -42,8 +43,11 @@ export function commandSnapshot(store, ws, now = Date.now()) {
 
   const ops = opsSnapshot({ tasks: store.listOps("ops_tasks", id), deadlines: store.listOps("ops_deadlines", id), vendors: store.listOps("ops_vendors", id), incidents: store.listOps("ops_incidents", id), now: new Date(now) });
 
+  const prod = productSnapshot({ items: store.listOps("product_items", id), feedback: store.listOps("product_feedback", id), releases: store.listOps("product_releases", id), now: new Date(now) });
+
   // Everything waiting on a person, across modules.
   const needs = [
+    ...prod.needs.map((n) => ({ module: "Product", route: "product", param: null, title: "Product", text: n.text })),
     ...ops.needs.map((n) => ({ module: "Operations", route: "ops", param: null, title: "Operations", text: n.text })),
     ...fin.needs.filter((n) => !n.soft).map((n) => ({ module: "Finance", route: "finance", param: null, title: "Finance", text: n.text })),
     ...sales.needs_you.map((n) => ({ module: "Sales", route: "pipeline", param: n.id, title: n.name, text: n.text })),
@@ -85,6 +89,7 @@ export function commandSnapshot(store, ws, now = Date.now()) {
     revenue: { paying_mrr: sales.paying_mrr, expected_mrr: sales.expected_mrr, paying: sales.paying_count, open_deals: sales.open_count, open_value: sales.open_value, funnel },
     work: { modules: work, ai: aiTotal, people: peopleTotal, ai_share: aiTotal + peopleTotal ? Math.round((aiTotal / (aiTotal + peopleTotal)) * 100) : null },
     team: { agents: hr.agents, humans: hr.humans, ai_share_roles: hr.ai_share, open_roles: hr.open_roles, planned_roles: hr.planned_roles, candidates: hr.candidates, payroll_sar: hr.planned_payroll_sar },
+    product: { now: prod.counts.now, next: prod.counts.next, later: prod.counts.later, feedback_unlinked: prod.feedback.unlinked, last_release: prod.last_release ? prod.last_release.version : null },
     ops: { open_tasks: ops.tasks.open, overdue: ops.tasks.overdue, ai_owned_pct: ops.tasks.ai_owned_pct, open_incidents: ops.incidents.open, next_deadline: ops.next_deadline },
     finance: { cash_sar: fin.cash.balance_sar, cash_as_of: fin.cash.as_of, runway_months: fin.runway_months, net_burn_sar: fin.costs.net_burn_sar, month_costs_sar: fin.costs.month_burn_sar, cash_zero_month: fin.forecast.cash_zero_month },
     support: { open: support.open, needs_you: support.needs_you.length, ai_resolved_pct: support.ai_resolved_pct, articles: support.articles, chat_on: !!ws.support?.widget_enabled },
