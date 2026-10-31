@@ -50,6 +50,12 @@ class Engine:
         task = pb.instructions.format_map(_SafeDict({k: str(v) for k, v in merged.items()}))
 
         parts = [f"<brand_brief>\n{ws.brief.as_prompt()}\n</brand_brief>"]
+        notes = self.store.list_notes(ws.id)
+        if notes:
+            body = "\n\n".join(f"[{n.category}] {n.title}\n{n.content}" for n in notes)
+            parts.append(f"<company_knowledge>\n{body}\n</company_knowledge>")
+        if pb.uses_kpis:
+            parts.append(f"<kpi_data>\n{self.kpi_table(ws.id)}\n</kpi_data>")
         for dep in pb.uses_context_from:
             prior = self.store.latest_asset(ws.id, dep)
             if prior:
@@ -58,6 +64,22 @@ class Engine:
                 )
         parts.append(f"<task title=\"{pb.title}\">\n{task}\n</task>")
         return "\n\n".join(parts), merged
+
+    def kpi_table(self, ws_id: int, last_n: int = 8) -> str:
+        kpis = self.store.list_kpis(ws_id)
+        if not kpis:
+            return "No KPIs defined yet."
+        values: dict[int, list] = {}
+        for v in self.store.list_kpi_values(ws_id):
+            values.setdefault(v.kpi_id, []).append(v)
+        lines = ["stage | kpi | unit | target | better | owner | values (period=value, oldest first)"]
+        for k in kpis:
+            vals = values.get(k.id, [])[-last_n:]
+            series = ", ".join(f"{v.period}={v.value:g}" + (f" ({v.note})" if v.note else "") for v in vals) or "no data"
+            target = "" if k.target is None else f"{k.target:g}"
+            better = "higher" if k.higher_is_better else "lower"
+            lines.append(f"{k.stage} | {k.name} | {k.unit} | {target} | {better} | {k.owner} | {series}")
+        return "\n".join(lines)
 
     def run(self, ws_id: int, playbook_key: str, inputs: Optional[dict[str, Any]] = None) -> Asset:
         pb = self.get_playbook(playbook_key)

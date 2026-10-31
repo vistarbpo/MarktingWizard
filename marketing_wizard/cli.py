@@ -19,7 +19,8 @@ from .config import get_settings
 from .engine import Engine
 from .export import asset_markdown, workspace_markdown
 from .llm import LLMError, get_provider
-from .models import BrandBrief
+from .data import DEFAULT_KPIS, data_gaps
+from .models import NOTE_CATEGORIES, BrandBrief, KPIValue, Note
 from .playbooks import PLAYBOOKS
 from .storage import Store
 
@@ -54,6 +55,24 @@ def main(argv: list[str] | None = None) -> int:
     ex = sub.add_parser("export", help="export a workspace as Markdown")
     ex.add_argument("workspace_id", type=int)
 
+    nt = sub.add_parser("note", help="add company knowledge (results, objections, competitors...)")
+    nt.add_argument("workspace_id", type=int)
+    nt.add_argument("category", choices=NOTE_CATEGORIES)
+    nt.add_argument("title")
+    nt.add_argument("content", help="text, or @path/to/file.txt")
+
+    kd = sub.add_parser("kpi-defaults", help="load the SOP KPI set into a workspace")
+    kd.add_argument("workspace_id", type=int)
+
+    kl = sub.add_parser("kpi-log", help="log a KPI value for a period")
+    kl.add_argument("workspace_id", type=int)
+    kl.add_argument("kpi", help="KPI name (case-insensitive) or id")
+    kl.add_argument("period", help="e.g. 2026-W44 or 2026-10")
+    kl.add_argument("value", type=float)
+
+    gp = sub.add_parser("gaps", help="what data the engine still needs")
+    gp.add_argument("workspace_id", type=int)
+
     a = p.parse_args(argv)
 
     if a.cmd == "serve":
@@ -86,6 +105,34 @@ def main(argv: list[str] | None = None) -> int:
             )
             ws = eng.store.get_workspace(a.workspace_id)
             print(workspace_markdown(ws, eng.store.list_assets(a.workspace_id)))
+        elif a.cmd == "note":
+            content = a.content
+            if content.startswith("@"):
+                with open(content[1:]) as f:
+                    content = f.read()
+            n = eng.store.add_note(a.workspace_id, Note(category=a.category, title=a.title, content=content))
+            print(f"Saved note {n.id}")
+        elif a.cmd == "kpi-defaults":
+            existing = {k.name for k in eng.store.list_kpis(a.workspace_id)}
+            added = [eng.store.add_kpi(a.workspace_id, k) for k in DEFAULT_KPIS if k.name not in existing]
+            print(f"Added {len(added)} KPIs")
+        elif a.cmd == "kpi-log":
+            kpis = eng.store.list_kpis(a.workspace_id)
+            match = [k for k in kpis if str(k.id) == a.kpi or k.name.lower() == a.kpi.lower()]
+            if not match:
+                print(f"KPI not found. Options: {', '.join(k.name for k in kpis)}", file=sys.stderr)
+                return 1
+            eng.store.log_kpi_value(match[0].id, KPIValue(period=a.period, value=a.value))
+            print(f"Logged {match[0].name} {a.period} = {a.value:g}")
+        elif a.cmd == "gaps":
+            ws = eng.store.get_workspace(a.workspace_id)
+            if ws is None:
+                print("workspace not found", file=sys.stderr)
+                return 1
+            kpis = eng.store.list_kpis(a.workspace_id)
+            with_values = {v.kpi_id for v in eng.store.list_kpi_values(a.workspace_id)}
+            for g in data_gaps(ws.brief, eng.store.list_notes(a.workspace_id), len(with_values), len(kpis)):
+                print(f"- [{g['area']}] {g['question']}")
         elif a.cmd == "export":
             ws = eng.store.get_workspace(a.workspace_id)
             if ws is None:

@@ -214,6 +214,30 @@ class AgencyProposal(BaseModel):
     next_steps: list[str]
 
 
+class KPIStatus(BaseModel):
+    kpi: str
+    latest_value: str
+    vs_target: str
+    trend: str
+    status: str = Field(description="green, yellow, red, or no-data")
+
+
+class Action(BaseModel):
+    action: str
+    owner: str
+    due: str
+    expected_impact: str
+
+
+class KPIReport(BaseModel):
+    headline: str = Field(description="One sentence: are we on track, with the key number.")
+    what_happened: list[KPIStatus]
+    why: list[str] = Field(description="Likely causes of red/yellow KPIs, broken down by channel, segment or funnel step.")
+    so_what: str = Field(description="Effect on the north star and quarter goals.")
+    now_what: list[Action] = Field(description="At most 3 actions.")
+    data_gaps: list[str] = Field(description="Missing or suspicious data to fix before the next report.")
+
+
 # -------------------------------------------------------------- registry ---
 
 @dataclass
@@ -236,6 +260,8 @@ class Playbook:
     # Earlier playbooks whose latest output is fed in as context ("brand memory").
     uses_context_from: list[str] = field(default_factory=list)
     for_agencies: bool = False
+    # Feed the workspace's KPI definitions and logged values into the prompt.
+    uses_kpis: bool = False
 
     @property
     def schema(self) -> dict[str, Any]:
@@ -249,6 +275,7 @@ class Playbook:
             "description": self.description,
             "for_agencies": self.for_agencies,
             "uses_context_from": self.uses_context_from,
+            "uses_kpis": self.uses_kpis,
             "inputs": [vars(i) for i in self.inputs],
         }
 
@@ -445,6 +472,25 @@ register(Playbook(
     output_model=AgencyProposal,
     inputs=[InputField("prospect", "Prospect", "", "Who they are, what they need, budget if known")],
     for_agencies=True,
+))
+
+
+register(Playbook(
+    key="kpi_report",
+    title="KPI Report & Analysis",
+    category="Reports",
+    description="Analyzes your logged KPIs: what happened, why, so what, now what.",
+    instructions=(
+        "Write the {report_type} report from the KPI data provided. Follow the four steps: what "
+        "happened (each KPI vs target and previous period, marked green/yellow/red), why (break red "
+        "and yellow KPIs down to likely causes), so what (effect on the north star and quarterly "
+        "goals), now what (at most 3 actions with owner and due date). Use only the numbers given - "
+        "if data is missing, say so in data_gaps instead of guessing."
+    ),
+    output_model=KPIReport,
+    inputs=[InputField("report_type", "Report type", "weekly KPI pulse", "weekly KPI pulse, monthly business review, quarterly review")],
+    uses_context_from=["gtm_plan"],
+    uses_kpis=True,
 ))
 
 

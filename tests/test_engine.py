@@ -97,3 +97,48 @@ def test_api_flow(engine):
     assert md.startswith("# Beta Co - Marketing Kit")
     assert client.get("/").status_code == 200
     assert client.delete(f"/api/workspaces/{ws['id']}").status_code == 204
+
+
+def test_knowledge_and_kpis_feed_prompts(engine, ws):
+    from marketing_wizard.data import DEFAULT_KPIS
+    from marketing_wizard.models import KPIValue, Note
+
+    engine.store.add_note(ws.id, Note(category="results", title="Case A", content="ROAS 2.1 -> 3.4"))
+    kpi = engine.store.add_kpi(ws.id, DEFAULT_KPIS[2])
+    engine.store.log_kpi_value(kpi.id, KPIValue(period="2026-W43", value=40))
+    engine.store.log_kpi_value(kpi.id, KPIValue(period="2026-W44", value=55))
+    engine.store.log_kpi_value(kpi.id, KPIValue(period="2026-W44", value=60))  # overwrite
+
+    engine.run(ws.id, "kpi_report")
+    prompt = engine.provider.prompts[-1]
+    assert "ROAS 2.1 -> 3.4" in prompt
+    assert "2026-W43=40, 2026-W44=60" in prompt
+
+    engine.run(ws.id, "positioning")
+    assert "<kpi_data>" not in engine.provider.prompts[-1]
+    assert "<company_knowledge>" in engine.provider.prompts[-1]
+
+
+def test_data_api_and_gaps(engine):
+    client = TestClient(create_app(engine.store, engine))
+    ws = client.post("/api/workspaces", json={"company_name": "Gap Co"}).json()
+    base = f"/api/workspaces/{ws['id']}"
+
+    gaps = client.get(f"{base}/gaps").json()
+    assert any(g["field"] == "pricing" for g in gaps)
+    assert any(g["area"] == "kpis" for g in gaps)
+
+    assert client.post(f"{base}/notes", json={"category": "nope", "title": "t", "content": "c"}).status_code == 422
+    note = client.post(f"{base}/notes", json={"category": "results", "title": "t", "content": "c"}).json()
+    assert not any(g["field"] == "results" for g in client.get(f"{base}/gaps").json())
+
+    kpis = client.post(f"{base}/kpis/load-defaults").json()
+    assert len(kpis) > 10
+    assert client.post(f"{base}/kpis/load-defaults").json() == []  # idempotent
+    r = client.post(f"{base}/kpis/{kpis[0]['id']}/values", json={"period": "2026-W44", "value": 12})
+    assert r.status_code == 201
+    assert len(client.get(f"{base}/kpis").json()["values"]) == 1
+    assert client.post(f"{base}/kpis/99999/values", json={"period": "x", "value": 1}).status_code == 404
+
+    assert client.delete(f"{base}/notes/{note['id']}").status_code == 204
+    assert client.get("/static/app.js").status_code == 200

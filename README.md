@@ -25,6 +25,11 @@ battlecards and a 90-day go-to-market plan.
   to export, or to push into other tools.
 * **Brand memory**: playbooks automatically receive earlier strategy outputs (for example,
   the landing page is written from your positioning and messaging matrix), so everything stays on-message.
+* **Company data**: a structured brief, a knowledge base (results, objections, competitors,
+  sales notes), and a KPI tracker. Every playbook reads all of it. The Overview page lists what
+  the engine still needs as plain questions.
+* **KPI reports**: log weekly or monthly KPI values (20 SOP KPIs load in one click), then the
+  `kpi_report` playbook analyzes them in four steps: what happened, why, so what, now what.
 * **Launch kit**: one click runs the whole chain, from positioning through ads to a GTM plan.
 * **No made-up proof**: the engine is told never to invent customers, stats or testimonials. It
   writes `[ADD CUSTOMER METRIC]` style placeholders instead.
@@ -44,6 +49,7 @@ battlecards and a 90-day go-to-market plan.
 | `gtm_plan` | 90-day phased plan with channels, actions, KPIs and budget split |
 | `competitor_battlecards` | How to win, landmine questions, objection handling |
 | `content_calendar` | Multi-week, multi-channel publishing calendar |
+| `kpi_report` | KPI analysis: status per KPI, causes, impact, and 3 actions with owners |
 | `agency_proposal` | *(agencies)* A tailored proposal to win a prospect, with tiered pricing |
 
 To add a playbook, define a Pydantic output model in `marketing_wizard/playbooks.py` and call `register(...)`.
@@ -64,6 +70,10 @@ mwiz run 1 positioning
 mwiz run 1 social_posts -i platform=LinkedIn -i count=10 -i topic="forecast accuracy"
 mwiz launch-kit 1 > launch-kit.md
 mwiz export 1 > everything.md
+mwiz note 1 objections "Already use Canva" "Canva needs a designer per SKU..."
+mwiz kpi-defaults 1
+mwiz kpi-log 1 "Signups / installs" 2026-W44 57
+mwiz gaps 1                                # what data is still missing
 ```
 
 HTTP API (interactive docs at `/docs`):
@@ -76,6 +86,9 @@ HTTP API (interactive docs at `/docs`):
 | `POST` | `/api/workspaces/{id}/launch-kit` | run the full chain |
 | `GET` | `/api/workspaces/{id}/assets` | generated history |
 | `GET` | `/api/workspaces/{id}/export` | everything as Markdown |
+| `GET/POST` | `/api/workspaces/{id}/notes` | company knowledge |
+| `GET/POST` | `/api/workspaces/{id}/kpis` | KPI definitions and values (`/kpis/load-defaults`, `/kpis/{kpi}/values`) |
+| `GET` | `/api/workspaces/{id}/gaps` | questions for missing data |
 
 ## Configuration
 

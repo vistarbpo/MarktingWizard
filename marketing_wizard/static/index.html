@@ -4,155 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Marketing Wizard</title>
-<style>
-:root{--bg:#f6f7fb;--panel:#fff;--ink:#16181d;--muted:#5d6472;--line:#e3e6ee;--accent:#4f46e5;--accent-ink:#fff;--soft:#eef0ff}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--panel:#171a21;--ink:#e8eaf0;--muted:#9aa2b1;--line:#2a2f3a;--accent:#818cf8;--accent-ink:#0f1115;--soft:#1e2130}}
-*{box-sizing:border-box}
-body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
-header h1{font-size:18px;margin:0}
-.pill{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--muted)}
-.layout{display:grid;grid-template-columns:280px 1fr;min-height:calc(100vh - 56px)}
-aside{border-right:1px solid var(--line);padding:16px;background:var(--panel)}
-main{padding:20px;max-width:1100px;width:100%}
-h2{font-size:16px;margin:0 0 12px}
-h3{font-size:14px;margin:16px 0 6px}
-button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 12px;border-radius:8px;cursor:pointer}
-button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-button:disabled{opacity:.6;cursor:wait}
-input,textarea,select{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
-textarea{min-height:60px;resize:vertical}
-label{display:block;font-size:13px;color:var(--muted);margin:8px 0 3px}
-.ws{padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:4px}
-.ws.active,.ws:hover{background:var(--soft)}
-.ws small{color:var(--muted);display:block}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
-.card p{margin:4px 0 10px;color:var(--muted);font-size:13px}
-.cat{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.out{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}
-.out ul{margin:4px 0 8px;padding-left:20px}
-.kv{margin:4px 0}.kv b{color:var(--muted);font-weight:600}
-.nest{border-left:2px solid var(--line);padding-left:12px;margin:6px 0}
-.hidden{display:none}
-.err{color:#dc2626}
-.history{font-size:13px}
-.history div{cursor:pointer;padding:4px 0;color:var(--muted)}
-.history div:hover{color:var(--ink)}
-@media (max-width:760px){.layout{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line)}main{padding:16px}}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header>
-  <h1>🪄 Marketing Wizard</h1>
-  <span class="pill" id="provider">…</span>
-</header>
-<div class="layout">
-  <aside>
-    <div class="row" style="justify-content:space-between"><h2>Brands / Clients</h2><button onclick="showNew()">+ New</button></div>
-    <div id="wsList"></div>
-    <h3>History</h3>
-    <div id="history" class="history"></div>
-  </aside>
-  <main>
-    <section id="newForm" class="card hidden">
-      <h2 id="formTitle">New brand brief</h2>
-      <p>Fill this once. Every playbook reuses it — and the strategy you generate becomes memory for the next one.</p>
-      <form id="briefForm"></form>
-      <div class="row" style="margin-top:12px"><button class="primary" onclick="saveBrief()">Save brief</button><button onclick="hideNew()">Cancel</button></div>
-    </section>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--accent)"/><path d="M6 13.5 9 6.5l2 4.5 1.5-2.5L14 13.5" stroke="var(--accent-ink)" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Marketing Wizard</span>
+    </div>
 
-    <section id="wsView" class="hidden">
-      <div class="row" style="justify-content:space-between;margin-bottom:12px">
-        <h2 id="wsTitle"></h2>
-        <div class="row">
-          <button onclick="editBrief()">Edit brief</button>
-          <button onclick="exportKit()">Export Markdown</button>
-          <button class="primary" id="kitBtn" onclick="launchKit()">✨ Generate full launch kit</button>
-        </div>
+    <div class="ws-switch">
+      <label class="eyebrow" for="wsSelect">Workspace</label>
+      <div class="row gap-8">
+        <select id="wsSelect" class="input input-sm"></select>
+        <button class="btn btn-icon" title="New workspace" aria-label="New workspace" data-action="new-ws">
+          <svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
-      <div class="grid" id="pbGrid"></div>
-      <div id="runPanel" class="out hidden"></div>
-      <div id="output" class="out hidden"></div>
-    </section>
+    </div>
 
-    <section id="empty" class="card">
-      <h2>Marketing for SaaS & agencies, on autopilot</h2>
-      <p>Create a brand (or one per client if you're an agency), describe the product once, then generate positioning, personas, landing pages, outbound sequences, social posts, ad campaigns, SEO plans and a 90-day GTM plan — each building on the last.</p>
-      <button class="primary" onclick="showNew()">Create your first brand</button>
-    </section>
+    <nav class="nav" id="nav">
+      <a data-route="overview">Overview</a>
+      <div class="nav-group">Company data</div>
+      <a data-route="brief">Brief</a>
+      <a data-route="knowledge">Knowledge</a>
+      <a data-route="kpis">KPIs</a>
+      <div class="nav-group">Execution</div>
+      <a data-route="playbooks">Playbooks</a>
+      <a data-route="library">Library</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <span class="status-dot" id="providerDot"></span>
+      <span id="providerLabel" class="muted">Connecting…</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow" id="crumb"></div>
+        <h1 id="pageTitle"></h1>
+      </div>
+      <div class="row gap-8" id="pageActions"></div>
+    </header>
+    <section id="view" class="view"></section>
   </main>
 </div>
-<script>
-const FIELDS=[
- ["company_name","Company name *","input"],["product_name","Product name","input"],["website","Website","input"],
- ["business_model","Business model","select",["saas","agency","other"]],
- ["one_liner","One-liner: what it does","textarea"],["category","Category","input"],
- ["target_customers","Target customers (industries, size, roles)","textarea"],
- ["problems_solved","Problems solved","textarea"],["key_features","Key features","textarea"],
- ["differentiators","Differentiators","textarea"],["competitors","Competitors","textarea"],
- ["pricing","Pricing","input"],["proof_points","Proof points (customers, metrics, case studies)","textarea"],
- ["brand_voice","Brand voice","input"],["goals","Marketing goals","textarea"],["budget","Budget","input"],
- ["extra_notes","Anything else","textarea"]];
-let state={ws:null,playbooks:[],kit:[],editing:false};
-const $=id=>document.getElementById(id);
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-async function api(path,opt={}){const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opt});
- if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail||m}catch{}throw new Error(typeof m==="string"?m:JSON.stringify(m))}
- return r.status===204?null:(r.headers.get("content-type")||"").includes("json")?r.json():r.text()}
 
-function buildForm(brief={}){$("briefForm").innerHTML=FIELDS.map(([k,l,t,opts])=>{
- const v=esc(brief[k]||"");
- const ctl=t==="textarea"?`<textarea name="${k}">${v}</textarea>`:t==="select"?`<select name="${k}">${opts.map(o=>`<option ${o===brief[k]?"selected":""}>${o}</option>`).join("")}</select>`:`<input name="${k}" value="${v}">`;
- return `<label>${l}</label>${ctl}`}).join("")}
-function showNew(){state.editing=false;$("formTitle").textContent="New brand brief";buildForm();show("newForm")}
-function editBrief(){state.editing=true;$("formTitle").textContent="Edit brief";buildForm(state.ws.brief);show("newForm")}
-function hideNew(){show(state.ws?"wsView":"empty")}
-function show(id){["newForm","wsView","empty"].forEach(x=>$(x).classList.toggle("hidden",x!==id))}
-async function saveBrief(){const brief=Object.fromEntries(new FormData($("briefForm")));
- if(!brief.company_name){alert("Company name is required");return}
- const ws=state.editing?await api(`/api/workspaces/${state.ws.id}`,{method:"PUT",body:JSON.stringify(brief)}):await api("/api/workspaces",{method:"POST",body:JSON.stringify(brief)});
- await loadWorkspaces();openWs(ws.id)}
-
-async function loadWorkspaces(){const list=await api("/api/workspaces");
- $("wsList").innerHTML=list.map(w=>`<div class="ws ${state.ws&&state.ws.id===w.id?"active":""}" onclick="openWs(${w.id})">${esc(w.brief.company_name)}<small>${esc(w.brief.business_model)}${w.brief.category?" · "+esc(w.brief.category):""}</small></div>`).join("")||'<p class="pill">No brands yet</p>';
- return list}
-async function openWs(id){state.ws=await api(`/api/workspaces/${id}`);$("wsTitle").textContent=state.ws.brief.company_name;
- const agency=state.ws.brief.business_model==="agency";
- $("pbGrid").innerHTML=state.playbooks.filter(p=>!p.for_agencies||agency).map(p=>`<div class="card"><div class="cat">${esc(p.category)}</div><b>${esc(p.title)}</b><p>${esc(p.description)}</p><button onclick="openRun('${p.key}')">Generate</button></div>`).join("");
- $("runPanel").classList.add("hidden");$("output").classList.add("hidden");show("wsView");loadWorkspaces();loadHistory()}
-async function loadHistory(){const assets=await api(`/api/workspaces/${state.ws.id}/assets`);
- const t=k=>(state.playbooks.find(p=>p.key===k)||{title:k}).title;
- $("history").innerHTML=assets.map(a=>`<div onclick='renderAsset(${JSON.stringify(a).replace(/'/g,"&#39;")})'>#${a.id} ${esc(t(a.playbook))}</div>`).join("")||"Nothing generated yet"}
-
-function openRun(key){const p=state.playbooks.find(x=>x.key===key);
- const ctx=p.uses_context_from.length?`<p>Builds on: ${p.uses_context_from.map(esc).join(", ")} (if generated)</p>`:"";
- $("runPanel").innerHTML=`<h2>${esc(p.title)}</h2>${ctx}<form id="runForm">${p.inputs.map(i=>`<label>${esc(i.label)}${i.help?` — <i>${esc(i.help)}</i>`:""}</label><input name="${i.name}" value="${esc(i.default)}">`).join("")}</form><div class="row" style="margin-top:12px"><button class="primary" id="runBtn" onclick="runPb('${key}')">Generate</button><span id="runMsg"></span></div>`;
- $("runPanel").classList.remove("hidden");$("runPanel").scrollIntoView({behavior:"smooth"})}
-async function runPb(key){const btn=$("runBtn");btn.disabled=true;$("runMsg").textContent="Working… strategy takes a minute.";
- try{const inputs=Object.fromEntries(new FormData($("runForm")));const a=await api(`/api/workspaces/${state.ws.id}/run/${key}`,{method:"POST",body:JSON.stringify({inputs})});$("runMsg").textContent="";renderAsset(a);loadHistory()}
- catch(e){$("runMsg").innerHTML=`<span class="err">${esc(e.message)}</span>`}finally{btn.disabled=false}}
-async function launchKit(){const b=$("kitBtn");b.disabled=true;b.textContent="Generating launch kit… (several minutes)";
- try{await api(`/api/workspaces/${state.ws.id}/launch-kit`,{method:"POST",body:"{}"});await loadHistory();exportKit()}
- catch(e){alert(e.message)}finally{b.disabled=false;b.textContent="✨ Generate full launch kit"}}
-
-function lab(k){return k.replace(/_/g," ").replace(/^./,c=>c.toUpperCase())}
-function render(v){if(Array.isArray(v)){if(v.every(x=>typeof x!=="object"))return `<ul>${v.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`;
-  return v.map(x=>`<div class="nest">${render(x)}</div>`).join("")}
- if(v&&typeof v==="object")return Object.entries(v).map(([k,x])=>typeof x==="object"?`<h3>${esc(lab(k))}</h3>${render(x)}`:`<div class="kv"><b>${esc(lab(k))}:</b> ${esc(x).replace(/\n/g,"<br>")}</div>`).join("");
- return esc(v)}
-function renderAsset(a){const p=state.playbooks.find(x=>x.key===a.playbook)||{title:a.playbook};
- $("output").innerHTML=`<div class="row" style="justify-content:space-between"><h2>${esc(p.title)} <span class="pill">#${a.id} · ${esc(a.provider)}</span></h2><button onclick="copyMd(${a.id})">Copy as Markdown</button></div>${render(a.output)}`;
- $("output").classList.remove("hidden");$("output").scrollIntoView({behavior:"smooth"})}
-async function copyMd(id){const md=await api(`/api/assets/${id}/markdown`);try{await navigator.clipboard.writeText(md);alert("Copied")}catch{prompt("Copy:",md)}}
-async function exportKit(){const md=await api(`/api/workspaces/${state.ws.id}/export`);
- const blob=new Blob([md],{type:"text/markdown"});const u=URL.createObjectURL(blob);const l=document.createElement("a");
- l.href=u;l.download=`${state.ws.brief.company_name.replace(/\W+/g,"-")}-marketing-kit.md`;l.click();URL.revokeObjectURL(u)}
-
-(async()=>{const h=await api("/api/health");$("provider").textContent=h.provider==="claude"?`Claude · ${h.model}`:"Offline demo mode (set ANTHROPIC_API_KEY)";
- const pb=await api("/api/playbooks");state.playbooks=pb.playbooks;state.kit=pb.launch_kit;
- const list=await loadWorkspaces();if(list.length)openWs(list[0].id)})();
-</script>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog id="dialog" class="dialog"></dialog>
+<script src="/static/app.js"></script>
 </body>
 </html>

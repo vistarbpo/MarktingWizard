@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from typing import Optional
 
-from .models import Asset, BrandBrief, Workspace
+from .models import KPI, Asset, BrandBrief, KPIValue, Note, Workspace
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -26,6 +26,27 @@ CREATE TABLE IF NOT EXISTS assets (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_assets_ws ON assets(workspace_id, playbook, id);
+CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kpis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kpi_values (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kpi_id INTEGER NOT NULL REFERENCES kpis(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    value REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    UNIQUE (kpi_id, period)
+);
 """
 
 
@@ -103,6 +124,75 @@ class Store:
     def latest_asset(self, ws_id: int, playbook: str) -> Optional[Asset]:
         items = self.list_assets(ws_id, playbook)
         return items[0] if items else None
+
+    # -- knowledge notes
+    def add_note(self, ws_id: int, note: Note) -> Note:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO notes (workspace_id, category, title, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                (ws_id, note.category, note.title, note.content, note.created_at.isoformat()),
+            )
+        return note.model_copy(update={"id": cur.lastrowid, "workspace_id": ws_id})
+
+    def list_notes(self, ws_id: int) -> list[Note]:
+        rows = self._conn.execute(
+            "SELECT * FROM notes WHERE workspace_id = ? ORDER BY category, id", (ws_id,)
+        ).fetchall()
+        return [Note(**dict(r)) for r in rows]
+
+    def delete_note(self, ws_id: int, note_id: int) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM notes WHERE id = ? AND workspace_id = ?", (note_id, ws_id)
+            )
+        return cur.rowcount > 0
+
+    # -- KPIs
+    def add_kpi(self, ws_id: int, kpi: KPI) -> KPI:
+        data = kpi.model_dump_json(exclude={"id", "workspace_id"})
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO kpis (workspace_id, data) VALUES (?, ?)", (ws_id, data)
+            )
+        return kpi.model_copy(update={"id": cur.lastrowid, "workspace_id": ws_id})
+
+    def list_kpis(self, ws_id: int) -> list[KPI]:
+        rows = self._conn.execute(
+            "SELECT * FROM kpis WHERE workspace_id = ? ORDER BY id", (ws_id,)
+        ).fetchall()
+        return [KPI.model_validate_json(r["data"]).model_copy(update={"id": r["id"], "workspace_id": ws_id}) for r in rows]
+
+    def get_kpi(self, kpi_id: int) -> Optional[KPI]:
+        r = self._conn.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+        if not r:
+            return None
+        return KPI.model_validate_json(r["data"]).model_copy(update={"id": r["id"], "workspace_id": r["workspace_id"]})
+
+    def delete_kpi(self, ws_id: int, kpi_id: int) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM kpis WHERE id = ? AND workspace_id = ?", (kpi_id, ws_id))
+        return cur.rowcount > 0
+
+    def log_kpi_value(self, kpi_id: int, value: KPIValue) -> KPIValue:
+        """Insert or overwrite the value for one KPI and period."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO kpi_values (kpi_id, period, value, note) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(kpi_id, period) DO UPDATE SET value = excluded.value, note = excluded.note",
+                (kpi_id, value.period, value.value, value.note),
+            )
+            row = self._conn.execute(
+                "SELECT id FROM kpi_values WHERE kpi_id = ? AND period = ?", (kpi_id, value.period)
+            ).fetchone()
+        return value.model_copy(update={"id": row["id"], "kpi_id": kpi_id})
+
+    def list_kpi_values(self, ws_id: int) -> list[KPIValue]:
+        rows = self._conn.execute(
+            "SELECT v.* FROM kpi_values v JOIN kpis k ON k.id = v.kpi_id"
+            " WHERE k.workspace_id = ? ORDER BY v.period, v.kpi_id",
+            (ws_id,),
+        ).fetchall()
+        return [KPIValue(**dict(r)) for r in rows]
 
     @staticmethod
     def _ws(row: sqlite3.Row) -> Workspace:

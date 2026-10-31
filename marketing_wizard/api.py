@@ -17,7 +17,8 @@ from .config import get_settings
 from .engine import Engine, PlaybookNotFound
 from .export import asset_markdown, workspace_markdown
 from .llm import LLMError, get_provider
-from .models import Asset, BrandBrief, Workspace
+from .data import DEFAULT_KPIS, data_gaps
+from .models import KPI, NOTE_CATEGORIES, Asset, BrandBrief, KPIValue, Note, Workspace
 from .playbooks import LAUNCH_KIT, PLAYBOOKS
 from .storage import Store
 
@@ -97,6 +98,64 @@ def create_app(store: Optional[Store] = None, engine: Optional[Engine] = None) -
             return engine.run_launch_kit(ws_id, req.inputs)
         except LLMError as e:
             raise HTTPException(502, str(e))
+
+    # -- company knowledge ("add more data")
+    @app.get("/api/note-categories")
+    def note_categories() -> list[str]:
+        return NOTE_CATEGORIES
+
+    @app.get("/api/workspaces/{ws_id}/notes")
+    def list_notes(ws_id: int) -> list[Note]:
+        _ws(ws_id)
+        return store.list_notes(ws_id)
+
+    @app.post("/api/workspaces/{ws_id}/notes", status_code=201)
+    def add_note(ws_id: int, note: Note) -> Note:
+        _ws(ws_id)
+        if note.category not in NOTE_CATEGORIES:
+            raise HTTPException(422, f"category must be one of {NOTE_CATEGORIES}")
+        return store.add_note(ws_id, note)
+
+    @app.delete("/api/workspaces/{ws_id}/notes/{note_id}", status_code=204)
+    def delete_note(ws_id: int, note_id: int) -> None:
+        if not store.delete_note(ws_id, note_id):
+            raise HTTPException(404, "Note not found")
+
+    # -- KPIs
+    @app.get("/api/workspaces/{ws_id}/kpis")
+    def list_kpis(ws_id: int) -> dict:
+        _ws(ws_id)
+        return {"kpis": store.list_kpis(ws_id), "values": store.list_kpi_values(ws_id)}
+
+    @app.post("/api/workspaces/{ws_id}/kpis", status_code=201)
+    def add_kpi(ws_id: int, kpi: KPI) -> KPI:
+        _ws(ws_id)
+        return store.add_kpi(ws_id, kpi)
+
+    @app.post("/api/workspaces/{ws_id}/kpis/load-defaults", status_code=201)
+    def load_default_kpis(ws_id: int) -> list[KPI]:
+        _ws(ws_id)
+        existing = {k.name for k in store.list_kpis(ws_id)}
+        return [store.add_kpi(ws_id, k) for k in DEFAULT_KPIS if k.name not in existing]
+
+    @app.delete("/api/workspaces/{ws_id}/kpis/{kpi_id}", status_code=204)
+    def delete_kpi(ws_id: int, kpi_id: int) -> None:
+        if not store.delete_kpi(ws_id, kpi_id):
+            raise HTTPException(404, "KPI not found")
+
+    @app.post("/api/workspaces/{ws_id}/kpis/{kpi_id}/values", status_code=201)
+    def log_value(ws_id: int, kpi_id: int, value: KPIValue) -> KPIValue:
+        kpi = store.get_kpi(kpi_id)
+        if kpi is None or kpi.workspace_id != ws_id:
+            raise HTTPException(404, "KPI not found")
+        return store.log_kpi_value(kpi_id, value)
+
+    @app.get("/api/workspaces/{ws_id}/gaps")
+    def gaps(ws_id: int) -> list[dict]:
+        ws = _ws(ws_id)
+        kpis = store.list_kpis(ws_id)
+        with_values = {v.kpi_id for v in store.list_kpi_values(ws_id)}
+        return data_gaps(ws.brief, store.list_notes(ws_id), len(with_values), len(kpis))
 
     @app.get("/api/assets/{asset_id}/markdown", response_class=PlainTextResponse)
     def asset_md(asset_id: int) -> str:
