@@ -8,6 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
+import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
 import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
 import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, SAMPLE_TEAM, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
 import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
@@ -392,6 +393,88 @@ export function createApp({ store, provider, password }) {
         }
         return store.addHrActivity(w.id, "candidate", c.id, { type: "ai_draft", by: "ai", task: req.params.task, text }).id;
       } });
+  });
+
+  // ---- finance
+  const finSnap = (w) => financeSnapshot({ expenses: store.listExpenses(w.id), cash: store.listCash(w.id), deals: store.listDeals(w.id), roles: store.listHrRoles(w.id), settings: w.finance });
+  const cleanExpense = (b, partial = false) => {
+    const out = {}, err = [];
+    if (b.date !== undefined) { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) err.push("date must be YYYY-MM-DD"); else out.date = String(b.date); }
+    if (b.vendor !== undefined) out.vendor = String(b.vendor || "").trim().slice(0, 120);
+    for (const k of ["amount_sar", "vat_sar"]) if (b[k] !== undefined) { const n = Math.round(Number(b[k]) * 100) / 100; if (!(n >= 0)) err.push(`${k} must be a positive number`); else out[k] = n; }
+    if (b.category !== undefined) out.category = CAT_IDS.includes(b.category) ? b.category : "other";
+    if (b.recurring !== undefined) out.recurring = ["monthly", "yearly", "one-off"].includes(b.recurring) ? b.recurring : "one-off";
+    if (b.note !== undefined) out.note = String(b.note || "").slice(0, 300);
+    if (!partial) { if (!out.vendor) err.push("vendor is required"); if (!out.amount_sar) err.push("amount_sar is required"); }
+    return { out, err };
+  };
+  app.get("/api/finance/meta", (req, res) => res.json({ categories: FIN_CATEGORIES, tasks: Object.fromEntries(Object.entries(FIN_TASKS).map(([k, t]) => [k, t.title])) }));
+  app.get("/api/workspaces/:ws/finance", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    res.json({ snapshot: finSnap(w), expenses: store.listExpenses(w.id), cash: store.listCash(w.id), reports: store.listFinanceReports(w.id).map(({ text, ...r }) => r) });
+  });
+  app.put("/api/workspaces/:ws/finance/settings", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const b = req.body || {}, f = {};
+    if (b.vat_registered !== undefined) f.vat_registered = !!b.vat_registered;
+    if (b.include_hires !== undefined) f.include_hires = !!b.include_hires;
+    if (b.mrr_growth_pct !== undefined) { const n = Number(b.mrr_growth_pct); if (!(n >= -50 && n <= 200)) return res.status(422).json({ detail: "growth must be between -50 and 200" }); f.mrr_growth_pct = n; }
+    if (b.budgets && typeof b.budgets === "object") f.budgets = Object.fromEntries(Object.entries(b.budgets).filter(([k]) => CAT_IDS.includes(k)).map(([k, v]) => [k, Math.max(0, Number(v) || 0)]));
+    res.json(store.setFinanceSettings(w.id, f));
+  });
+  app.post("/api/workspaces/:ws/finance/cash", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const date = String(req.body?.date || ""), bal = Number(req.body?.balance_sar);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(bal)) return res.status(422).json({ detail: "date (YYYY-MM-DD) and balance_sar are required" });
+    res.status(201).json(store.addCash(w.id, { date, balance_sar: Math.round(bal * 100) / 100, note: String(req.body?.note || "").slice(0, 200) }));
+  });
+  app.delete("/api/workspaces/:ws/finance/cash/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteCash(w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Not found" }); });
+  app.post("/api/workspaces/:ws/finance/expenses", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { out, err } = cleanExpense({ date: new Date().toISOString().slice(0, 10), category: "other", recurring: "one-off", vat_sar: 0, note: "", ...req.body });
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    res.status(201).json(store.addExpense(w.id, { ...out, source: "manual" }));
+  });
+  app.post("/api/workspaces/:ws/finance/expenses/bulk", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : [];
+    const saved = [];
+    for (const it of items) { const { out, err } = cleanExpense({ category: "other", recurring: "one-off", vat_sar: 0, note: "", ...it }); if (!err.length && out.date) saved.push(store.addExpense(w.id, { ...out, source: "ai_import", reviewed: true }, false)); }
+    store.save();
+    res.status(201).json({ saved: saved.length });
+  });
+  app.put("/api/workspaces/:ws/finance/expenses/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { out, err } = cleanExpense(req.body || {}, true);
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    const e = store.updateExpense(w.id, req.params.id, out);
+    e ? res.json(e) : res.status(404).json({ detail: "Expense not found" });
+  });
+  app.delete("/api/workspaces/:ws/finance/expenses/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteExpense(w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Expense not found" }); });
+  // AI reads pasted bank lines and proposes expenses; nothing is saved until a person confirms.
+  app.post("/api/workspaces/:ws/finance/expenses/ai-import", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const text = String(req.body?.text || "").trim();
+    if (!text) return res.status(422).json({ detail: "Paste some statement lines first" });
+    try {
+      const raw = await provider.generate({ system: "You extract accounting data precisely and return only JSON.", prompt: importPrompt(text), onText: () => {} });
+      const items = parseImport(raw);
+      if (!items) return res.status(422).json({ detail: "AI couldn't read those lines. Paste plain statement rows (date, description, amount) and try again." });
+      res.json({ items });
+    } catch (e) {
+      res.status(502).json({ detail: e instanceof LLMError ? e.message : "Something went wrong reaching Claude. Try again." });
+    }
+  });
+  app.get("/api/workspaces/:ws/finance/reports/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const r = store.listFinanceReports(w.id).find((x) => x.id === req.params.id);
+    r ? res.json(r) : res.status(404).json({ detail: "Report not found" });
+  });
+  app.post("/api/workspaces/:ws/finance/ai/:task", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    if (!Object.hasOwn(FIN_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
+    await streamDraft(req, res, { prompt: financePrompt(w, finSnap(w), store.listExpenses(w.id), req.params.task),
+      onDone: (text) => store.addFinanceReport(w.id, { task: req.params.task, title: FIN_TASKS[req.params.task].title, text }).id });
   });
 
   // ---- command center

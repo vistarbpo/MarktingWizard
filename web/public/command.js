@@ -11,7 +11,7 @@ const cMoney = (n) => {
   return "$" + Math.round(n).toLocaleString("en-US");
 };
 const cNum = (v, unit) => unit === "$" ? cMoney(v) : unit === "%" ? `${+v.toFixed(1)}%` : `${+Number(v).toFixed(2)}${unit && !["$", "%"].includes(unit) ? " " + unit : ""}`;
-const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)" };
+const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490" };
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
@@ -79,11 +79,11 @@ function ccTiles(d) {
   const r = d.revenue, s = d.support, t = d.team;
   const tile = (label, val, sub, route, tone = "") => `<button type="button" class="card s-kpi cc-tile ${tone}" data-go="${route}"><span class="eyebrow">${label}</span><b class="num">${val}</b><span class="subtle">${sub}</span></button>`;
   return `<div class="cc-tiles cc-span-12">
+    ${tile("Runway", d.finance.runway_months == null ? (d.finance.month_costs_sar ? "∞" : "–") : d.finance.runway_months + " mo", d.finance.cash_as_of ? `SAR ${Math.round(d.finance.cash_sar).toLocaleString("en-US")} cash · burn ${Math.round(d.finance.net_burn_sar).toLocaleString("en-US")}/mo` : "add your bank balance in Finance", "finance", d.finance.runway_months != null && d.finance.runway_months < 6 ? "warn" : "")}
     ${tile("Open deals", r.open_deals, `${cMoney(r.open_value)}/mo if all close`, "pipeline")}
     ${tile("Support open", s.open, `${s.needs_you} need you · chat ${s.chat_on ? "on" : "off"}`, "support", s.needs_you ? "warn" : "")}
     ${tile("Resolved by AI", s.ai_resolved_pct == null ? "–" : s.ai_resolved_pct + "%", "support, this week", "support")}
-    ${tile("Hiring", t.candidates, `candidates · ${t.open_roles} open roles`, "team")}
-    ${tile("Data completeness", d.data_completeness + "%", d.gaps[0] ? esc(d.gaps[0].question) : "everything filled in", "overview", d.data_completeness < 70 ? "warn" : "")}
+        ${tile("Data completeness", d.data_completeness + "%", d.gaps[0] ? esc(d.gaps[0].question) : "everything filled in", "overview", d.data_completeness < 70 ? "warn" : "")}
   </div>`;
 }
 

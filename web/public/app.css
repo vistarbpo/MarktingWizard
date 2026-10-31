@@ -303,7 +303,7 @@ td.right, th.right { text-align: right; }
 .s-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .s-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s-3); }
 .s-kpi { padding: var(--s-4); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.s-kpi b { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -.02em; }
+.s-kpi b { font-size: clamp(20px, 1.7vw, 28px); font-weight: 600; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .s-kpi .subtle { font-size: var(--fs-xs); }
 .s-kpi.warn { border-color: var(--warn); }
 .s-kpi.warn b { color: var(--warn); }
@@ -503,3 +503,25 @@ td.right, th.right { text-align: right; }
   .cc-feed li .grow { flex-basis: calc(100% - 90px); }
   .cc-mini-stats { gap: var(--s-4); }
 }
+
+/* ---------------------------------------------------------------- Finance module */
+.s-kpi.bad { border-color: var(--bad); }
+.s-kpi.bad b { color: var(--bad); }
+.f-assume { flex-wrap: wrap; align-items: center; }
+.f-cats { display: flex; flex-direction: column; gap: 10px; margin-top: var(--s-3); }
+.f-cat { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.f-bar { position: relative; height: 14px; background: var(--surface-2); border-radius: 4px; }
+.f-bar i { display: block; height: 100%; border-radius: 4px; }
+.f-budget { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); border-radius: 1px; }
+.f-budgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-3); margin-top: var(--s-4); }
+.f-unit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); margin: var(--s-3) 0; }
+.f-unit div { display: flex; flex-direction: column; }
+.f-unit b { font-size: var(--fs-xl); }
+.f-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.f-table th, .f-table td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
+.f-table th { font-size: var(--fs-xs); color: var(--text-3); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-top: 0; }
+.f-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.f-table select { min-width: 150px; }
+.f-vat { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: baseline; }
+.f-vat b { font-size: var(--fs-lg); }
+@media (max-width: 640px) { .f-cat { grid-template-columns: 100px minmax(0, 1fr); } .f-cat > .num { grid-column: 2; } .f-unit { grid-template-columns: 1fr; } }

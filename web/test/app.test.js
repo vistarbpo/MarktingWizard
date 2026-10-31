@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -343,10 +343,57 @@ test("command center: one snapshot across modules", async () => {
   assert.ok(d.goal.next_milestone > d.goal.arr);
   assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Hiring"]);
   assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
-  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring"].includes(n.module)));
+  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance"].includes(n.module)));
   assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
   assert.equal(d.sop.length, 4);
   assert.ok(d.feed.length > 0 && d.feed.length <= 14);
   assert.ok(d.feed.every((f, i) => i === 0 || d.feed[i - 1].at >= f.at));
   assert.ok(d.data_completeness >= 0 && d.data_completeness <= 100);
+});
+
+test("finance: burn, runway, budgets, forecast, VAT and AI import", async () => {
+  const [ws] = await json("/api/workspaces");
+  const fb = `/api/workspaces/${ws.id}/finance`;
+  let f = await json(fb);
+  assert.ok(f.snapshot.needs.some((n) => /bank balance/.test(n.text)));
+  assert.equal((await post(`${fb}/expenses`, { vendor: "", amount_sar: 10 })).status, 422);
+  await post(`${fb}/expenses`, { vendor: "Anthropic", amount_sar: 3000, category: "ai_api", recurring: "monthly" });
+  await post(`${fb}/expenses`, { vendor: "Hostinger", amount_sar: 1200, category: "hosting", recurring: "yearly", vat_sar: 156.52 });
+  await post(`${fb}/expenses`, { vendor: "Snap ads", amount_sar: 13000, category: "marketing", recurring: "one-off" });
+  await post(`${fb}/cash`, { date: new Date().toISOString().slice(0, 10), balance_sar: 200000 });
+  await call(`${fb}/settings`, { method: "PUT", body: JSON.stringify({ include_hires: false, mrr_growth_pct: 10 }) });
+  f = await json(fb);
+  const s = f.snapshot;
+  assert.equal(s.costs.run_rate_sar, 3100); // 3000 monthly + 1200/12
+  assert.equal(s.costs.month_burn_sar, 16100);
+  const mkt = s.costs.by_category.find((c) => c.id === "marketing");
+  assert.equal(mkt.budget, 11250); // $3,000 default marketing budget
+  assert.equal(mkt.over, true);
+  assert.ok(s.needs.some((n) => /over budget/.test(n.text)));
+  assert.equal(s.forecast.months.length, 12);
+  assert.ok(s.runway_months > 0);
+  assert.equal(s.vat.input_vat_sar, 157);
+  assert.equal((await call(`${fb}/settings`, { method: "PUT", body: JSON.stringify({ mrr_growth_pct: 999 }) })).status, 422);
+
+  // AI import: demo output is not JSON, so nothing is proposed or saved.
+  const bad = await post(`${fb}/expenses/ai-import`, { text: "2026-10-03 ANTHROPIC USD 120" });
+  assert.equal(bad.status, 422);
+  const { parseImport } = await import("../lib/finance.js");
+  const items = parseImport('Here: [{"date":"2026-10-03","vendor":"Anthropic","amount_sar":450,"vat_sar":0,"category":"ai_api","recurring":"monthly","note":"USD 120 at 3.75"},{"date":"x","vendor":"Refund","amount_sar":-5}]');
+  assert.equal(items.length, 1);
+  assert.equal(items[0].category, "ai_api");
+  const saved = await (await post(`${fb}/expenses/bulk`, { items })).json();
+  assert.equal(saved.saved, 1);
+
+  // AI CFO report streams and is stored.
+  const rep = await (await post(`${fb}/ai/monthly_report`, {})).text();
+  assert.match(rep, /\[\[MWIZ_SAVED\]\]/);
+  assert.match(prompts.at(-1), /"cash_sar": 200000/);
+  f = await json(fb);
+  assert.equal(f.reports.length, 1);
+
+  // Command Center shows runway and finance needs.
+  const cc = await json(`/api/workspaces/${ws.id}/command`);
+  assert.equal(cc.finance.cash_sar, 200000);
+  assert.ok(cc.needs.some((n) => n.module === "Finance"));
 });

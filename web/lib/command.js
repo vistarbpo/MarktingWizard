@@ -4,6 +4,7 @@ import { hrSummary } from "./hr.js";
 import { STAGES, summary as salesSummary } from "./sales.js";
 import { SOP, periodFor } from "./sop.js";
 import { supportSummary } from "./support.js";
+import { financeSnapshot } from "./finance.js";
 
 export const ARR_GOAL = 100_000_000;
 export const MILESTONES = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
@@ -36,8 +37,11 @@ export function commandSnapshot(store, ws, now = Date.now()) {
   ];
   const aiTotal = work.reduce((a, w) => a + w.ai, 0), peopleTotal = work.reduce((a, w) => a + w.people, 0);
 
+  const fin = financeSnapshot({ expenses: store.listExpenses(id), cash: store.listCash(id), deals, roles, settings: ws.finance, now: new Date(now) });
+
   // Everything waiting on a person, across modules.
   const needs = [
+    ...fin.needs.filter((n) => !n.soft).map((n) => ({ module: "Finance", route: "finance", param: null, title: "Finance", text: n.text })),
     ...sales.needs_you.map((n) => ({ module: "Sales", route: "pipeline", param: n.id, title: n.name, text: n.text })),
     ...support.needs_you.map((n) => ({ module: "Support", route: "support", param: null, title: n.name, text: n.reason || "Needs a person" })),
     ...hr.needs_you.map((n) => ({ module: "Hiring", route: "team", param: null, title: n.name, text: n.text })),
@@ -77,6 +81,7 @@ export function commandSnapshot(store, ws, now = Date.now()) {
     revenue: { paying_mrr: sales.paying_mrr, expected_mrr: sales.expected_mrr, paying: sales.paying_count, open_deals: sales.open_count, open_value: sales.open_value, funnel },
     work: { modules: work, ai: aiTotal, people: peopleTotal, ai_share: aiTotal + peopleTotal ? Math.round((aiTotal / (aiTotal + peopleTotal)) * 100) : null },
     team: { agents: hr.agents, humans: hr.humans, ai_share_roles: hr.ai_share, open_roles: hr.open_roles, planned_roles: hr.planned_roles, candidates: hr.candidates, payroll_sar: hr.planned_payroll_sar },
+    finance: { cash_sar: fin.cash.balance_sar, cash_as_of: fin.cash.as_of, runway_months: fin.runway_months, net_burn_sar: fin.costs.net_burn_sar, month_costs_sar: fin.costs.month_burn_sar, cash_zero_month: fin.forecast.cash_zero_month },
     support: { open: support.open, needs_you: support.needs_you.length, ai_resolved_pct: support.ai_resolved_pct, articles: support.articles, chat_on: !!ws.support?.widget_enabled },
     needs,
     sop,

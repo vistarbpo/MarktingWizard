@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_cash: [], finance_reports: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -275,6 +275,52 @@ export class Store {
   }
   findWorkspaceByWidgetKey(key) { return this.db.workspaces.find((w) => w.support?.widget_key && w.support.widget_key === key) || null; }
 
+  // ---- finance: expenses, bank-balance snapshots, AI CFO reports, settings on the workspace
+  listExpenses(wsId) { return this.db.finance_expenses.filter((e) => e.workspace_id === String(wsId)).sort((a, b) => b.date.localeCompare(a.date)); }
+  addExpense(wsId, fields, persist = true) {
+    const e = { id: this.#id(), workspace_id: String(wsId), created_at: this.#now(), ...fields };
+    this.db.finance_expenses.push(e);
+    if (persist) this.save();
+    return e;
+  }
+  updateExpense(wsId, id, fields) {
+    const e = this.db.finance_expenses.find((x) => x.workspace_id === String(wsId) && x.id === String(id));
+    if (!e) return null;
+    Object.assign(e, fields);
+    this.save();
+    return e;
+  }
+  deleteExpense(wsId, id) { return this.#removeWs("finance_expenses", wsId, id); }
+  listCash(wsId) { return this.db.finance_cash.filter((c) => c.workspace_id === String(wsId)); }
+  addCash(wsId, { date, balance_sar, note = "" }) {
+    const c = { id: this.#id(), workspace_id: String(wsId), date, balance_sar, note, created_at: this.#now() };
+    this.db.finance_cash.push(c);
+    this.save();
+    return c;
+  }
+  deleteCash(wsId, id) { return this.#removeWs("finance_cash", wsId, id); }
+  listFinanceReports(wsId) { return this.db.finance_reports.filter((r) => r.workspace_id === String(wsId)).sort((a, b) => b.created_at.localeCompare(a.created_at)); }
+  addFinanceReport(wsId, { task, title, text }) {
+    const r = { id: this.#id(), workspace_id: String(wsId), task, title, text, created_at: this.#now() };
+    this.db.finance_reports.push(r);
+    this.save();
+    return r;
+  }
+  setFinanceSettings(wsId, fields) {
+    const ws = this.getWorkspace(wsId);
+    if (!ws) return null;
+    ws.finance = { ...(ws.finance || {}), ...fields, budgets: { ...(ws.finance?.budgets || {}), ...(fields.budgets || {}) } };
+    this.save();
+    return ws.finance;
+  }
+  #removeWs(coll, wsId, id) {
+    const before = this.db[coll].length;
+    this.db[coll] = this.db[coll].filter((x) => !(x.workspace_id === String(wsId) && x.id === String(id)));
+    if (before === this.db[coll].length) return false;
+    this.save();
+    return true;
+  }
+
   // ---- SOP ticks: one row per workspace + cadence period + step
   listSopChecks(wsId, periods) {
     return this.db.sop_checks.filter((c) => c.workspace_id === String(wsId) && periods.includes(c.period));
@@ -312,7 +358,7 @@ export class Store {
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
     const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
     this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets", "finance_expenses", "finance_cash", "finance_reports"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }
