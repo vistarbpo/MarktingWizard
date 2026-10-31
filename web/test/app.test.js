@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -164,4 +164,47 @@ test("old DAP ADS data is renamed to DPA AD on start", () => {
   assert.equal(s.listWorkspaces()[0].brief.company_name, "DPA AD");
   assert.equal(s.listWorkspaces()[0].brief.website, "https://dpa.ad");
   assert.deepEqual(s.db.sop_checks, []);
+});
+
+test("sales: deals, AI-first next steps, stage log, drafts and sent", async () => {
+  const [ws] = await json("/api/workspaces");
+  const base = `/api/workspaces/${ws.id}/deals`;
+  assert.equal((await post(base, { city: "Riyadh" })).status, 422);
+  const small = await (await post(base, { name: "Oud House", city: "Riyadh", platform: "Salla", skus: 320 })).json();
+  assert.equal(small.stage, "lead");
+  assert.equal(small.plan, "Starter");
+  assert.equal(small.next.owner, "ai");
+  assert.equal(small.next.task, "opener");
+
+  // Large deals at demo need a human; small ones stay with AI.
+  const big = await (await post(base, { name: "Sahara Sport", platform: "Shopify", skus: 12500, stage: "demo" })).json();
+  assert.equal(big.plan, "Scale");
+  assert.equal(big.next.owner, "you");
+  let list = await json(base);
+  assert.deepEqual(list.summary.needs_you.map((n) => n.name), ["Sahara Sport"]);
+  assert.equal(list.summary.ai_share, 50);
+
+  // Stage change is logged; unknown stage rejected.
+  assert.equal((await call(`${base}/${small.id}`, { method: "PUT", body: JSON.stringify({ stage: "nope" }) })).status, 422);
+  await call(`${base}/${small.id}`, { method: "PUT", body: JSON.stringify({ stage: "contacted" }) });
+  let detail = await json(`${base}/${small.id}`);
+  assert.ok(detail.activities.some((a) => a.type === "stage" && a.text === "lead → contacted"));
+
+  // AI draft streams, is saved as an ai_draft activity, and uses the deal + brief.
+  const res = await post(`${base}/${small.id}/ai/opener`, {});
+  const body = await res.text();
+  assert.match(body, /\[\[MWIZ_SAVED\]\]/);
+  assert.match(prompts.at(-1), /Oud House/);
+  assert.match(prompts.at(-1), /<brand_brief>/);
+  assert.equal((await post(`${base}/${small.id}/ai/nope`, {})).status, 404);
+  assert.equal((await post(`${base}/${small.id}/activities`, { type: "sent", task: "opener", text: "hi" })).status, 201);
+  detail = await json(`${base}/${small.id}`);
+  assert.ok(detail.activities.some((a) => a.type === "ai_draft" && a.by === "ai"));
+  assert.ok(detail.activities.some((a) => a.type === "sent" && a.by === "you"));
+  list = await json(base);
+  assert.equal(list.summary.agents.prospector.drafts, 1);
+  assert.equal(list.summary.agents.prospector.sent, 1);
+
+  assert.equal((await call(`${base}/${big.id}`, { method: "DELETE" })).status, 204);
+  assert.equal((await call(`${base}/${big.id}`)).status, 404);
 });

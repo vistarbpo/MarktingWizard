@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGaps } from "./catalog.js";
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
+import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
 
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -90,6 +91,84 @@ export function createApp({ store, provider, password }) {
   });
   app.delete("/api/workspaces/:ws", (req, res) => {
     store.deleteWorkspace(req.params.ws) ? res.status(204).end() : res.status(404).json({ detail: "Workspace not found" });
+  });
+
+  // ---- sales
+  const cleanDeal = (b, partial = false) => {
+    const out = {}, err = [];
+    const str = (k, max = 200) => { if (b[k] !== undefined) out[k] = String(b[k] ?? "").trim().slice(0, max); };
+    ["name", "category", "contact_name", "contact_phone", "contact_email"].forEach((k) => str(k));
+    str("notes", 4000); str("lost_reason", 500);
+    if (b.city !== undefined) out.city = Object.hasOwn(CITIES, b.city) ? b.city : "Other";
+    if (b.platform !== undefined) out.platform = PLATFORMS.includes(b.platform) ? b.platform : "Other";
+    if (b.skus !== undefined) { const n = Math.round(Number(b.skus)); if (!(n >= 0 && n <= 10_000_000)) err.push("skus must be a number"); else out.skus = n; }
+    if (b.stage !== undefined) { if (!STAGE_IDS.includes(b.stage)) err.push("unknown stage"); else out.stage = b.stage; }
+    if (!partial && !out.name) err.push("name is required");
+    if (partial && b.name !== undefined && !out.name) err.push("name cannot be empty");
+    return { out, err };
+  };
+  app.get("/api/sales/meta", (req, res) => res.json({ stages: STAGES, plans: PLANS.map((p) => ({ ...p, max: Number.isFinite(p.max) ? p.max : null })), cities: CITIES, platforms: PLATFORMS, tasks: Object.fromEntries(Object.entries(AI_TASKS).map(([k, t]) => [k, { title: t.title, agent: t.agent }])) }));
+  app.get("/api/workspaces/:ws/deals", (req, res) => {
+    if (!ws(req, res)) return;
+    const deals = store.listDeals(req.params.ws);
+    res.json({ deals: deals.map((d) => enrich(d)), summary: summary(deals, store.listWorkspaceActivities(req.params.ws)) });
+  });
+  app.post("/api/workspaces/:ws/deals", (req, res) => {
+    if (!ws(req, res)) return;
+    const { out, err } = cleanDeal({ city: "Riyadh", platform: "Salla", skus: 0, ...req.body });
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    res.status(201).json(enrich(store.addDeal(req.params.ws, out)));
+  });
+  app.get("/api/workspaces/:ws/deals/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const d = store.getDeal(req.params.ws, req.params.id);
+    if (!d) return res.status(404).json({ detail: "Deal not found" });
+    res.json({ deal: enrich(d), activities: store.listDealActivities(d.id) });
+  });
+  app.put("/api/workspaces/:ws/deals/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const { out, err } = cleanDeal(req.body || {}, true);
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    const d = store.updateDeal(req.params.ws, req.params.id, out);
+    d ? res.json(enrich(d)) : res.status(404).json({ detail: "Deal not found" });
+  });
+  app.delete("/api/workspaces/:ws/deals/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    store.deleteDeal(req.params.ws, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Deal not found" });
+  });
+  app.post("/api/workspaces/:ws/deals/:id/activities", (req, res) => {
+    if (!ws(req, res)) return;
+    const d = store.getDeal(req.params.ws, req.params.id);
+    if (!d) return res.status(404).json({ detail: "Deal not found" });
+    const type = ["note", "sent", "call"].includes(req.body?.type) ? req.body.type : null;
+    if (!type) return res.status(422).json({ detail: "type must be note, sent or call" });
+    const task = Object.hasOwn(AI_TASKS, req.body?.task) ? req.body.task : null;
+    res.status(201).json(store.addDealActivity(d.id, { type, by: "you", task, text: String(req.body?.text || "").slice(0, 8000) }));
+  });
+  // AI drafts stream like playbooks; the draft is logged, and a person marks it sent.
+  app.post("/api/workspaces/:ws/deals/:id/ai/:task", async (req, res) => {
+    const w = ws(req, res);
+    if (!w) return;
+    const d = store.getDeal(w.id, req.params.id);
+    if (!d) return res.status(404).json({ detail: "Deal not found" });
+    if (!Object.hasOwn(AI_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+    const ac = new AbortController();
+    res.on("close", () => { if (!res.writableFinished) ac.abort(); });
+    try {
+      const text = await provider.generate({
+        system: SYSTEM, prompt: salesPrompt(store, w, enrich(d), req.params.task), signal: ac.signal,
+        onText: (delta) => res.write(delta),
+      });
+      const a = store.addDealActivity(d.id, { type: "ai_draft", by: "ai", task: req.params.task, text });
+      res.end("\n\n[[MWIZ_SAVED]]" + a.id);
+    } catch (e) {
+      if (ac.signal.aborted) return;
+      if (!(e instanceof LLMError)) console.error("sales draft failed:", e?.status, e?.message);
+      res.end("\n\n[[MWIZ_ERROR]]" + (e instanceof LLMError ? e.message : "Something went wrong. Try again in a moment."));
+    }
   });
 
   // ---- SOP: the operating procedure and this period's ticks

@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -34,6 +34,7 @@ export const SOP = [
       { id: "experiment", text: "Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner).", owner: "Head of Growth", go: "knowledge" },
       { id: "social", text: "Generate this week's Social Media Post Pack and schedule the posts.", owner: "Content", go: "playbooks", param: "social_posts" },
       { id: "outbound", text: "Generate or refresh an Outbound Email Sequence for the persona in focus and load it into the sending tool.", owner: "Sales", go: "playbooks", param: "cold_email_sequence" },
+      { id: "sales", text: "Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under \"Needs you\".", owner: "Founder", go: "pipeline" },
       { id: "listing", text: "Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes.", owner: "Marketplace Manager" },
       { id: "learnings", text: "Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves.", owner: "Sales + Customer Success", go: "knowledge" },
       { id: "library", text: "Friday: clear the Library: everything generated this week is reviewed, used, or deleted.", owner: "Head of Growth", go: "library" },

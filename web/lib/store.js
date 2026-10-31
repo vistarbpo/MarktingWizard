@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -92,6 +92,52 @@ export class Store {
     }
   }
 
+  // ---- sales: deals and their activity log
+  listDeals(wsId) { return this.db.deals.filter((d) => d.workspace_id === String(wsId)); }
+  getDeal(wsId, id) { return this.db.deals.find((d) => d.workspace_id === String(wsId) && d.id === String(id)) || null; }
+  addDeal(wsId, fields) {
+    const now = this.#now();
+    const d = { id: this.#id(), workspace_id: String(wsId), stage: "lead", created_at: now, stage_changed_at: now, last_activity_at: now, ...fields };
+    this.db.deals.push(d);
+    this.addDealActivity(d.id, { type: "created", by: "you", text: "" }, false);
+    this.save();
+    return d;
+  }
+  updateDeal(wsId, id, fields) {
+    const d = this.getDeal(wsId, id);
+    if (!d) return null;
+    const now = this.#now();
+    if (fields.stage && fields.stage !== d.stage) {
+      this.addDealActivity(d.id, { type: "stage", by: fields.by || "you", text: `${d.stage} → ${fields.stage}` }, false);
+      d.stage_changed_at = now;
+    }
+    const { by, ...rest } = fields;
+    Object.assign(d, rest, { last_activity_at: now });
+    this.save();
+    return d;
+  }
+  deleteDeal(wsId, id) {
+    const before = this.db.deals.length;
+    this.db.deals = this.db.deals.filter((d) => !(d.workspace_id === String(wsId) && d.id === String(id)));
+    if (this.db.deals.length === before) return false;
+    this.db.deal_activities = this.db.deal_activities.filter((a) => a.deal_id !== String(id));
+    this.save();
+    return true;
+  }
+  listDealActivities(dealId) { return this.db.deal_activities.filter((a) => a.deal_id === String(dealId)).sort((a, b) => b.created_at.localeCompare(a.created_at)); }
+  listWorkspaceActivities(wsId) {
+    const ids = new Set(this.listDeals(wsId).map((d) => d.id));
+    return this.db.deal_activities.filter((a) => ids.has(a.deal_id));
+  }
+  addDealActivity(dealId, { type, by, text = "", task = null }, persist = true) {
+    const a = { id: this.#id(), deal_id: String(dealId), type, by, task, text, created_at: this.#now() };
+    this.db.deal_activities.push(a);
+    const d = this.db.deals.find((x) => x.id === String(dealId));
+    if (d && type !== "ai_draft") d.last_activity_at = a.created_at;
+    if (persist) this.save();
+    return a;
+  }
+
   // ---- SOP ticks: one row per workspace + cadence period + step
   listSopChecks(wsId, periods) {
     return this.db.sop_checks.filter((c) => c.workspace_id === String(wsId) && periods.includes(c.period));
@@ -127,7 +173,9 @@ export class Store {
     if (this.db.workspaces.length === before) return false;
     const kpiIds = new Set(this.db.kpis.filter((k) => k.workspace_id === id).map((k) => k.id));
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
+    this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }

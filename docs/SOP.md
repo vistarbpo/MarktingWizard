@@ -33,9 +33,10 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 3 | Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner). | Head of Growth | Knowledge |
 | 4 | Generate this week's Social Media Post Pack and schedule the posts. | Content | Playbooks → Social Media Post Pack |
 | 5 | Generate or refresh an Outbound Email Sequence for the persona in focus and load it into the sending tool. | Sales | Playbooks → Outbound Email Sequence |
-| 6 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
-| 7 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
-| 8 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
+| 6 | Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under "Needs you". | Founder | Sales pipeline |
+| 7 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
+| 8 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
+| 9 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
 
 ## Monthly review
 
