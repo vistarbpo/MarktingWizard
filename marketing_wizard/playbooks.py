@@ -214,6 +214,30 @@ class AgencyProposal(BaseModel):
     next_steps: list[str]
 
 
+class PriceTier(BaseModel):
+    name: str
+    monthly_price: str
+    annual_price: str
+    best_for: str
+    limits: list[str] = Field(description="Value-metric limits, e.g. SKUs, channels, renders.")
+    key_features: list[str]
+    upgrade_trigger: str = Field(description="What makes a customer outgrow this tier.")
+
+
+class PricingStrategy(BaseModel):
+    value_metric: str = Field(description="The unit price scales with, and why it tracks customer value.")
+    pricing_model: str
+    tiers: list[PriceTier]
+    add_ons: list[str]
+    trial_or_free_offer: str
+    competitor_price_comparison: list[str] = Field(description="Flag figures the team must verify.")
+    revenue_model: list[str] = Field(description="Customer counts x ARPA per segment that reach the revenue goal.")
+    expansion_levers: list[str]
+    risks_and_mitigations: list[str]
+    experiments: list[str] = Field(description="Pricing tests to run, each with a success metric.")
+    pricing_page_copy: list[str] = Field(description="Headline, subhead and per-tier one-liners.")
+
+
 # -------------------------------------------------------------- registry ---
 
 @dataclass
@@ -428,6 +452,26 @@ register(Playbook(
         InputField("weeks", "Weeks", "4"),
         InputField("channels", "Channels", "LinkedIn, blog, newsletter"),
         InputField("per_week", "Items per week", "3"),
+    ],
+    uses_context_from=["positioning", "icp_personas"],
+))
+
+register(Playbook(
+    key="pricing_strategy",
+    title="Pricing & Packaging Strategy",
+    category="Strategy",
+    description="Value metric, tiers, add-ons, competitor comparison and a revenue model to the goal.",
+    instructions=(
+        "Design pricing and packaging. Pick a value metric that grows with the customer's success, "
+        "then build {tier_count} tiers (self-serve through enterprise) with clear limits and upgrade "
+        "triggers. Current pricing: {current_pricing}. Show the math from customer counts and ARPA "
+        "per segment to the stated revenue goal, and say if the current price cannot reach it. "
+        "Never invent competitor prices; mark any you cite as 'verify'."
+    ),
+    output_model=PricingStrategy,
+    inputs=[
+        InputField("tier_count", "Number of tiers", "4"),
+        InputField("current_pricing", "Current pricing", "as stated in the brand brief"),
     ],
     uses_context_from=["positioning", "icp_personas"],
 ))

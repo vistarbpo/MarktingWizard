@@ -44,6 +44,7 @@ battlecards and a 90-day go-to-market plan.
 | `gtm_plan` | 90-day phased plan with channels, actions, KPIs and budget split |
 | `competitor_battlecards` | How to win, landmine questions, objection handling |
 | `content_calendar` | Multi-week, multi-channel publishing calendar |
+| `pricing_strategy` | Value metric, tiers, add-ons, competitor comparison and the revenue math to your goal |
 | `agency_proposal` | *(agencies)* A tailored proposal to win a prospect, with tiered pricing |
 
 To add a playbook, define a Pydantic output model in `marketing_wizard/playbooks.py` and call `register(...)`.

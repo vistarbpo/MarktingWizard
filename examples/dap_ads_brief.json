@@ -1,0 +1,18 @@
+{
+  "company_name": "DAP ADS",
+  "product_name": "DAP ADS",
+  "one_liner": "Turns an ecommerce product catalog into designed, on-brand image and video ads automatically, so every SKU gets scroll-stopping creative instead of a plain packshot.",
+  "category": "Ecommerce SaaS - catalog / dynamic product ad creative",
+  "business_model": "saas",
+  "target_customers": "Ecommerce and DTC brands with 20+ products running catalog (dynamic product) ads on Meta, TikTok, Google and Pinterest; growth marketers, performance agencies and in-house creative teams",
+  "problems_solved": "Catalog ads look like plain white-background packshots, designing creative per SKU doesn't scale, prices/promos in creatives go stale, and there's no video for catalog ads",
+  "key_features": "Catalog/feed sync (Shopify, WooCommerce, Meta/Google feeds), branded image templates with live price, discount, rating and badge overlays, catalog-to-video templates, bulk per-SKU rendering, auto-refresh when the feed changes, creative A/B testing",
+  "differentiators": "Images AND video from the catalog, self-serve set-up in minutes, priced for growing brands rather than enterprise-only",
+  "competitors": "Marpipe, Confect, Hunch, Pencil, in-house design + Canva",
+  "pricing": "Currently $99/month flat; being redesigned (see docs/dap-ads-pricing.md)",
+  "proof_points": "",
+  "brand_voice": "Friendly, confident and performance-minded: plain words, ROAS-first, no jargon",
+  "goals": "$100M ARR",
+  "budget": "",
+  "extra_notes": "Pricing should scale with catalog size, channels and video volume. Add-ons and an agency plan support expansion revenue."
+}
