@@ -4,3 +4,5 @@ web/node_modules/
 *.log
 __pycache__/
 *.egg-info/
+data/
+*.db
