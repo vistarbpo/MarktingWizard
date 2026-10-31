@@ -1,0 +1,18 @@
+{
+  "company_name": "Pipeline Pilot",
+  "product_name": "Pipeline Pilot",
+  "website": "https://example.com",
+  "one_liner": "Forecasts B2B sales pipeline from CRM and email activity so revenue leaders stop guessing.",
+  "category": "B2B SaaS - revenue intelligence",
+  "business_model": "saas",
+  "target_customers": "VP Sales and RevOps at 50-500 employee B2B SaaS companies using HubSpot or Salesforce",
+  "problems_solved": "Spreadsheet forecasts, sandbagging reps, surprise misses at quarter end",
+  "key_features": "AI deal scoring, forecast roll-ups, deal risk alerts in Slack, CRM hygiene nudges",
+  "differentiators": "Live in 1 day, no data team needed, priced for mid-market",
+  "competitors": "Clari, Gong Forecast, spreadsheets",
+  "pricing": "$49/seat/month, 10 seat minimum",
+  "proof_points": "",
+  "brand_voice": "Confident, plain-spoken, numbers-first",
+  "goals": "60 qualified demos per month within 2 quarters",
+  "budget": "$8k/month"
+}
