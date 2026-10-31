@@ -2,7 +2,7 @@
   "name": "marketing-wizard-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Hosted Marketing Wizard dashboard (Node.js) for DAP ADS",
+  "description": "Hosted Marketing Wizard dashboard (Node.js) for DPA AD",
   "type": "module",
   "main": "server.js",
   "engines": { "node": ">=20" },

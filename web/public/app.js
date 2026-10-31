@@ -64,7 +64,7 @@ function openRun(key) {
   const panel = $("#runPanel"); panel.hidden = false;
   const ctxNames = (p.ctx || []).map((k) => CFG.playbooks.find((x) => x.key === k).title);
   panel.innerHTML = `<h2>${esc(p.title)}</h2>
-    <p class="msg">${ctxNames.length ? "Uses your latest " + ctxNames.map(esc).join(" and ") + " if you've generated them." : "Uses the DAP ADS brand brief."}</p>
+    <p class="msg">${ctxNames.length ? "Uses your latest " + ctxNames.map(esc).join(" and ") + " if you've generated them." : "Uses the DPA AD brand brief."}</p>
     ${p.inputs.length ? `<div class="fields">${p.inputs.map(([n, l, d]) => `<label class="f" for="in-${n}">${esc(l)}<input id="in-${n}" value="${esc(d)}"></label>`).join("")}</div>` : ""}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" id="goBtn">Generate</button><button class="btn" id="stopBtn" hidden>Stop</button></div>
     <p class="msg" id="runMsg"></p><article class="doc" id="live"></article>`;

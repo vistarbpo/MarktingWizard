@@ -1,6 +1,7 @@
-// DAP ADS brand brief and playbook definitions (mirrors marketing_wizard/playbooks.py).
+// DPA AD brand brief and playbook definitions (mirrors marketing_wizard/playbooks.py).
 export const BRIEF = {
-  "Company": "DAP ADS",
+  "Company": "DPA AD",
+  "Website": "https://dpa.ad",
   "One-liner": "Turns an ecommerce product catalog into designed, on-brand image and video ads automatically, so every SKU gets scroll-stopping creative instead of a plain packshot.",
   "Category": "Ecommerce SaaS - catalog / dynamic product ad creative",
   "Target customers": "Ecommerce and DTC brands with 20+ products running catalog ads on Meta, TikTok, Google and Pinterest; growth marketers, performance agencies and in-house creative teams",

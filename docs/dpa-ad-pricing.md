@@ -1,4 +1,4 @@
-# DAP ADS: Pricing Strategy
+# DPA AD: Pricing Strategy
 
 **Goal:** $100M ARR · **Current price:** $99/month flat · **ICP:** ecommerce brands with 20+ SKUs running catalog ads
 
@@ -21,7 +21,7 @@ and add tiers where the real money is.
 
 Price on **active products in the synced catalog**, and meter **video renders** as the second axis.
 
-- It grows as the brand grows (more products → more ad spend → more value from DAP ADS).
+- It grows as the brand grows (more products → more ad spend → more value from DPA AD).
 - It's easy to understand and to check: "How many products do you have?"
 - It lines up with your cost: video rendering is your most expensive compute, so meter it separately.
 - Channels (Meta, TikTok, Google, Pinterest, Snap) gate tiers, not usage.
@@ -123,4 +123,4 @@ These figures are from memory and change often. **Check each one on the competit
 - [ ] Hire or assign one AE for 5k+ SKU and agency leads
 
 ---
-*Regenerate or iterate with the engine:* `mwiz new examples/dap_ads_brief.json` then `mwiz run <id> pricing_strategy`
+*Regenerate or iterate with the engine:* `mwiz new examples/dpa_ad_brief.json` then `mwiz run <id> pricing_strategy`

@@ -1,4 +1,4 @@
-# DAP ADS pricing plan
+# DPA AD pricing plan
 
 ## Why $99 flat can't get you there
 At $99/month each customer is worth **$1,188 a year**, so $100M ARR needs **~84,000 paying brands** at once. With typical small-business churn of 3–5% a month, you'd also need 30–40k new brands every year just to stay level. A flat price also charges a 25-product store the same as a 40,000-product retailer.
