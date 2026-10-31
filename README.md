@@ -1,11 +1,18 @@
 # Marketing Wizard
 
-**An AI marketing engine for SaaS companies and agencies, running live for DAP ADS at https://wizard.dpa.ad.**
+**An AI marketing engine for SaaS companies and agencies, running live for DPA AD at https://wizard.dpa.ad.**
 
 AI made building products easy. Sales and marketing are still hard. Marketing Wizard turns your
 company data into consistent, ready-to-ship marketing: positioning, personas, messaging, pricing,
 landing pages, outbound emails, social posts, ad campaigns, SEO plans, a 90-day GTM plan, and KPI
 reports.
+
+## Operating SOP
+
+The dashboard opens on **SOP**: one procedure for running marketing (one-time setup, weekly cycle,
+monthly review, quarterly strategy). Every step links to the page or playbook that does it, and the
+team ticks steps off together; ticks reset each week, month and quarter. The same procedure is in
+[`docs/SOP.md`](docs/SOP.md), generated from `web/lib/sop.js` (`cd web && npm run sop:md`).
 
 ## How it works
 
@@ -18,7 +25,7 @@ reports.
                                   and the latest earlier strategy work
 ```
 
-* **Workspaces**: one per company. Agencies create one per client. DAP ADS is created on first start.
+* **Workspaces**: one per company. Agencies create one per client. DPA AD is created on first start.
 * **Brief**: the company profile: customers, markets and languages, integrations, pricing, competitors, goals.
 * **Knowledge**: notes by category (results, objections, competitors, sales, pricing...). Every playbook reads all of them.
 * **KPIs**: 20 KPIs from the growth SOP load in one click. Log values per week (`2026-W44`) or month (`2026-10`).
@@ -70,11 +77,12 @@ site's environment variables:
 | `MWIZ_EFFORT` | `high` | `low` / `medium` / `high` / `xhigh` / `max`: depth vs. cost |
 | `DATA_DIR` | `~/marketing-wizard-data` | Where `db.json` lives, outside the deploy folder so deploys never wipe data |
 
-On first start the app creates the DAP ADS workspace, adds the pricing plan (`web/seed/pricing.md`) as a
+On first start the app creates the DPA AD workspace, adds the pricing plan (`web/seed/pricing.md`) as a
 knowledge note, and imports history from the earlier dashboard's `assets.json` if it exists.
 
 Claude requests use adaptive thinking, streaming, and server-side refusal fallbacks (`fallbacks: "default"`).
 
 ## Docs
 
-* `docs/dap-ads-pricing.md`: the DAP ADS pricing recommendation.
+* `docs/SOP.md`: the marketing operating SOP (also the dashboard home page).
+* `docs/dpa-ad-pricing.md`: the DPA AD pricing recommendation.

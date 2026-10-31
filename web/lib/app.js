@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGaps } from "./catalog.js";
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
+import { SOP, periodFor } from "./sop.js";
 
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -89,6 +90,22 @@ export function createApp({ store, provider, password }) {
   });
   app.delete("/api/workspaces/:ws", (req, res) => {
     store.deleteWorkspace(req.params.ws) ? res.status(204).end() : res.status(404).json({ detail: "Workspace not found" });
+  });
+
+  // ---- SOP: the operating procedure and this period's ticks
+  app.get("/api/workspaces/:ws/sop", (req, res) => {
+    if (!ws(req, res)) return;
+    const periods = Object.fromEntries(SOP.map((s) => [s.cadence, periodFor(s.cadence)]));
+    const checks = store.listSopChecks(req.params.ws, Object.values(periods));
+    res.json({ sop: SOP, periods, checks });
+  });
+  app.post("/api/workspaces/:ws/sop", (req, res) => {
+    if (!ws(req, res)) return;
+    const { cadence, step, done } = req.body || {};
+    const section = SOP.find((s) => s.cadence === cadence);
+    if (!section || !section.steps.some((st) => st.id === step)) return res.status(422).json({ detail: "Unknown SOP step" });
+    store.setSopCheck(req.params.ws, { period: periodFor(cadence), step: `${cadence}:${step}`, done: !!done });
+    res.json({ ok: true });
   });
 
   // ---- knowledge

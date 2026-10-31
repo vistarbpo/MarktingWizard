@@ -55,9 +55,9 @@ test("login is required and works", async () => {
   assert.equal((await call("/vendor/marked.js")).status, 200);
 });
 
-test("first start seeds DAP ADS, the pricing note and legacy history", async () => {
+test("first start seeds DPA AD, the pricing note and legacy history", async () => {
   const [ws] = await json("/api/workspaces");
-  assert.equal(ws.brief.company_name, "DAP ADS");
+  assert.equal(ws.brief.company_name, "DPA AD");
   const notes = await json(`/api/workspaces/${ws.id}/notes`);
   assert.ok(notes.some((n) => n.category === "pricing"));
   const assets = await json(`/api/workspaces/${ws.id}/assets`);
@@ -122,5 +122,46 @@ test("KPIs, values, gaps and export", async () => {
 test("data survives a restart", async () => {
   const reopened = new Store(dir);
   assert.ok(reopened.listWorkspaces().some((w) => w.brief.company_name === "Acme"));
-  assert.equal(reopened.listWorkspaces()[0].brief.company_name, "DAP ADS");
+  assert.equal(reopened.listWorkspaces()[0].brief.company_name, "DPA AD");
+});
+
+test("SOP: every step links to a real page or playbook", async () => {
+  const { SOP } = await import("../lib/sop.js");
+  const routes = ["sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const keys = new Set(PLAYBOOKS.map((p) => p.key));
+  for (const s of SOP) for (const st of s.steps) {
+    if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
+    if (st.param) assert.ok(keys.has(st.param), `${s.cadence}:${st.id} -> ${st.param}`);
+  }
+});
+
+test("SOP: ticks are shared, per period, and can be undone", async () => {
+  const [ws] = await json("/api/workspaces");
+  const url = `/api/workspaces/${ws.id}/sop`;
+  assert.equal((await post(url, { cadence: "weekly", step: "nope", done: true })).status, 422);
+  assert.equal((await post(url, { cadence: "weekly", step: "log", done: true })).status, 200);
+  let r = await json(url);
+  assert.match(r.periods.weekly, /^\d{4}-W\d{2}$/);
+  assert.deepEqual(r.checks.map((c) => c.step), ["weekly:log"]);
+  await post(url, { cadence: "weekly", step: "log", done: false });
+  r = await json(url);
+  assert.equal(r.checks.length, 0);
+});
+
+test("SOP: ISO week, month and quarter periods", async () => {
+  const { periodFor } = await import("../lib/sop.js");
+  const d = new Date(Date.UTC(2026, 9, 31));
+  assert.equal(periodFor("weekly", d), "2026-W44");
+  assert.equal(periodFor("monthly", d), "2026-10");
+  assert.equal(periodFor("quarterly", d), "2026-Q4");
+  assert.equal(periodFor("weekly", new Date(Date.UTC(2027, 0, 1))), "2026-W53");
+});
+
+test("old DAP ADS data is renamed to DPA AD on start", () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-mig-"));
+  fs.writeFileSync(path.join(d, "db.json"), JSON.stringify({ seq: 1, workspaces: [{ id: "1", brief: { company_name: "DAP ADS", product_name: "DAP ADS", website: "" } }] }));
+  const s = new Store(d);
+  assert.equal(s.listWorkspaces()[0].brief.company_name, "DPA AD");
+  assert.equal(s.listWorkspaces()[0].brief.website, "https://dpa.ad");
+  assert.deepEqual(s.db.sop_checks, []);
 });

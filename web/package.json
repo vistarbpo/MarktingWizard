@@ -2,7 +2,7 @@
   "name": "marketing-wizard-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Marketing Wizard: AI marketing engine (DAP ADS)",
+  "description": "Marketing Wizard: AI marketing engine (DPA AD)",
   "type": "module",
   "main": "server.js",
   "engines": {
@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "sop:md": "node -e \"import('./lib/sop.js').then(m => process.stdout.write(m.sopMarkdown()))\" > ../docs/SOP.md"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",

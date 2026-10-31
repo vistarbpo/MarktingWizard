@@ -74,6 +74,7 @@ const BRIEF_SECTIONS = [
 ];
 
 const ROUTES = {
+  sop: { title: "Operating SOP", crumb: "Run the system", render: renderSop },
   overview: { title: "Overview", crumb: "Workspace", render: renderOverview },
   brief: { title: "Brief", crumb: "Company data", render: renderBrief },
   knowledge: { title: "Knowledge", crumb: "Company data", render: renderKnowledge },
@@ -93,7 +94,7 @@ async function onRoute() {
   if (wsId && (!S.ws || String(S.ws.id) !== wsId)) {
     try { S.ws = await api(`/api/workspaces/${wsId}`); } catch { S.ws = null; }
   }
-  S.route = ROUTES[route] ? route : "overview";
+  S.route = ROUTES[route] ? route : "sop";
   S.param = param ? decodeURIComponent(param) : null;
   render();
 }
@@ -117,6 +118,56 @@ function render() {
   $("#pageTitle").textContent = r.title;
   r.render($("#view"));
 }
+
+/* ---------------------------------------------------------------- SOP */
+const PB_TITLE = (key) => (S.playbooks.find((p) => p.key === key) || {}).title || key;
+const PERIOD_LABEL = { setup: "Do once", weekly: "This week", monthly: "This month", quarterly: "This quarter" };
+
+async function renderSop(view) {
+  view.innerHTML = `<p class="muted">Loading…</p>`;
+  const { sop, periods, checks } = await api(`/api/workspaces/${S.ws.id}/sop`);
+  const done = new Set(checks.map((c) => c.step));
+  const counts = sop.map((s) => ({ s, n: s.steps.filter((st) => done.has(`${s.cadence}:${st.id}`)).length }));
+  $("#pageActions").innerHTML = `<button class="btn" data-go="kpis">Log KPIs</button><button class="btn btn-primary" data-go="playbooks" data-param="kpi_report">Weekly KPI report</button>`;
+  view.innerHTML = `
+    <p class="muted" style="max-width:70ch;margin:0 0 20px">One procedure for running ${esc(S.ws.brief.company_name)}'s marketing, all inside this dashboard. Each step opens the page or playbook that does the work. Tick steps as you finish them; the team shares the ticks, and they reset each week, month and quarter.</p>
+    <div class="grid-4">${counts.map(({ s, n }) => {
+      const pct = Math.round((n / s.steps.length) * 100);
+      return `<button type="button" class="card stat clickable" data-scroll="sop-${s.cadence}" style="text-align:left;font:inherit;color:inherit;cursor:pointer">
+        <div class="eyebrow">${esc(s.title)}</div>
+        <div class="value">${n}<span class="subtle" style="font-size:16px"> / ${s.steps.length}</span></div>
+        <div class="meter" style="margin-top:8px"><span style="width:${pct}%"></span></div>
+        <div class="subtle" style="margin-top:6px">${PERIOD_LABEL[s.cadence]} · <span class="mono">${esc(periods[s.cadence])}</span></div></button>`;
+    }).join("")}</div>
+    <div class="stack-lg" style="margin-top:24px">${counts.map(({ s, n }) => `
+      <section class="card" id="sop-${s.cadence}">
+        <div class="card-head"><div><h2>${esc(s.title)}</h2><p class="subtle" style="font-size:13px">${esc(s.when)} · ${esc(s.goal)}</p></div>
+          <span class="badge ${n === s.steps.length ? "good" : n ? "warn" : ""}">${n === s.steps.length ? "Done" : `${n} of ${s.steps.length}`}</span></div>
+        <ul class="list">${s.steps.map((st, i) => {
+          const key = `${s.cadence}:${st.id}`, checked = done.has(key);
+          const target = st.param ? `Open ${esc(PB_TITLE(st.param))}` : st.go ? `Open ${esc(ROUTES[st.go]?.title || st.go)}` : "";
+          return `<li style="align-items:flex-start">
+            <input type="checkbox" id="sop-${esc(key)}" data-sop="${esc(s.cadence)}" data-step="${esc(st.id)}" ${checked ? "checked" : ""} style="margin-top:3px;width:18px;height:18px;flex:none">
+            <label for="sop-${esc(key)}" class="grow" style="cursor:pointer;${checked ? "text-decoration:line-through;opacity:.6" : ""}">
+              <span class="subtle num">${i + 1}.</span> ${esc(st.text)}<br><span class="subtle" style="font-size:12px">Owner: ${esc(st.owner)}</span></label>
+            ${target ? `<button class="btn btn-sm" data-go="${esc(st.go)}"${st.param ? ` data-param="${esc(st.param)}"` : ""}>${target}</button>` : ""}
+          </li>`;
+        }).join("")}</ul>
+      </section>`).join("")}</div>`;
+}
+
+document.addEventListener("change", async (e) => {
+  const box = e.target.closest("[data-sop]");
+  if (!box) return;
+  box.disabled = true;
+  try {
+    await api(`/api/workspaces/${S.ws.id}/sop`, { method: "POST", body: JSON.stringify({ cadence: box.dataset.sop, step: box.dataset.step, done: box.checked }) });
+    if (S.route === "sop") await renderSop($("#view"));
+  } catch (err) {
+    box.checked = !box.checked; box.disabled = false;
+    toast("Couldn't save that tick. Try again.", true);
+  }
+});
 
 /* ---------------------------------------------------------------- overview */
 async function renderOverview(view) {
@@ -499,6 +550,8 @@ function newWorkspaceDialog() {
 document.addEventListener("click", async (e) => {
   const nav = e.target.closest("#nav a");
   if (nav) { go(nav.dataset.route); return; }
+  const sc = e.target.closest("[data-scroll]");
+  if (sc) { document.getElementById(sc.dataset.scroll)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   const g = e.target.closest("[data-go]");
   if (g) { go(g.dataset.go, g.dataset.param || null); return; }
   const a = e.target.closest("[data-action]");
@@ -551,7 +604,7 @@ document.addEventListener("click", async (e) => {
   } catch (err) { toast(err.message, true); }
 });
 
-$("#wsSelect").addEventListener("change", (e) => { location.hash = `#/${e.target.value}/overview`; });
+$("#wsSelect").addEventListener("change", (e) => { location.hash = `#/${e.target.value}/sop`; });
 window.addEventListener("hashchange", onRoute);
 
 (async function init() {
@@ -561,6 +614,6 @@ window.addEventListener("hashchange", onRoute);
   $("#providerDot").className = "status-dot " + (live ? "live" : "demo");
   $("#providerLabel").textContent = live ? `Claude · ${health.model}` : "Demo mode";
   await loadWorkspaces();
-  if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/overview`; return; }
+  if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/sop`; return; }
   await onRoute();
 })();

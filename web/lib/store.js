@@ -7,10 +7,10 @@ import { cleanBrief } from "./catalog.js";
 
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "seed");
 
-// The DAP ADS workspace that the earlier dashboard was built around.
+// The DPA AD workspace (https://dpa.ad) created on first start.
 export const SEED_BRIEF = {
-  company_name: "DAP ADS",
-  product_name: "DAP ADS",
+  company_name: "DPA AD",
+  product_name: "DPA AD",
   website: "https://dpa.ad",
   one_liner: "Turns an ecommerce product catalog into designed, on-brand image and video ads automatically, so every SKU gets many scroll-stopping creatives for creative testing instead of a plain packshot.",
   category: "Ecommerce SaaS - catalog / dynamic product ad creative",
@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -39,6 +39,7 @@ export class Store {
     fs.mkdirSync(dataDir, { recursive: true });
     if (fs.existsSync(this.file)) {
       this.db = { ...EMPTY(), ...JSON.parse(fs.readFileSync(this.file, "utf8")) };
+      if (this.#migrate()) this.save();
     } else {
       this.db = EMPTY();
       this.#seed();
@@ -55,7 +56,19 @@ export class Store {
   #id() { return String(++this.db.seq); }
   #now() { return new Date().toISOString(); }
 
-  // First start: create the DAP ADS workspace, import the pricing plan and any
+  // The brand was first entered as "DAP ADS"; the real name is DPA AD (dpa.ad).
+  #migrate() {
+    let changed = false;
+    for (const ws of this.db.workspaces) {
+      for (const f of ["company_name", "product_name"]) {
+        if (/^\s*DAP\s*ADS?\s*$/i.test(ws.brief[f] || "")) { ws.brief[f] = "DPA AD"; changed = true; }
+      }
+      if (ws.brief.company_name === "DPA AD" && !ws.brief.website) { ws.brief.website = "https://dpa.ad"; changed = true; }
+    }
+    return changed;
+  }
+
+  // First start: create the DPA AD workspace, import the pricing plan and any
   // history from the earlier dashboard (assets.json).
   #seed() {
     const ws = this.createWorkspace(SEED_BRIEF, false);
@@ -77,6 +90,18 @@ export class Store {
         console.error("Could not import assets.json:", e.message);
       }
     }
+  }
+
+  // ---- SOP ticks: one row per workspace + cadence period + step
+  listSopChecks(wsId, periods) {
+    return this.db.sop_checks.filter((c) => c.workspace_id === String(wsId) && periods.includes(c.period));
+  }
+  setSopCheck(wsId, { period, step, done }) {
+    wsId = String(wsId);
+    const i = this.db.sop_checks.findIndex((c) => c.workspace_id === wsId && c.period === period && c.step === step);
+    if (done && i < 0) this.db.sop_checks.push({ workspace_id: wsId, period, step, done_at: this.#now() });
+    if (!done && i >= 0) this.db.sop_checks.splice(i, 1);
+    this.save();
   }
 
   // ---- workspaces
@@ -102,7 +127,7 @@ export class Store {
     if (this.db.workspaces.length === before) return false;
     const kpiIds = new Set(this.db.kpis.filter((k) => k.workspace_id === id).map((k) => k.id));
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
-    for (const c of ["notes", "kpis", "assets"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }
