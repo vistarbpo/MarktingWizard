@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -21,6 +21,8 @@ export const SOP = [
       { id: "launch", text: "Run the full launch kit (positioning → ICP → messaging → landing page → emails → social → ads → GTM plan).", owner: "Head of Growth", go: "playbooks" },
       { id: "helpcenter", text: "Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat.", owner: "Founder", go: "support" },
       { id: "roadmapstart", text: "Product: load the starter roadmap and confirm what's Now, Next and Later.", owner: "Founder", go: "product" },
+      { id: "people", text: "Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams.", owner: "Founder", go: "access" },
+      { id: "crmsetup", text: "Store CRM: import the Salla store list, connect the sending mailbox (SPF/DKIM/DMARC) and WhatsApp, run the starter campaigns in Test mode for a week, then switch to Live.", owner: "Head of Growth", go: "crm" },
       { id: "ops", text: "Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login.", owner: "Founder", go: "ops" },
       { id: "pricing", text: "Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price.", owner: "Founder", go: "playbooks", param: "pricing_strategy" },
       { id: "review", text: "Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts.", owner: "Founder", go: "library" },
@@ -32,6 +34,7 @@ export const SOP = [
     when: "Every week · Monday review, Friday wrap-up",
     goal: "Measure, learn, and ship this week's marketing from one place.",
     steps: [
+      { id: "crmweekly", text: "Store CRM: clear the Inbox, compare reply rates by category and campaign, rewrite the weakest sequence with AI, and raise daily caps only if bounces and unsubscribes stay low.", owner: "Head of Growth", go: "crm" },
       { id: "log", text: "Monday: log last week's values for every weekly KPI.", owner: "Each KPI owner", go: "kpis" },
       { id: "report", text: "Monday: run KPI Report & Analysis and agree the one bottleneck to fix this week.", owner: "Head of Growth", go: "playbooks", param: "kpi_report" },
       { id: "experiment", text: "Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner).", owner: "Head of Growth", go: "knowledge" },
@@ -52,6 +55,8 @@ export const SOP = [
     when: "First working day of the month",
     goal: "Check unit economics and plan next month's content and spend.",
     steps: [
+      { id: "newsletter", text: "Send the monthly newsletter to contacted, replied, customer and not-now stores; review Onboarding stores stuck on a checklist step.", owner: "Head of Growth", go: "crm" },
+      { id: "access", text: "Teams & roles: deactivate anyone who left, check the activity log for unexpected changes.", owner: "Founder", go: "access" },
       { id: "log", text: "Log the monthly KPIs: ARPA, churn, NRR, CAC, merchant ROAS, creatives per product.", owner: "Head of Growth", go: "kpis" },
       { id: "report", text: "Run KPI Report & Analysis on the month and share it with the team.", owner: "Head of Growth", go: "playbooks", param: "kpi_report" },
       { id: "calendar", text: "Generate next month's Content Calendar.", owner: "Content", go: "playbooks", param: "content_calendar" },

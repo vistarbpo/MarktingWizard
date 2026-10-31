@@ -14,7 +14,7 @@ export const MILESTONES = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
 
 const within = (iso, days, now) => Date.parse(iso) >= now - days * 864e5;
 
-export function commandSnapshot(store, ws, now = Date.now()) {
+export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
   const id = ws.id;
   const deals = store.listDeals(id), dealActs = store.listWorkspaceActivities(id);
   const sales = salesSummary(deals, dealActs, now);
@@ -36,6 +36,8 @@ export function commandSnapshot(store, ws, now = Date.now()) {
     { module: "Marketing", route: "playbooks", ai: assets.filter(wk).length, people: 0 },
     { module: "Sales", route: "pipeline", ai: dealActs.filter((a) => wk(a) && a.by === "ai").length, people: dealActs.filter((a) => wk(a) && a.by === "you" && a.type !== "created").length },
     { module: "Support", route: "support", ai: supMsgs.filter((m) => m.from === "ai").length, people: supMsgs.filter((m) => m.from === "you").length },
+    ...(crm ? [{ module: "Outreach", route: "crm", ai: crm.db.messages.filter((m) => m.workspace_id === id && m.direction === "out" && m.by === "ai" && ["sent", "test"].includes(m.status) && wk(m)).length,
+      people: crm.db.messages.filter((m) => m.workspace_id === id && m.direction === "out" && m.by !== "ai" && m.status === "sent" && wk(m)).length }] : []),
     { module: "Hiring", route: "team", ai: hrActs.filter((a) => wk(a) && a.by === "ai").length, people: hrActs.filter((a) => wk(a) && a.by === "you" && a.type !== "created").length },
   ];
   const aiTotal = work.reduce((a, w) => a + w.ai, 0), peopleTotal = work.reduce((a, w) => a + w.people, 0);
@@ -53,6 +55,7 @@ export function commandSnapshot(store, ws, now = Date.now()) {
     ...fin.needs.filter((n) => !n.soft).map((n) => ({ module: "Finance", route: "finance", param: null, title: "Finance", text: n.text })),
     ...sales.needs_you.map((n) => ({ module: "Sales", route: "pipeline", param: n.id, title: n.name, text: n.text })),
     ...support.needs_you.map((n) => ({ module: "Support", route: "support", param: null, title: n.name, text: n.reason || "Needs a person" })),
+    ...(crm ? crm.db.messages.filter((m) => m.workspace_id === id && m.direction === "in" && !m.handled && m.needs_person).slice(-5).map((m) => ({ module: "Store CRM", route: "crm", param: null, title: crm.byId.get(m.contact_id)?.store_name || "Store", text: `Replied on ${m.channel}${m.intent ? ` (${m.intent.replace(/_/g, " ")})` : ""}: answer in the CRM Inbox` })) : []),
     ...hr.needs_you.map((n) => ({ module: "Hiring", route: "team", param: null, title: n.name, text: n.text })),
   ];
 

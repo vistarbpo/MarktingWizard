@@ -9,7 +9,7 @@ import { LLMError, demoProvider } from "../lib/engine.js";
 import { Store } from "../lib/store.js";
 
 const PASSWORD = "correct horse";
-let server, base, cookie, store, dir;
+let server, base, cookie, store, dir, appRef;
 const prompts = [];
 let failNext = false;
 
@@ -37,11 +37,12 @@ before(async () => {
     { id: "u1", playbook: "pricing_strategy", title: "Pricing & Packaging Strategy", inputs: {}, text: "## Older pricing", createdAt: 1000 },
   ]));
   store = new Store(dir);
-  server = createApp({ store, provider, password: PASSWORD }).listen(0);
+  appRef = createApp({ store, provider, password: PASSWORD });
+  server = appRef.listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { server.close(); appRef.locals.crm.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 test("login is required and works", async () => {
   assert.equal((await call("/")).status, 302);
@@ -127,7 +128,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -341,7 +342,7 @@ test("command center: one snapshot across modules", async () => {
   assert.equal(d.goal.arr_goal, 100_000_000);
   assert.equal(d.goal.arr, d.revenue.paying_mrr * 12);
   assert.ok(d.goal.next_milestone > d.goal.arr);
-  assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Hiring"]);
+  assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Outreach", "Hiring"]);
   assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
   assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations", "Product"].includes(n.module)));
   assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
@@ -695,4 +696,118 @@ test("teams & roles: personal logins, per-module access, last-owner guard, activ
   assert.equal((await as(oc, "/api/me/password", { method: "POST", body: JSON.stringify({ current: "founder-pass-1", password: "new-founder-pass" }) })).status, 200);
   assert.ok(await signIn("founder@dpa.ad", "new-founder-pass"));
   assert.equal((await post("/api/me/password", { current: "", password: "whatever-long" })).status, 422);
+});
+
+test("store CRM: import 30k-style CSV, segments, sequences in Saudi hours, replies, unsubscribe", async () => {
+  const { CrmStore } = await import("../lib/crmstore.js");
+  const { createOutreach } = await import("../lib/outreach.js");
+  const { parseStores, normPhone, inWindow, guessIntent, cleanFilter } = await import("../lib/crm.js");
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+
+  // Parsing: Arabic headers, Saudi phones, categories, duplicates.
+  assert.equal(normPhone("0551234567"), "966551234567");
+  assert.equal(normPhone("+966 55 123 4567"), "966551234567");
+  const csv = "اسم المتجر,رابط المتجر,البريد الإلكتروني,رقم الجوال,التصنيف,المدينة,عدد المنتجات\n" +
+    "عبايات لمسة,https://lamsa.salla.sa/,info@lamsa.sa,0551111111,عبايات,Riyadh,420\n" +
+    "عطور الريم,reem.salla.sa,reem@reem.sa,,عطور وبخور,Jeddah,90\n" +
+    "Tech Volt,https://volt.zid.store,,0552222222,Electronics,Dammam,1500\n" +
+    "Dup Lamsa,lamsa.salla.sa,,,,Riyadh,\n";
+  const parsed = parseStores(csv);
+  assert.equal(parsed.total, 4);
+  assert.equal(parsed.rows[0].category, "Fashion & abayas");
+  assert.equal(parsed.rows[1].category, "Perfumes & oud");
+  assert.equal(parsed.rows[0].domain, "lamsa.salla.sa");
+
+  const textPost = (p, body) => call(p, { method: "POST", body, headers: { "Content-Type": "text/csv" } });
+  const pv = await (await textPost(`${P}/import/preview`, csv)).json();
+  assert.equal(pv.total, 4); assert.equal(pv.with_email, 2);
+  const imp = await (await textPost(`${P}/import?tags=batch1`, csv)).json();
+  assert.deepEqual(imp, { added: 3, updated: 0, skipped: 1 }); // the 4th row is the same store
+  const again = await (await textPost(`${P}/import`, csv)).json();
+  assert.equal(again.added, 0);
+
+  // Filters and facets.
+  const list = await json(`${P}/contacts?f=${encodeURIComponent(JSON.stringify({ category: ["Fashion & abayas"], has_email: true }))}`);
+  assert.equal(list.total, 1); assert.equal(list.rows[0].store_name, "عبايات لمسة"); assert.equal(list.rows[0].unsub_token, undefined);
+  assert.equal(list.facets.city.Riyadh, 1);
+  const big = await json(`${P}/contacts?f=${encodeURIComponent(JSON.stringify({ min_products: 300 }))}&sort=products`);
+  assert.deepEqual(big.rows.map((r) => r.store_name), ["Tech Volt", "عبايات لمسة"]);
+
+  // Sending rules, on a separate outreach engine with fake channels.
+  const sent = [];
+  const crm = new CrmStore(fs.mkdtempSync(path.join(os.tmpdir(), "crm-")), { flushMs: 5 });
+  const cfg = { email: { ready: true, imap: { ready: false } }, whatsapp: { ready: true }, public_url: "https://x.test", address: "Riyadh", inbound_secret: "" };
+  const out = createOutreach({ store, crm, provider, cfg, senders: { email: async (m) => { sent.push(["email", m]); return { provider_id: "e" + sent.length }; }, whatsapp: async (m) => { sent.push(["wa", m]); return { provider_id: "w" + sent.length }; } } });
+  crm.db.settings[ws.id] = { mode: "live", sender_name: "Noura" };
+  const a = crm.add(ws.id, { store_name: "Lamsa", email: "a@lamsa.sa", phone: "966551111111", category: "Fashion & abayas", products: 400, owner_name: "Huda" });
+  const b = crm.add(ws.id, { store_name: "Reem", email: "b@reem.sa", phone: "966553333333", category: "Perfumes & oud", products: 50, wa_opt_in: true });
+  const camp = crm.addCampaign(ws.id, { name: "T", type: "outreach", filter: cleanFilter({}), daily_limit: 100,
+    steps: [{ channel: "email", delay_days: 0, subject: "Hi {{store_name}}", body: "Hello {{owner_name}} from {{sender_name}}" }, { channel: "whatsapp", delay_days: 2, subject: "", body: "WA {{store_name}}", wa_template: "dpa_intro_ar" }] });
+  // 22:00 Riyadh = 19:00 UTC on a Sunday: outside hours; launch waits for 09:00.
+  const sunNight = new Date("2026-11-01T19:00:00Z");
+  assert.equal(inWindow(sunNight), false);
+  assert.equal(inWindow(new Date("2026-11-06T08:00:00Z")), false); // Friday
+  crm.updateCampaign(ws.id, camp.id, { start_at: sunNight.toISOString() });
+  const l = out.launch(crm.campaign(ws.id, camp.id), [a, b]);
+  assert.equal(l.enrolled, 2); assert.equal(l.starts_at, "2026-11-02T06:00:00.000Z");
+  assert.equal((await out.tick(sunNight)).sent, 0);
+  const mon = new Date("2026-11-02T07:00:00Z");
+  assert.equal((await out.tick(mon)).sent, 2);
+  assert.equal(sent[0][1].subject, "Hi Lamsa"); assert.match(sent[0][1].text, /Hello Huda from Noura/); assert.match(sent[0][1].text, /https:\/\/x\.test\/u\//);
+  assert.equal(crm.get(ws.id, a.id).stage, "contacted");
+  // Lamsa replies "interested" before step 2: sequence stops, deal is created.
+  await out.inbound({ channel: "email", from: "A@Lamsa.sa", subject: "Re: Hi", body: "نعم ارسل النماذج" });
+  const a2 = crm.get(ws.id, a.id);
+  assert.equal(a2.stage, "qualified"); assert.ok(a2.deal_id);
+  assert.equal(store.getDeal(ws.id, a2.deal_id).name, "Lamsa");
+  const wed = new Date("2026-11-04T07:00:00Z");
+  const t2 = await out.tick(wed);
+  assert.equal(t2.sent, 1); // only Reem gets the WhatsApp step (opted in, template)
+  assert.equal(sent.at(-1)[0], "wa"); assert.equal(sent.at(-1)[1].template, "dpa_intro_ar");
+  assert.equal(crm.enrollments(camp.id).find((e) => e.contact_id === a.id).status, "replied");
+  assert.equal(crm.campaign(ws.id, camp.id).status, "done");
+  // WhatsApp without opt-in is skipped; unsubscribe by reply is honoured.
+  const c = crm.add(ws.id, { store_name: "NoOpt", phone: "966554444444" });
+  assert.equal((await out.sendOne(ws.id, c, { channel: "whatsapp", body: "x", wa_template: "t" })).status, "skipped");
+  await out.inbound({ channel: "email", from: "b@reem.sa", body: "please stop / إلغاء الاشتراك" });
+  assert.equal(crm.get(ws.id, b.id).email_opt_out, true); assert.equal(crm.get(ws.id, b.id).stage, "do_not_contact");
+  assert.equal((await out.sendOne(ws.id, crm.get(ws.id, b.id), { channel: "email", subject: "x", body: "x" })).status, "skipped");
+  // Onboarding flow starts when a store moves to Onboarding.
+  const onb = crm.addCampaign(ws.id, { name: "Onb", type: "onboarding", trigger: "stage:onboarding", status: "running", steps: [{ channel: "email", delay_days: 0, subject: "Welcome", body: "Welcome" }] });
+  out.setStage(crm.get(ws.id, a.id), "onboarding");
+  assert.equal(crm.enrollments(onb.id).length, 1);
+  assert.equal(guessIntent("لاحقاً إن شاء الله"), "not_now");
+
+  // HTTP: starter campaigns, preview, launch in test mode, inbox, unsubscribe page, sample stores, permissions.
+  assert.equal((await (await post(`${P}/campaigns/starter`)).json()).added, 3);
+  const camps = await json(`${P}/campaigns`);
+  const cold = camps.find((x) => x.type === "outreach");
+  const prev = await json(`${P}/campaigns/${cold.id}/preview`);
+  assert.match(prev.steps[0].subject, /عبايات لمسة|عطور الريم/);
+  const launched = await (await post(`${P}/campaigns/${cold.id}/launch`)).json();
+  assert.ok(launched.enrolled >= 1);
+  const run = await json(`${P}/run`, { method: "POST" });
+  assert.equal(typeof run.sent, "number");
+  const lamsa = (await json(`${P}/contacts?f=${encodeURIComponent(JSON.stringify({ q: "lamsa" }))}`)).rows[0];
+  const lr = await (await post(`${P}/contacts/${lamsa.id}/log-reply`, { channel: "email", body: "كم السعر؟" })).json();
+  assert.equal(lr.direction, "in");
+  const inbox = await json(`${P}/inbox`);
+  assert.ok(inbox.some((m) => m.store?.id === lamsa.id));
+  const appCrm = store.dir ? null : null; void appCrm;
+  const full = await json(`${P}/contacts/${lamsa.id}`);
+  assert.ok(full.messages.length >= 1);
+  const tok = (await import("../lib/crmstore.js")) && full.contact.unsub_token;
+  assert.equal((await call(`/u/${tok}`)).status, 200);
+  assert.equal((await fetch(base + `/u/${tok}`, { method: "POST" })).status, 200);
+  assert.equal((await json(`${P}/contacts/${lamsa.id}`)).contact.email_opt_out, true);
+  assert.equal((await (await post(`${P}/sample`)).json()).added, 240);
+  const ov = await json(`${P}/overview`);
+  assert.ok(ov.total >= 243); assert.ok(ov.categories.length > 3);
+  const bulk = await (await post(`${P}/bulk`, { filter: { tags: ["sample"], city: ["Riyadh"] }, action: "tag", value: "riyadh-wave" })).json();
+  assert.ok(bulk.affected > 10);
+  assert.equal((await json(`${P}/sample`, { method: "DELETE" })).removed, 240);
+  const exp = await (await call(`${P}/export`)).text();
+  assert.match(exp, /store_name,domain,email/);
+  assert.equal((await call("/hooks/whatsapp?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1")).status, 403);
 });

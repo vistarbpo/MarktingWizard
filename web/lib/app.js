@@ -10,6 +10,9 @@ import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
 import { LEVELS, MODULES, MODULE_IDS, STARTER_TEAMS, checkPassword, describe, hashPassword, levelOk, moduleFor } from "./access.js";
 import { CHANNELS as AD_CHANNELS, CREATIVE_TYPES, caseStudyPrompt, classifyAd, parseAdsCsv, roasSummary } from "./roas.js";
+import { CrmStore } from "./crmstore.js";
+import { createOutreach } from "./outreach.js";
+import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -21,7 +24,8 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider, password }) {
+export function createApp({ store, provider, password, crm = new CrmStore(store.dir), outreachOptions = {} }) {
+  const outreach = createOutreach({ store, crm, provider, ...outreachOptions });
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -44,7 +48,8 @@ export function createApp({ store, provider, password }) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
+  app.locals.crm = crm; app.locals.outreach = outreach;
   app.use(express.urlencoded({ extended: false }));
 
   // ---- login (with a simple brute-force brake)
@@ -126,6 +131,8 @@ export function createApp({ store, provider, password }) {
     }
   });
 
+  mountCrmPublic(app, { crm, outreach });
+
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
     const user = sessionUser(req);
@@ -147,6 +154,8 @@ export function createApp({ store, provider, password }) {
     }
     next();
   });
+
+  mountCrm(app, { store, crm, outreach, provider });
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
@@ -293,6 +302,7 @@ export function createApp({ store, provider, password }) {
     res.json(store.updateWorkspace(req.params.ws, req.body));
   });
   app.delete("/api/workspaces/:ws", (req, res) => {
+    if (store.getWorkspace(req.params.ws)) crm.removeWorkspace(req.params.ws);
     store.deleteWorkspace(req.params.ws) ? res.status(204).end() : res.status(404).json({ detail: "Workspace not found" });
   });
 
@@ -1072,7 +1082,7 @@ export function createApp({ store, provider, password }) {
   });
 
   // ---- command center + sample data for every module
-  app.get("/api/workspaces/:ws/command", (req, res) => { const w = ws(req, res); if (w) res.json({ ...commandSnapshot(store, w), has_samples: hasSampleData(store, w.id) }); });
+  app.get("/api/workspaces/:ws/command", (req, res) => { const w = ws(req, res); if (w) res.json({ ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) }); });
   app.post("/api/workspaces/:ws/sample-data", (req, res) => {
     const w = ws(req, res); if (!w) return;
     if (hasSampleData(store, w.id)) return res.status(409).json({ detail: "Sample data is already loaded. Remove it first to reload." });

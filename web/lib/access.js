@@ -9,6 +9,7 @@ export const MODULES = [
   { id: "marketing", name: "Marketing (Brief, Knowledge, KPIs, Playbooks, Library)" },
   { id: "sales", name: "Sales pipeline" },
   { id: "product", name: "Product" },
+  { id: "crm", name: "Store CRM & outreach" },
   { id: "support", name: "AI Support" },
   { id: "results", name: "ROAS results" },
   { id: "finance", name: "Finance" },
@@ -63,7 +64,7 @@ export function moduleFor(method, path) {
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
     deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team",
-    sop: "sop", command: "command", "sample-data": "admin" })[seg] || "admin";
+    sop: "sop", command: "command", crm: "crm", "sample-data": "admin" })[seg] || "admin";
 }
 
 // One short line for the activity log.

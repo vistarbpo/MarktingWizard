@@ -22,6 +22,7 @@ team ticks steps off together; ticks reset each week, month and quarter. The sam
 | Marketing | Brief, knowledge, KPIs, 14 playbooks | Writes every playbook and the KPI report | Review, decide, publish |
 | Sales pipeline | Deals by stage, insights, AI drafts | Openers, prospect pages, follow-ups, objection answers | Big-deal calls, discounts, contracts |
 | ROAS results | Designed vs plain catalog ROAS from Meta/Snap/TikTok ad exports, by template and store | Maps ads to templates, writes case studies (EN + AR) | Exports results, approves case studies with a real quote |
+| Store CRM & outreach | Database of Salla/Zid stores (CSV import, 30k+), segments by category/city/size, email + WhatsApp sequences, newsletters, onboarding flows, inbox of replies, lifecycle pipeline | Writes sequences per category, sends on schedule in Saudi hours, reads replies, sets intent, moves stores, creates Sales deals, drafts answers | Imports the list, approves campaigns, switches to Live, answers replies that need a person |
 | Teams & roles | Personal logins, roles with None/View/Edit per module, teams, activity log | — (access is enforced on every request) | Owners and Admins add people and set roles |
 | AI Support | Inbox, help center, optional live website chat | Answers from the help center in Arabic/English | Refunds, cancellations, legal, data, bugs, upset customers |
 | Finance | Cash, burn, runway, 12-month forecast, budgets, expenses, VAT | Reads bank statements, monthly report, cost review, investor update | Approve payments, file VAT with ZATCA, payroll, sign |

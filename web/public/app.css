@@ -597,3 +597,46 @@ details > summary { cursor: pointer; }
 .acc-lvl.lvl-view { color: var(--accent); }
 .acc-lvl.lvl-none { color: var(--text-3); }
 .chip input { margin: 0 4px 0 0; }
+
+/* ---- Store CRM */
+.c-banner { padding: 12px 16px; margin-bottom: 16px; font-size: var(--fs-sm); border-color: var(--warn); }
+.c-banner.live { border-color: var(--good); }
+.c-banner .btn { display: inline-flex; height: 24px; }
+.c-fun { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 10px; font-size: var(--fs-sm); }
+.c-fun b { text-align: right; }
+.c-fun-bar { height: 12px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+.c-fun-bar i { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+.c-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.c-filters select.input-sm { width: auto; max-width: 220px; }
+.c-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 12px; border-color: var(--accent); background: var(--accent-soft); }
+.c-bulk select, .c-bulk input { width: auto; }
+.c-table tr.clickable { cursor: pointer; }
+.c-table tr.clickable:hover td { background: var(--surface-2); }
+.c-score { display: inline-grid; place-items: center; min-width: 30px; height: 22px; border-radius: 6px; font: 600 12px var(--font); font-variant-numeric: tabular-nums;
+  background: linear-gradient(90deg, var(--accent-soft) var(--v), var(--surface-2) var(--v)); color: var(--text); }
+.c-onb { display: flex; gap: 3px; } .c-onb i { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); } .c-onb i.on { background: var(--good); }
+.c-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; padding: 14px 20px; }
+.c-stats div { display: flex; flex-direction: column; gap: 2px; } .c-stats b { font-size: 18px; }
+.c-steps-bar { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 20px 14px; font-size: var(--fs-sm); color: var(--text-2); }
+.c-editor { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; align-items: start; }
+.c-preview { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.c-step { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.c-step .input { background: var(--surface); }
+.c-ai { background: var(--accent-soft); border-bottom: 1px solid var(--border); }
+.c-msg { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); margin-bottom: 10px; font-size: var(--fs-sm); line-height: 1.6; }
+.c-msg.whatsapp { background: color-mix(in srgb, var(--good) 12%, var(--surface)); }
+.c-inmsg.done { opacity: .6; }
+.c-quote { white-space: pre-wrap; padding: 10px 14px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); border-radius: 6px; font-size: var(--fs-sm); line-height: 1.6; }
+.linklike { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); }
+.c-pre { background: var(--surface-2); padding: 10px 12px; border-radius: 8px; font: 12px var(--mono); white-space: pre-wrap; overflow-x: auto; }
+.c-list { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.c-kv { display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; align-items: center; }
+.c-kv > span:nth-child(odd) { color: var(--text-3); }
+.c-timeline { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.c-tl { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-size: var(--fs-sm); line-height: 1.6; }
+.c-tl.in { background: var(--accent-soft); margin-inline-end: 24px; }
+.c-tl.out { margin-inline-start: 24px; }
+.c-tl.note { background: none; border: 1px dashed var(--border); }
+.c-tl b.bad { color: var(--bad); }
+@media (max-width: 1100px) { .c-editor { grid-template-columns: 1fr; } .c-preview { position: static; max-height: none; } }
+@media (max-width: 700px) { .c-filters > * { flex: 1 1 140px; max-width: none !important; width: auto !important; } .c-fun { grid-template-columns: 90px 1fr 56px; } }
