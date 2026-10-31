@@ -18,8 +18,9 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 4 | Load the SOP KPIs and set a target for each one. | Head of Growth | KPIs |
 | 5 | Answer every open question on the Overview until data completeness is 100%. | Head of Growth | Overview |
 | 6 | Run the full launch kit (positioning → ICP → messaging → landing page → emails → social → ads → GTM plan). | Head of Growth | Playbooks |
-| 7 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
-| 8 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
+| 7 | Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat. | Founder | AI Support |
+| 8 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
+| 9 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
 
 ## Weekly cycle
 
@@ -34,9 +35,10 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 4 | Generate this week's Social Media Post Pack and schedule the posts. | Content | Playbooks → Social Media Post Pack |
 | 5 | Generate or refresh an Outbound Email Sequence for the persona in focus and load it into the sending tool. | Sales | Playbooks → Outbound Email Sequence |
 | 6 | Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under "Needs you". | Founder | Sales pipeline |
-| 7 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
-| 8 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
-| 9 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
+| 7 | Daily: clear AI Support's "Needs you" list; Friday: turn repeated questions into new help articles. | Customer Success | AI Support |
+| 8 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
+| 9 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
+| 10 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
 
 ## Monthly review
 

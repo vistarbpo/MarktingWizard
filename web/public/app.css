@@ -412,3 +412,31 @@ td.right, th.right { text-align: right; }
 .h-board { grid-auto-columns: minmax(230px, 1fr); }
 @media (min-width: 1500px) { .h-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
 @media (max-width: 640px) { .h-board { grid-auto-columns: 82%; } .h-trunk { display: none; } .h-depts { border-top: 0; padding-top: var(--s-3); } }
+
+/* ---------------------------------------------------------------- Support module */
+.su-inbox { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: var(--s-4); align-items: start; }
+.su-list { overflow: hidden; }
+.su-list .list { max-height: 70vh; overflow-y: auto; }
+.su-list .list > li { align-items: flex-start; padding: var(--s-3) var(--s-4); }
+.su-filters .num { margin-left: 4px; color: var(--text-3); }
+.su-bubble, .su-preview, .su-ans { unicode-bidi: plaintext; }
+.su-filters { padding: var(--s-3) var(--s-4); flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+.su-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.su-thread { display: flex; flex-direction: column; min-height: 60vh; }
+.su-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border); }
+.su-esc { margin: var(--s-3) var(--s-5) 0; }
+.su-msgs { flex: 1; display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-4) var(--s-5); max-height: 55vh; overflow-y: auto; }
+.su-msg { display: flex; flex-direction: column; gap: 4px; max-width: 80%; }
+.su-msg.customer { align-self: flex-start; }
+.su-msg.ai, .su-msg.you { align-self: flex-end; align-items: flex-end; }
+.su-bubble { padding: 10px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-2); }
+.su-msg.ai .su-bubble { background: var(--accent-soft); }
+.su-msg.you .su-bubble { background: var(--warn-soft); }
+.su-bubble[dir="rtl"], #su-reply[dir="rtl"], .su-art[dir="rtl"] { font-family: "IBM Plex Sans Arabic", var(--font); }
+.su-compose { border-top: 1px solid var(--border); padding: var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.su-kb { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s-3); }
+.su-art { display: flex; flex-direction: column; gap: var(--s-2); }
+.su-ans { white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.su-rules { margin: 0; padding-left: 18px; font-size: var(--fs-sm); color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.h-span { grid-column: 1 / -1; }
+@media (max-width: 1024px) { .su-inbox { grid-template-columns: 1fr; } .su-list .list { max-height: 40vh; } .su-msg { max-width: 92%; } }

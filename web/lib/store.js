@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -210,6 +210,71 @@ export class Store {
     return a;
   }
 
+  // ---- support: help-center articles and tickets (messages embedded)
+  listArticles(wsId) { return this.db.support_articles.filter((a) => a.workspace_id === String(wsId)); }
+  addArticle(wsId, { question, answer, language = "en", category = "other" }, persist = true) {
+    const a = { id: this.#id(), workspace_id: String(wsId), question, answer, language, category, created_at: this.#now(), updated_at: this.#now() };
+    this.db.support_articles.push(a);
+    if (persist) this.save();
+    return a;
+  }
+  updateArticle(wsId, id, fields) {
+    const a = this.db.support_articles.find((x) => x.workspace_id === String(wsId) && x.id === String(id));
+    if (!a) return null;
+    Object.assign(a, fields, { updated_at: this.#now() });
+    this.save();
+    return a;
+  }
+  deleteArticle(wsId, id) {
+    const before = this.db.support_articles.length;
+    this.db.support_articles = this.db.support_articles.filter((a) => !(a.workspace_id === String(wsId) && a.id === String(id)));
+    if (before === this.db.support_articles.length) return false;
+    this.save();
+    return true;
+  }
+  listTickets(wsId) { return this.db.support_tickets.filter((t) => t.workspace_id === String(wsId)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); }
+  getTicket(wsId, id) { return this.db.support_tickets.find((t) => t.workspace_id === String(wsId) && t.id === String(id)) || null; }
+  findTicketByToken(wsId, token) { return this.db.support_tickets.find((t) => t.workspace_id === String(wsId) && t.public_token && t.public_token === token) || null; }
+  addTicket(wsId, fields) {
+    const now = this.#now();
+    const t = { id: this.#id(), workspace_id: String(wsId), status: "new", category: "other", language: "", messages: [], human_touched: false, created_at: now, updated_at: now, ...fields };
+    this.db.support_tickets.push(t);
+    this.save();
+    return t;
+  }
+  updateTicket(wsId, id, fields) {
+    const t = this.getTicket(wsId, id);
+    if (!t) return null;
+    Object.assign(t, fields, { updated_at: this.#now() });
+    this.save();
+    return t;
+  }
+  addTicketMessage(wsId, id, { from, text, sent = true, draft = false }) {
+    const t = this.getTicket(wsId, id);
+    if (!t) return null;
+    const m = { id: this.#id(), from, text, sent, draft, at: this.#now() };
+    t.messages.push(m);
+    t.updated_at = m.at;
+    if (from === "you") t.human_touched = true;
+    this.save();
+    return m;
+  }
+  deleteTicket(wsId, id) {
+    const before = this.db.support_tickets.length;
+    this.db.support_tickets = this.db.support_tickets.filter((t) => !(t.workspace_id === String(wsId) && t.id === String(id)));
+    if (before === this.db.support_tickets.length) return false;
+    this.save();
+    return true;
+  }
+  setSupportSettings(wsId, fields) {
+    const ws = this.getWorkspace(wsId);
+    if (!ws) return null;
+    ws.support = { widget_enabled: false, widget_key: null, ...(ws.support || {}), ...fields };
+    this.save();
+    return ws.support;
+  }
+  findWorkspaceByWidgetKey(key) { return this.db.workspaces.find((w) => w.support?.widget_key && w.support.widget_key === key) || null; }
+
   // ---- SOP ticks: one row per workspace + cadence period + step
   listSopChecks(wsId, periods) {
     return this.db.sop_checks.filter((c) => c.workspace_id === String(wsId) && periods.includes(c.period));
@@ -247,7 +312,7 @@ export class Store {
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
     const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
     this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }

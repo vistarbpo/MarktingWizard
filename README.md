@@ -14,6 +14,16 @@ monthly review, quarterly strategy). Every step links to the page or playbook th
 team ticks steps off together; ticks reset each week, month and quarter. The same procedure is in
 [`docs/SOP.md`](docs/SOP.md), generated from `web/lib/sop.js` (`cd web && npm run sop:md`).
 
+## Modules
+
+| Module | What it does | AI does | Only people do |
+|---|---|---|---|
+| SOP | One operating procedure, ticked off per week/month/quarter | Links every step to the page that does it | Run the steps |
+| Marketing | Brief, knowledge, KPIs, 14 playbooks | Writes every playbook and the KPI report | Review, decide, publish |
+| Sales pipeline | Deals by stage, insights, AI drafts | Openers, prospect pages, follow-ups, objection answers | Big-deal calls, discounts, contracts |
+| AI Support | Inbox, help center, optional live website chat | Answers from the help center in Arabic/English | Refunds, cancellations, legal, data, bugs, upset customers |
+| Team & hiring | AI-first org chart, hiring board | Job posts, CV screening, interview kits, onboarding | Interviews, offers, contracts |
+
 ## How it works
 
 ```

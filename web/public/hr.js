@@ -52,12 +52,14 @@ function hrKpis() {
 }
 
 /* ------------------------------------------------ Org chart */
+const hrHasSamples = () => HR.roles.some((r) => r.sample_holder) || HR.candidates.some((c) => c.sample);
+const sampleTag = `<span class="badge warn" title="Sample data, not a real person">Sample</span>`;
 function hrRoleCard(r) {
   const cands = HR.candidates.filter((c) => c.role_id === r.id && !["hired", "rejected"].includes(c.stage)).length;
   const sal = r.kind === "human" && (r.salary_min || r.salary_max) ? `${sar(r.salary_min || r.salary_max)}${r.salary_max && r.salary_min ? "–" + Number(r.salary_max).toLocaleString("en-US") : ""}/mo` : "";
   return `<button type="button" class="h-role ${r.kind} st-${r.status}" data-hrole="${r.id}">
     <div class="row gap-8">${hBadge(r.kind)}<b class="h-title">${esc(r.title)}</b></div>
-    <span class="h-holder">${r.kind === "ai" ? esc(r.holder || "AI agent") : esc(r.holder || (r.status === "open" ? "Hiring now" : "Not hired yet"))}</span>
+    <span class="h-holder">${r.kind === "ai" ? esc(r.holder || "AI agent") : esc(r.holder || (r.status === "open" ? "Hiring now" : "Not hired yet"))} ${r.sample_holder ? sampleTag : ""}</span>
     <div class="h-meta"><span class="h-status st-${r.status}">${STATUS_LABEL[r.status] || r.status}</span>${r.employment && r.kind === "human" ? `<span>${esc(r.employment)}</span>` : ""}${sal ? `<span class="num">${sal}</span>` : ""}${cands ? `<span>${cands} candidate${cands === 1 ? "" : "s"}</span>` : ""}</div>
     ${r.kind === "human" && r.must_be_human ? `<span class="h-why">Human because: ${esc(r.must_be_human)}</span>` : r.duties ? `<span class="h-why">${esc(r.duties)}</span>` : ""}
   </button>`;
@@ -67,7 +69,7 @@ function hrOrg() {
   if (!HR.roles.length) {
     $("#hBody").innerHTML = `<div class="card empty" style="margin-top:16px"><h2>Design your AI-first team</h2>
       <p>Start from a suggested org for DPA AD: AI agents for sales follow-up, marketing, analytics, support and recruiting, plus a small human core for what must be human. Edit or delete anything after.</p>
-      <div class="row gap-8" style="justify-content:center"><button class="btn btn-primary" data-haction="suggest">Load suggested AI-first org</button><button class="btn" data-haction="add-role">Add a role</button></div></div>`;
+      <div class="row gap-8" style="justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" data-haction="suggest">Load suggested AI-first org</button><button class="btn" data-haction="sample">Load org + sample team</button><button class="btn" data-haction="add-role">Add a role</button></div></div>`;
     return;
   }
   const show = (r) => HR.filter === "all" || r.kind === HR.filter;
@@ -79,7 +81,7 @@ function hrOrg() {
       <div class="row gap-12" style="flex-wrap:wrap"><h2>Org chart</h2>
         <div class="h-split" role="img" aria-label="${ai} AI agents and ${hu} human roles"><span style="flex:${ai || 0.001};background:var(--accent)"></span><span style="flex:${hu || 0.001};background:var(--warn)"></span></div>
         <span class="subtle s-small">${ai} AI · ${hu} human</span></div>
-      <div class="row gap-8" role="group" aria-label="Filter roles">${[["all", "All"], ["ai", "AI agents"], ["human", "People"]].map(([k, l]) => `<button class="chip ${HR.filter === k ? "active" : ""}" data-hfilter="${k}">${l}</button>`).join("")}</div>
+      <div class="row gap-8" role="group" aria-label="Filter roles" style="flex-wrap:wrap">${hrHasSamples() ? `<button class="btn btn-sm btn-ghost btn-danger" data-haction="unsample">Remove sample data</button>` : `<button class="btn btn-sm btn-ghost" data-haction="sample">Load sample team</button>`}${[["all", "All"], ["ai", "AI agents"], ["human", "People"]].map(([k, l]) => `<button class="chip ${HR.filter === k ? "active" : ""}" data-hfilter="${k}">${l}</button>`).join("")}</div>
     </div>
     <div class="h-org">
       ${leaders.length ? `<div class="h-lead">${leaders.map(hrRoleCard).join("")}</div><div class="h-trunk" aria-hidden="true"></div>` : ""}
@@ -95,7 +97,7 @@ function hrCandCard(c) {
   const score = c.score == null ? "" : `<span class="h-score ${c.score >= 7 ? "good" : c.score >= 5 ? "mid" : "low"}">${c.score}/10</span>`;
   return `<button type="button" class="s-card" draggable="true" data-hcand="${c.id}" aria-label="${esc(c.name)}, ${esc(c.stage)}">
     <div class="row between" style="gap:8px"><b class="s-name">${esc(c.name)}</b>${score}</div>
-    <span class="subtle s-small">${esc(c.role_title)}${c.source ? " · " + esc(c.source) : ""}</span>
+    <span class="subtle s-small">${esc(c.role_title)}${c.source ? " · " + esc(c.source) : ""}</span>${c.sample ? `<span>${sampleTag}</span>` : ""}
     <div class="s-next ${c.next.urgent ? (c.next.owner === "you" ? "hot" : "warm") : ""}">${hOwner(c.next.owner)}<span>${esc(c.next.text)}</span></div>
   </button>`;
 }
@@ -261,6 +263,8 @@ document.addEventListener("click", async (e) => {
     if (act) {
       const a = act.dataset.haction;
       if (a === "close") return hClose();
+      if (a === "sample") { const r = await api(`/api/workspaces/${S.ws.id}/hr/sample-team`, { method: "POST", body: "{}" }); await hrLoad(); hrRerender(); return toast(`Loaded ${r.roles} roles and ${r.people} sample people`); }
+      if (a === "unsample") { if (act.dataset.confirm !== "1") { act.dataset.confirm = "1"; act.textContent = "Click again to remove samples"; return; } await api(`/api/workspaces/${S.ws.id}/hr/sample-team`, { method: "DELETE" }); await hrLoad(); hrRerender(); return toast("Sample data removed"); }
       if (a === "suggest") { const r = await api(`/api/workspaces/${S.ws.id}/hr/suggested-org`, { method: "POST", body: "{}" }); await hrLoad(); hrRerender(); return toast(`Added ${r.added} roles`); }
       if (a === "add-role") {
         const r = await api(`/api/workspaces/${S.ws.id}/hr/roles`, { method: "POST", body: JSON.stringify({ title: "New role", kind: "human", status: "planned", department: "Operations" }) });

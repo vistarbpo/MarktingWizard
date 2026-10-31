@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -257,4 +257,79 @@ test("hr: score parsing", async () => {
   assert.equal(parseScore("score : 6.5 / 10"), 6.5);
   assert.equal(parseScore("no score"), null);
   assert.equal(parseScore("SCORE: 14/10"), 10);
+});
+
+test("hr: sample team loads DPA AD roles and people, and removes cleanly", async () => {
+  const [ws] = await json("/api/workspaces");
+  const base = `/api/workspaces/${ws.id}/hr`;
+  const r = await (await post(`${base}/sample-team`, {})).json();
+  assert.ok(r.people >= 5);
+  let hr = await json(base);
+  assert.ok(hr.roles.some((x) => x.title === "Template & Motion Designer"));
+  assert.ok(hr.roles.some((x) => x.title === "AI Support" && x.status === "active"));
+  const samples = hr.candidates.filter((c) => c.sample);
+  assert.ok(samples.every((c) => c.name.startsWith("Sample ·")));
+  assert.ok(samples.some((c) => c.stage === "offer" && c.next.owner === "you"));
+  const sales = hr.roles.find((x) => x.title === "Sales & Partnerships Lead (KSA)");
+  assert.equal(sales.status, "active");
+  // A real name replaces the sample: it is kept when samples are removed.
+  const content = hr.roles.find((x) => x.title === "Arabic Content & Creator Partnerships");
+  await call(`${base}/roles/${content.id}`, { method: "PUT", body: JSON.stringify({ holder: "Real Person" }) });
+  assert.equal((await call(`${base}/sample-team`, { method: "DELETE" })).status, 204);
+  hr = await json(base);
+  assert.equal(hr.candidates.filter((c) => c.sample).length, 0);
+  assert.equal(hr.roles.find((x) => x.id === sales.id).holder, "");
+  assert.equal(hr.roles.find((x) => x.id === sales.id).status, "planned");
+  assert.equal(hr.roles.find((x) => x.id === content.id).holder, "Real Person");
+});
+
+test("support: help center parsing, reply contract and escalation", async () => {
+  const { parseArticles, parseReply } = await import("../lib/support.js");
+  const arts = parseArticles("### How do I start?\nPaste your feed URL.\n\n### Is video included?\nYes on Growth.\n## العربية\n### كيف أبدأ؟\nالصق رابط الكتالوج.");
+  assert.deepEqual(arts.map((a) => a.language), ["en", "en", "ar"]);
+  const ok = parseReply('META {"category":"feed-import","language":"en","escalate":false,"reason":""}\n\nPaste your feed URL in Settings.');
+  assert.equal(ok.escalate, false);
+  assert.equal(ok.category, "feed-import");
+  assert.equal(ok.reply, "Paste your feed URL in Settings.");
+  const refund = parseReply('META {"category":"billing","language":"ar","escalate":true,"reason":"refund request"}\n\nبيتواصل معك أحد من الفريق.');
+  assert.equal(refund.escalate, true);
+  // No META line: never trust it, a person checks.
+  assert.equal(parseReply("Sure, here's a refund!").escalate, true);
+});
+
+test("support: inbox, articles, AI reply and the public chat switch", async () => {
+  const [ws] = await json("/api/workspaces");
+  const sb = `/api/workspaces/${ws.id}/support`;
+  assert.equal((await post(`${sb}/articles`, { question: "How do I connect Salla?", answer: "Settings → Feeds → Salla." })).status, 201);
+  assert.equal((await post(`${sb}/tickets`, {})).status, 422);
+  const t = await (await post(`${sb}/tickets`, { customer_name: "Abaya Lane", channel: "WhatsApp", message: "How do I connect my Salla store?" })).json();
+  const r = await (await post(`${sb}/tickets/${t.id}/ai-reply`, {})).json();
+  assert.match(prompts.at(-1), /How do I connect Salla\?/);
+  assert.match(prompts.at(-1), /Refunds, chargebacks/);
+  assert.equal(r.escalate, true); // demo output has no META line
+  await post(`${sb}/tickets/${t.id}/messages`, { from: "you", text: "Go to Settings → Feeds." });
+  await call(`${sb}/tickets/${t.id}`, { method: "PUT", body: JSON.stringify({ status: "resolved" }) });
+  let sup = await json(sb);
+  assert.equal(sup.summary.articles, 1);
+  assert.equal(sup.tickets[0].status, "resolved");
+  assert.equal(sup.summary.ai_resolved_pct, 0); // a person replied
+
+  // Public chat: off by default, then on with a key.
+  const s1 = await (await call(`${sb}/settings`, { method: "PUT", body: JSON.stringify({ widget_enabled: false }) })).json();
+  const pub = (path, body) => fetch(base + path, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+  assert.equal((await pub(`/api/public/support/${s1.widget_key}/chat`, { message: "hi" })).status, 404);
+  await call(`${sb}/settings`, { method: "PUT", body: JSON.stringify({ widget_enabled: true }) });
+  assert.equal((await pub(`/support/${s1.widget_key}`)).status, 200);
+  const first = await (await pub(`/api/public/support/${s1.widget_key}/chat`, { message: "I want a refund" })).json();
+  assert.ok(first.token);
+  assert.equal(first.handed_over, true);
+  assert.equal(first.reply, null); // unchecked AI text is never shown to the customer
+  // Once with a person, AI stays quiet.
+  const second = await (await pub(`/api/public/support/${s1.widget_key}/chat`, { message: "hello?", token: first.token })).json();
+  assert.equal(second.reply, null);
+  sup = await json(sb);
+  const chat = sup.tickets.find((x) => x.channel === "Website chat");
+  assert.equal(chat.status, "needs_human");
+  assert.equal(chat.count, 2); // two customer messages; the unchecked AI text was not posted
+  assert.equal(chat.public_token, undefined);
 });

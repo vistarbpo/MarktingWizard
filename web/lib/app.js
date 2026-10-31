@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGaps } from "./catalog.js";
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
-import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
+import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
+import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, SAMPLE_TEAM, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
 import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
 
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,6 +56,55 @@ export function createApp({ store, provider, password }) {
   app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
   app.get(["/healthz", "/api/ping"], (req, res) => res.json({ ok: true }));
   app.get("/app.css", (req, res) => res.sendFile(path.join(__dirname, "public", "app.css")));
+
+  // ---- public website chat (no login). Off until switched on in Support → Website chat.
+  // Answers only from the help center; anything it can't answer goes to a person.
+  const chatHits = new Map();
+  const limited = (key, max, windowMs) => {
+    const now = Date.now(), list = (chatHits.get(key) || []).filter((t) => now - t < windowMs);
+    list.push(now); chatHits.set(key, list);
+    return list.length > max;
+  };
+  const widgetWs = (req, res) => {
+    const w = store.findWorkspaceByWidgetKey(String(req.params.key || ""));
+    if (!w || !w.support?.widget_enabled) { res.status(404).json({ detail: "Chat is not available." }); return null; }
+    return w;
+  };
+  app.get("/support/:key", (req, res) => {
+    const w = store.findWorkspaceByWidgetKey(String(req.params.key || ""));
+    if (!w || !w.support?.widget_enabled) return res.status(404).send("Chat is not available.");
+    res.sendFile(path.join(__dirname, "public", "chat.html"));
+  });
+  app.get("/api/public/support/:key", (req, res) => {
+    const w = widgetWs(req, res); if (!w) return;
+    res.json({ company: w.brief.company_name, website: w.brief.website || "" });
+  });
+  app.post("/api/public/support/:key/chat", async (req, res) => {
+    const w = widgetWs(req, res); if (!w) return;
+    const text = String(req.body?.message || "").trim().slice(0, 1000);
+    if (!text) return res.status(422).json({ detail: "Write a message first." });
+    if (limited("ip:" + req.ip, 20, 10 * 60e3) || limited("ws:" + w.id, 400, 864e5)) return res.status(429).json({ detail: "Too many messages. Please try again in a few minutes." });
+    let t = req.body?.token ? store.findTicketByToken(w.id, String(req.body.token)) : null;
+    if (!t) {
+      t = store.addTicket(w.id, { channel: "Website chat", customer_name: String(req.body?.name || "").trim().slice(0, 100), contact: String(req.body?.contact || "").trim().slice(0, 200), store: "", public_token: crypto.randomBytes(18).toString("base64url") });
+    } else if (req.body?.contact && !t.contact) store.updateTicket(w.id, t.id, { contact: String(req.body.contact).trim().slice(0, 200) });
+    if (t.messages.length >= 40) return res.status(429).json({ detail: "This chat is full. A team member will follow up.", token: t.public_token });
+    store.addTicketMessage(w.id, t.id, { from: "customer", text });
+    if (t.status === "needs_human") {
+      // Already with a person: don't let AI talk over them.
+      return res.json({ token: t.public_token, reply: null, handed_over: true });
+    }
+    try {
+      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id)), onText: () => {} });
+      const r = parseReply(raw);
+      if (r.checked) store.addTicketMessage(w.id, t.id, { from: "ai", text: r.reply, sent: true });
+      store.updateTicket(w.id, t.id, { category: r.category, language: r.language, status: r.escalate ? "needs_human" : "ai_answered", escalation_reason: r.escalate ? r.reason : "" });
+      res.json({ token: t.public_token, reply: r.checked ? r.reply : null, handed_over: r.escalate });
+    } catch (e) {
+      store.updateTicket(w.id, t.id, { status: "needs_human", escalation_reason: "AI could not answer: " + (e?.message || "error") });
+      res.json({ token: t.public_token, reply: null, handed_over: true });
+    }
+  });
 
   // Everything below needs a session.
   app.use((req, res, next) => {
@@ -213,12 +263,43 @@ export function createApp({ store, provider, password }) {
   });
   app.post("/api/workspaces/:ws/hr/suggested-org", (req, res) => {
     if (!ws(req, res)) return;
-    const existing = new Set(store.listHrRoles(req.params.ws).map((r) => r.title.toLowerCase()));
-    const added = SUGGESTED_ORG.filter((r) => !existing.has(r.title.toLowerCase())).map((r) => store.addHrRole(req.params.ws, { location: "", duties: "", must_be_human: "", notes: "", reports_to: null, ...r }, false));
-    const ceo = store.listHrRoles(req.params.ws).find((r) => r.department === "Leadership");
+    res.status(201).json({ added: addSuggestedOrg(req.params.ws) });
+  });
+  const addSuggestedOrg = (wsId) => {
+    const existing = new Set(store.listHrRoles(wsId).map((r) => r.title.toLowerCase()));
+    const added = SUGGESTED_ORG.filter((r) => !existing.has(r.title.toLowerCase())).map((r) => store.addHrRole(wsId, { location: "", duties: "", must_be_human: "", notes: "", reports_to: null, ...r }, false));
+    const ceo = store.listHrRoles(wsId).find((r) => r.department === "Leadership");
     if (ceo) for (const r of added) if (r.id !== ceo.id && !r.reports_to) r.reports_to = ceo.id;
     store.save();
-    res.status(201).json({ added: added.length });
+    return added.length;
+  };
+  app.post("/api/workspaces/:ws/hr/sample-team", (req, res) => {
+    if (!ws(req, res)) return;
+    const wsId = req.params.ws;
+    const roles = addSuggestedOrg(wsId);
+    const byTitle = Object.fromEntries(store.listHrRoles(wsId).map((r) => [r.title, r]));
+    for (const [title, name] of Object.entries(SAMPLE_TEAM.holders)) {
+      const r = byTitle[title];
+      if (r && !r.holder) store.updateHrRole(wsId, r.id, { holder: name, sample_holder: true, prev_status: r.status, status: "active" });
+    }
+    const have = new Set(store.listHrCandidates(wsId).map((c) => c.name));
+    let people = 0;
+    for (const c of SAMPLE_TEAM.candidates) {
+      if (have.has(c.name)) continue;
+      const role = byTitle[c.role];
+      const cand = store.addHrCandidate(wsId, { name: c.name, role_id: role?.id || null, source: c.source, cv_text: c.cv_text, email: "", phone: "", notes: "", sample: true });
+      store.updateHrCandidate(wsId, cand.id, { stage: c.stage, score: c.score });
+      if (c.screen) store.addHrActivity(wsId, "candidate", cand.id, { type: "ai_draft", by: "ai", task: "screen", text: c.screen });
+      people++;
+    }
+    res.status(201).json({ roles, people: people + Object.keys(SAMPLE_TEAM.holders).length });
+  });
+  app.delete("/api/workspaces/:ws/hr/sample-team", (req, res) => {
+    if (!ws(req, res)) return;
+    const wsId = req.params.ws;
+    for (const c of store.listHrCandidates(wsId).filter((c) => c.sample)) store.deleteHrCandidate(wsId, c.id);
+    for (const r of store.listHrRoles(wsId).filter((r) => r.sample_holder)) store.updateHrRole(wsId, r.id, { holder: "", sample_holder: false, status: r.prev_status || "planned" });
+    res.status(204).end();
   });
   app.post("/api/workspaces/:ws/hr/roles", (req, res) => {
     if (!ws(req, res)) return;
@@ -238,6 +319,8 @@ export function createApp({ store, provider, password }) {
     const { out, err } = cleanRole(req.body || {}, true);
     if (err.length) return res.status(422).json({ detail: err.join("; ") });
     if (out.reports_to === req.params.id) return res.status(422).json({ detail: "A role cannot report to itself" });
+    const cur = store.getHrRole(req.params.ws, req.params.id);
+    if (cur?.sample_holder && out.holder !== undefined && out.holder !== cur.holder) out.sample_holder = false; // a real name replaced the sample
     const r = store.updateHrRole(req.params.ws, req.params.id, out);
     r ? res.json(r) : res.status(404).json({ detail: "Role not found" });
   });
@@ -308,6 +391,106 @@ export function createApp({ store, provider, password }) {
         }
         return store.addHrActivity(w.id, "candidate", c.id, { type: "ai_draft", by: "ai", task: req.params.task, text }).id;
       } });
+  });
+
+  // ---- support (logged-in)
+  app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));
+  app.get("/api/workspaces/:ws/support", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const tickets = store.listTickets(w.id), articles = store.listArticles(w.id);
+    res.json({ tickets: tickets.map(({ messages, public_token, ...t }) => ({ ...t, last: messages.at(-1) || null, count: messages.length })), articles, summary: supportSummary(tickets, articles), settings: { widget_enabled: false, widget_key: null, ...(w.support || {}) } });
+  });
+  app.put("/api/workspaces/:ws/support/settings", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const fields = {};
+    if (req.body?.widget_enabled !== undefined) fields.widget_enabled = !!req.body.widget_enabled;
+    if (!w.support?.widget_key || req.body?.rotate_key) fields.widget_key = crypto.randomBytes(12).toString("base64url");
+    res.json(store.setSupportSettings(w.id, fields));
+  });
+  app.post("/api/workspaces/:ws/support/articles", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const question = String(req.body?.question || "").trim().slice(0, 300), answer = String(req.body?.answer || "").trim().slice(0, 6000);
+    if (!question || !answer) return res.status(422).json({ detail: "question and answer are required" });
+    res.status(201).json(store.addArticle(w.id, { question, answer, language: req.body?.language === "ar" ? "ar" : "en", category: SUPPORT_CATEGORIES.includes(req.body?.category) ? req.body.category : "other" }));
+  });
+  app.put("/api/workspaces/:ws/support/articles/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const f = {};
+    if (req.body?.question !== undefined) f.question = String(req.body.question).trim().slice(0, 300);
+    if (req.body?.answer !== undefined) f.answer = String(req.body.answer).trim().slice(0, 6000);
+    if (f.question === "" || f.answer === "") return res.status(422).json({ detail: "question and answer cannot be empty" });
+    if (req.body?.language !== undefined) f.language = req.body.language === "ar" ? "ar" : "en";
+    if (req.body?.category !== undefined) f.category = SUPPORT_CATEGORIES.includes(req.body.category) ? req.body.category : "other";
+    const a = store.updateArticle(w.id, req.params.id, f);
+    a ? res.json(a) : res.status(404).json({ detail: "Article not found" });
+  });
+  app.delete("/api/workspaces/:ws/support/articles/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    store.deleteArticle(w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Article not found" });
+  });
+  app.post("/api/workspaces/:ws/support/articles/ai-starter", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    await streamDraft(req, res, { prompt: starterKbPrompt(w, store.listArticles(w.id)), onDone: (text) => {
+      const arts = parseArticles(text);
+      arts.forEach((a) => store.addArticle(w.id, a, false));
+      store.save();
+      return String(arts.length);
+    } });
+  });
+  app.post("/api/workspaces/:ws/support/tickets", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const text = String(req.body?.message || "").trim().slice(0, 6000);
+    if (!text) return res.status(422).json({ detail: "Paste the customer's message" });
+    const t = store.addTicket(w.id, { channel: CHANNELS.includes(req.body?.channel) ? req.body.channel : "Other", customer_name: String(req.body?.customer_name || "").trim().slice(0, 100), contact: String(req.body?.contact || "").trim().slice(0, 200), store: String(req.body?.store || "").trim().slice(0, 200) });
+    store.addTicketMessage(w.id, t.id, { from: "customer", text });
+    res.status(201).json(store.getTicket(w.id, t.id));
+  });
+  app.get("/api/workspaces/:ws/support/tickets/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const t = store.getTicket(w.id, req.params.id);
+    if (!t) return res.status(404).json({ detail: "Conversation not found" });
+    const { public_token, ...rest } = t;
+    res.json(rest);
+  });
+  app.put("/api/workspaces/:ws/support/tickets/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const f = {};
+    if (req.body?.status !== undefined) { if (!TICKET_STATUS.includes(req.body.status)) return res.status(422).json({ detail: "unknown status" }); f.status = req.body.status; if (f.status === "needs_human" && !req.body.reason) f.escalation_reason = "Handed to a person"; }
+    if (req.body?.category !== undefined) f.category = SUPPORT_CATEGORIES.includes(req.body.category) ? req.body.category : "other";
+    for (const k of ["customer_name", "contact", "store"]) if (req.body?.[k] !== undefined) f[k] = String(req.body[k]).trim().slice(0, 200);
+    const t = store.updateTicket(w.id, req.params.id, f);
+    t ? res.json({ ok: true }) : res.status(404).json({ detail: "Conversation not found" });
+  });
+  app.delete("/api/workspaces/:ws/support/tickets/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    store.deleteTicket(w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Conversation not found" });
+  });
+  // Add a message: a new customer message, or a reply the team sent (by you, or an AI draft you approved).
+  app.post("/api/workspaces/:ws/support/tickets/:id/messages", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const t = store.getTicket(w.id, req.params.id);
+    if (!t) return res.status(404).json({ detail: "Conversation not found" });
+    const from = ["customer", "you", "ai"].includes(req.body?.from) ? req.body.from : null;
+    const text = String(req.body?.text || "").trim().slice(0, 6000);
+    if (!from || !text) return res.status(422).json({ detail: "from and text are required" });
+    store.addTicketMessage(w.id, t.id, { from, text, sent: true });
+    if (from === "customer" && t.status === "resolved") store.updateTicket(w.id, t.id, { status: "new" });
+    if (from === "you") store.updateTicket(w.id, t.id, { human_touched: true });
+    res.status(201).json({ ok: true });
+  });
+  app.post("/api/workspaces/:ws/support/tickets/:id/ai-reply", async (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const t = store.getTicket(w.id, req.params.id);
+    if (!t) return res.status(404).json({ detail: "Conversation not found" });
+    res.setHeader("Content-Type", "application/json");
+    try {
+      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), t), onText: () => {} });
+      const r = parseReply(raw);
+      store.updateTicket(w.id, t.id, { category: r.category, language: r.language, ...(r.escalate ? { status: "needs_human", escalation_reason: r.reason } : {}) });
+      res.json(r);
+    } catch (e) {
+      res.status(502).json({ detail: e instanceof LLMError ? e.message : "Something went wrong reaching Claude. Try again." });
+    }
   });
 
   // ---- SOP: the operating procedure and this period's ticks

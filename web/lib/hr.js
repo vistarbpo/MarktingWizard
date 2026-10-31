@@ -29,7 +29,11 @@ export const SUGGESTED_ORG = [
   { title: "AI Analyst", department: "Marketing", kind: "ai", status: "active", employment: "AI agent", holder: "KPI report", duties: "Weekly KPI report and the bottleneck to fix." },
   { title: "Arabic Content & Creator Partnerships", department: "Marketing", kind: "human", status: "planned", employment: "Freelance", location: "Remote (KSA)", salary_min: 4000, salary_max: 7000, must_be_human: "On-camera content, creator relationships, final Saudi-dialect tone check." },
   { title: "AI Success", department: "Customer Success", kind: "ai", status: "active", employment: "AI agent", holder: "Sales module", duties: "Onboards beta stores, watches usage, prepares objection answers." },
-  { title: "AI Support", department: "Customer Success", kind: "ai", status: "planned", employment: "AI agent", duties: "Answers merchant questions in Arabic and English, 24/7; hands off billing disputes." },
+  { title: "AI Support", department: "Customer Success", kind: "ai", status: "active", employment: "AI agent", holder: "Support module", duties: "Answers merchant questions in Arabic and English, 24/7, from the help center; hands refunds, legal, bugs and upset customers to a person." },
+  { title: "Customer Success Lead (Arabic)", department: "Customer Success", kind: "human", status: "planned", employment: "Full-time", location: "Riyadh", salary_min: 9000, salary_max: 14000, must_be_human: "Onboarding calls for Scale/Enterprise stores, handles AI Support escalations, saves at-risk accounts." },
+  { title: "AI Feed Doctor", department: "Product & Engineering", kind: "ai", status: "planned", employment: "AI agent", duties: "Reads failed feed imports, explains the error to the merchant in plain Arabic/English and how to fix it." },
+  { title: "AI Creative QA", department: "Product & Engineering", kind: "ai", status: "planned", employment: "AI agent", duties: "Checks every rendered ad before export: wrong prices, broken Arabic text, cropped products, off-brand colours." },
+  { title: "Template & Motion Designer", department: "Product & Engineering", kind: "human", status: "open", employment: "Freelance", location: "Remote", salary_min: 6000, salary_max: 10000, must_be_human: "Original ad template design, Arabic typography and motion taste that set DPA AD apart; AI then scales each template across every SKU." },
   { title: "Product Engineer (full-stack)", department: "Product & Engineering", kind: "human", status: "open", employment: "Full-time", location: "Remote", salary_min: 15000, salary_max: 25000, must_be_human: "Owns production systems, security and Salla/Zid/Shopify integrations." },
   { title: "AI Recruiter", department: "Operations", kind: "ai", status: "active", employment: "AI agent", holder: "HR module", duties: "Writes job posts, screens CVs, drafts interview kits, onboarding and rejections." },
   { title: "Bookkeeping & VAT (outsourced)", department: "Finance & Admin", kind: "human", status: "planned", employment: "Contract", must_be_human: "Licensed accountant for ZATCA VAT filing and payroll (GOSI)." },
@@ -119,4 +123,27 @@ export function candidatePrompt(store, ws, cand, role, task) {
 export const parseScore = (text) => {
   const m = /SCORE\s*:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i.exec(text || "");
   return m ? Math.max(0, Math.min(10, Number(m[1]))) : null;
+};
+
+// Sample people for trying the module. Every name starts with "Sample ·" and can be removed in one click.
+export const SAMPLE_TEAM = {
+  holders: {
+    "Sales & Partnerships Lead (KSA)": "Sample · Faisal Al-Otaibi",
+    "Arabic Content & Creator Partnerships": "Sample · Noura Al-Qahtani",
+  },
+  candidates: [
+    { role: "Product Engineer (full-stack)", name: "Sample · Omar Haddad", source: "LinkedIn", stage: "screened", score: 8.5,
+      cv_text: "Full-stack engineer, 6 years. Node.js, React, PostgreSQL. Built and maintains two Salla apps (order sync, product feed export). Image pipeline with Sharp and FFmpeg for a print-on-demand startup. Arabic and English.",
+      screen: "SCORE: 8.5/10\n## Summary\nStrong full-stack engineer with direct Salla app experience and image/video pipeline work, both core to DPA AD.\n## Strengths\n- Built two Salla apps\n- Sharp/FFmpeg rendering pipeline\n- Bilingual\n## Gaps or risks\n- No Shopify or Zid apps yet\n- No evidence of large-scale queue/rendering infrastructure\n## Questions to ask in the interview\n1. Walk through the Salla feed export: rate limits and failures?\n2. How would you render 50,000 product images per catalog?\n3. Experience with Arabic text shaping in images?\n4. How do you test an image pipeline?\n5. Tell us about a production incident you owned.\n## Recommendation\nInterview. (Sample data.)" },
+    { role: "Product Engineer (full-stack)", name: "Sample · Lina Saeed", source: "Bayt", stage: "screened", score: 5.5,
+      cv_text: "Front-end developer, 3 years. React, Tailwind, Figma handoff. Built landing pages and dashboards for an agency. Some Node.js. No backend production ownership.",
+      screen: "SCORE: 5.5/10\n## Summary\nSolid front-end developer; limited backend and no image pipeline or ecommerce integration work.\n## Strengths\n- Clean React UI work\n## Gaps or risks\n- No production backend ownership\n- No feed or rendering experience\n## Recommendation\nNot for this role now; consider for a future front-end role. (Sample data.)" },
+    { role: "Product Engineer (full-stack)", name: "Sample · Khalid Mansour", source: "Referral", stage: "applied", score: null,
+      cv_text: "Backend engineer, 4 years. Python and Node.js, AWS Lambda, SQS. Built a product-catalog sync between Zid and a warehouse system. Interested in creative tech." },
+    { role: "Template & Motion Designer", name: "Sample · Reem Al-Harbi", source: "Behance", stage: "interview", score: 8,
+      cv_text: "Motion and brand designer, 5 years. After Effects, Figma, Lottie. Arabic typography specialist; ad templates for Saudi fashion and perfume brands on Snap and TikTok.",
+      screen: "SCORE: 8/10\n## Summary\nArabic typography and Snap/TikTok ad templates match DPA AD's GCC focus.\n## Recommendation\nInterview with a paid test: one perfume template in AR and EN. (Sample data.)" },
+    { role: "Customer Success Lead (Arabic)", name: "Sample · Majed Al-Shehri", source: "LinkedIn", stage: "offer", score: 7.5,
+      cv_text: "Customer success at a Saudi SaaS (POS for retail), 4 years. Onboarded 200+ merchants, ran Arabic webinars, reduced churn 18%. Salla partner programme contact." },
+  ],
 };
