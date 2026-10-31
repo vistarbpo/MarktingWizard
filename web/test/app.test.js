@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -332,4 +332,21 @@ test("support: inbox, articles, AI reply and the public chat switch", async () =
   assert.equal(chat.status, "needs_human");
   assert.equal(chat.count, 2); // two customer messages; the unchecked AI text was not posted
   assert.equal(chat.public_token, undefined);
+});
+
+test("command center: one snapshot across modules", async () => {
+  const [ws] = await json("/api/workspaces");
+  const d = await json(`/api/workspaces/${ws.id}/command`);
+  assert.equal(d.company, ws.brief.company_name);
+  assert.equal(d.goal.arr_goal, 100_000_000);
+  assert.equal(d.goal.arr, d.revenue.paying_mrr * 12);
+  assert.ok(d.goal.next_milestone > d.goal.arr);
+  assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Hiring"]);
+  assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
+  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring"].includes(n.module)));
+  assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
+  assert.equal(d.sop.length, 4);
+  assert.ok(d.feed.length > 0 && d.feed.length <= 14);
+  assert.ok(d.feed.every((f, i) => i === 0 || d.feed[i - 1].at >= f.at));
+  assert.ok(d.data_completeness >= 0 && d.data_completeness <= 100);
 });

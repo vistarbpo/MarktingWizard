@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGaps } from "./catalog.js";
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
+import { commandSnapshot } from "./command.js";
 import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
 import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, SAMPLE_TEAM, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
 import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
@@ -288,8 +289,8 @@ export function createApp({ store, provider, password }) {
       if (have.has(c.name)) continue;
       const role = byTitle[c.role];
       const cand = store.addHrCandidate(wsId, { name: c.name, role_id: role?.id || null, source: c.source, cv_text: c.cv_text, email: "", phone: "", notes: "", sample: true });
-      store.updateHrCandidate(wsId, cand.id, { stage: c.stage, score: c.score });
-      if (c.screen) store.addHrActivity(wsId, "candidate", cand.id, { type: "ai_draft", by: "ai", task: "screen", text: c.screen });
+      store.updateHrCandidate(wsId, cand.id, { stage: c.stage, score: c.score, by: "sample" });
+      if (c.screen) store.addHrActivity(wsId, "candidate", cand.id, { type: "ai_draft", by: "sample", task: "screen", text: c.screen });
       people++;
     }
     res.status(201).json({ roles, people: people + Object.keys(SAMPLE_TEAM.holders).length });
@@ -392,6 +393,9 @@ export function createApp({ store, provider, password }) {
         return store.addHrActivity(w.id, "candidate", c.id, { type: "ai_draft", by: "ai", task: req.params.task, text }).id;
       } });
   });
+
+  // ---- command center
+  app.get("/api/workspaces/:ws/command", (req, res) => { const w = ws(req, res); if (w) res.json(commandSnapshot(store, w)); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));

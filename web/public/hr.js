@@ -7,7 +7,7 @@ const HR = { meta: null, roles: [], candidates: [], summary: null, tab: "org", f
 const H_STAGE_COLOR = { applied: "var(--text-3)", screened: "var(--accent)", interview: "#8a7cf0", offer: "var(--warn)", hired: "var(--good)", rejected: "var(--bad)" };
 const sar = (n) => "SAR " + Math.round(n).toLocaleString("en-US");
 const hBadge = (kind) => `<span class="s-owner ${kind === "ai" ? "ai" : "you"}">${kind === "ai" ? "AI" : "HUMAN"}</span>`;
-const hOwner = (o) => `<span class="s-owner ${o === "you" ? "you" : "ai"}">${o === "you" ? "YOU" : "AI"}</span>`;
+const hOwner = (o) => o === "sample" ? `<span class="s-owner" style="background:var(--surface-2);color:var(--text-2)">SAMPLE</span>` : `<span class="s-owner ${o === "you" ? "you" : "ai"}">${o === "you" ? "YOU" : "AI"}</span>`;
 const STATUS_LABEL = { active: "Active", open: "Hiring", planned: "Planned", paused: "Paused" };
 
 ROUTES.team = { title: "Team & hiring", crumb: "HR", render: renderHr };

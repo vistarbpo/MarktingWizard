@@ -94,7 +94,7 @@ async function onRoute() {
   if (wsId && (!S.ws || String(S.ws.id) !== wsId)) {
     try { S.ws = await api(`/api/workspaces/${wsId}`); } catch { S.ws = null; }
   }
-  S.route = ROUTES[route] ? route : "sop";
+  S.route = ROUTES[route] ? route : "command";
   S.param = param ? decodeURIComponent(param) : null;
   render();
 }
@@ -604,7 +604,7 @@ document.addEventListener("click", async (e) => {
   } catch (err) { toast(err.message, true); }
 });
 
-$("#wsSelect").addEventListener("change", (e) => { location.hash = `#/${e.target.value}/sop`; });
+$("#wsSelect").addEventListener("change", (e) => { location.hash = `#/${e.target.value}/command`; });
 window.addEventListener("hashchange", onRoute);
 
 (async function init() {
@@ -614,7 +614,7 @@ window.addEventListener("hashchange", onRoute);
   $("#providerDot").className = "status-dot " + (live ? "live" : "demo");
   $("#providerLabel").textContent = live ? `Claude · ${health.model}` : "Demo mode";
   await loadWorkspaces();
-  if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/sop`; return; }
+  if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/command`; return; }
   await onRoute();
 })();
 
