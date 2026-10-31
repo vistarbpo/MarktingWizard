@@ -18,6 +18,7 @@ function isoWeek(d = new Date()) {
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (res.status === 401) { location.href = "/login"; throw new Error("Please log in again."); }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch {}
@@ -26,6 +27,9 @@ async function api(path, opts = {}) {
   if (res.status === 204) return null;
   return (res.headers.get("content-type") || "").includes("json") ? res.json() : res.text();
 }
+
+marked.use({ gfm: true, breaks: false, renderer: { html: ({ text }) => esc(text) } });
+const md = (text) => marked.parse(String(text || ""));
 
 let toastTimer;
 function toast(msg, isError = false) {
@@ -118,11 +122,11 @@ function render() {
 async function renderOverview(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   const id = S.ws.id;
-  const [gaps, notes, kpiData, assets] = await Promise.all([
+  const [gapData, notes, kpiData, assets] = await Promise.all([
     api(`/api/workspaces/${id}/gaps`), api(`/api/workspaces/${id}/notes`),
     api(`/api/workspaces/${id}/kpis`), api(`/api/workspaces/${id}/assets`),
   ]);
-  const TOTAL = 19; // 13 brief questions + 5 knowledge areas + KPI setup
+  const { gaps, total: TOTAL } = gapData;
   const pct = Math.round(((TOTAL - gaps.length) / TOTAL) * 100);
   const tracked = new Set(kpiData.values.map((v) => v.kpi_id)).size;
   $("#pageActions").innerHTML = `<button class="btn" data-go="kpis">Log KPIs</button><button class="btn btn-primary" data-go="playbooks">Run a playbook</button>`;
@@ -150,7 +154,7 @@ async function renderOverview(view) {
         <div class="card-head"><h2>Recent outputs</h2><button class="btn btn-sm btn-ghost" data-go="library">View all</button></div>
         <ul class="list">${assets.slice(0, 8).map((a) => `
           <li class="clickable" data-go="library" data-param="${a.id}">
-            <span class="grow">${esc(pbTitle(a.playbook))}</span><span class="subtle num">${fmtDate(a.created_at)}</span>
+            <span class="grow">${esc(a.title || pbTitle(a.playbook))}</span><span class="subtle num">${fmtDate(a.created_at)}</span>
           </li>`).join("") || `<li><span class="muted">Nothing generated yet.</span></li>`}
         </ul>
       </div>
@@ -211,7 +215,8 @@ async function renderKnowledge(view) {
           <li style="align-items:flex-start">
             <div class="grow">
               <div class="row gap-8"><span class="badge accent">${esc(n.category)}</span><h3>${esc(n.title)}</h3></div>
-              <p class="muted" style="margin-top:6px;white-space:pre-wrap">${esc(n.content)}</p>
+              <div class="doc note-body ${n.content.length > 600 ? "clamped" : ""}" style="margin-top:8px">${md(n.content)}</div>
+              ${n.content.length > 600 ? `<button class="btn btn-sm btn-ghost" data-action="toggle-note" style="margin-top:4px;padding:0">Show all</button>` : ""}
             </div>
             <button class="btn btn-sm btn-ghost btn-danger" data-action="del-note" data-id="${n.id}">Delete</button>
           </li>`).join("")}</ul>`
@@ -241,7 +246,7 @@ async function renderKpis(view) {
     : "";
   if (!kpis.length) {
     view.innerHTML = `<div class="card empty"><h2>No KPIs yet</h2>
-      <p>Load the KPIs from your growth SOP, from app store discovery to merchant ROAS. You can edit or add your own after.</p>
+      <p>Load the 20 KPIs from your growth SOP, from app store discovery to merchant ROAS. You can edit or add your own after.</p>
       <div class="row gap-8" style="justify-content:center"><button class="btn btn-primary" data-action="load-kpis">Load SOP KPIs</button><button class="btn" data-action="add-kpi">Add custom KPI</button></div></div>`;
     return;
   }
@@ -368,10 +373,13 @@ async function runPlaybook(key) {
   const t0 = Date.now();
   const timer = setInterval(() => (status.textContent = `${Math.round((Date.now() - t0) / 1000)}s · strategy work can take a minute or two`), 1000);
   try {
-    const asset = await api(`/api/workspaces/${S.ws.id}/run/${key}`, { method: "POST", body: JSON.stringify({ inputs }) });
-    status.textContent = "";
-    $("#result").innerHTML = assetCard(asset);
+    $("#result").innerHTML = `<div class="card"><div class="card-head"><h2>${esc(pbTitle(key))}</h2><span class="badge accent">Writing…</span></div><div class="card-body doc" id="liveDoc"></div></div>`;
     $("#result").scrollIntoView({ behavior: "smooth", block: "start" });
+    const res = await streamRun(key, inputs, (text) => ($("#liveDoc").innerHTML = md(text)));
+    status.textContent = "";
+    const assets = await api(`/api/workspaces/${S.ws.id}/assets`);
+    cacheAssets(assets);
+    $("#result").innerHTML = assetCard(assets.find((a) => a.id === res.id));
   } catch (err) {
     status.innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`;
   } finally {
@@ -381,19 +389,54 @@ async function runPlaybook(key) {
   }
 }
 
+// POST a playbook run and read the streamed Markdown. The server ends the
+// stream with [[MWIZ_SAVED]]<id> or [[MWIZ_ERROR]]<message>.
+async function streamRun(key, inputs, onText) {
+  const res = await fetch(`/api/workspaces/${S.ws.id}/run/${key}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inputs }),
+  });
+  if (res.status === 401) { location.href = "/login"; throw new Error("Please log in again."); }
+  if (!res.ok) { let m = res.statusText; try { m = (await res.json()).detail; } catch {} throw new Error(m); }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let text = "", last = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += dec.decode(value, { stream: true });
+    if (Date.now() - last > 120) { last = Date.now(); onText(text.split("\n\n[[MWIZ_")[0]); }
+  }
+  const err = text.split("[[MWIZ_ERROR]]")[1];
+  if (err !== undefined) throw new Error(err.trim());
+  const id = (text.split("[[MWIZ_SAVED]]")[1] || "").trim();
+  if (!id) throw new Error("The connection closed before the output was saved. Try again.");
+  return { id };
+}
+
 async function launchKit() {
-  if (!confirm("Run all 8 launch-kit playbooks in order? This can take several minutes.")) return;
-  toast("Launch kit running… stay on this page");
+  const kit = S.launchKit;
+  if (!confirm(`Run all ${kit.length} launch-kit playbooks in order? Each builds on the last, so this takes several minutes. Keep this tab open.`)) return;
+  const btn = document.querySelector('[data-action="launch-kit"]');
+  btn.disabled = true;
   try {
-    await api(`/api/workspaces/${S.ws.id}/launch-kit`, { method: "POST", body: "{}" });
+    for (const [i, key] of kit.entries()) {
+      btn.innerHTML = `<span class="spinner"></span> ${i + 1}/${kit.length} · ${esc(pbTitle(key))}`;
+      await streamRun(key, {}, () => {});
+    }
     toast("Launch kit ready");
     go("library");
-  } catch (err) { toast(err.message, true); }
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run full launch kit";
+  }
 }
 
 /* ---------------------------------------------------------------- library */
 async function renderLibrary(view) {
   const assets = await api(`/api/workspaces/${S.ws.id}/assets`);
+  cacheAssets(assets);
   $("#pageActions").innerHTML = assets.length ? `<button class="btn" data-action="export">Export all as Markdown</button>` : "";
   if (!assets.length) {
     view.innerHTML = `<div class="card empty"><h2>No outputs yet</h2><p>Run a playbook and its output is saved here with full history.</p><button class="btn btn-primary" data-go="playbooks">Open playbooks</button></div>`;
@@ -404,42 +447,26 @@ async function renderLibrary(view) {
     <div class="split">
       <div class="card"><ul class="list">${assets.map((a) => `
         <li class="clickable ${a.id === sel.id ? "selected" : ""}" data-go="library" data-param="${a.id}">
-          <div class="grow"><div style="font-weight:500">${esc(pbTitle(a.playbook))}</div><div class="subtle num" style="font-size:12px">#${a.id} · ${fmtDate(a.created_at)}</div></div>
+          <div class="grow"><div style="font-weight:500">${esc(a.title || pbTitle(a.playbook))}</div><div class="subtle num" style="font-size:12px">${fmtDate(a.created_at)}</div></div>
         </li>`).join("")}</ul></div>
       <div>${assetCard(sel)}</div>
     </div>`;
 }
 
+const assetCache = new Map();
+const cacheAssets = (list) => list.forEach((a) => assetCache.set(a.id, a));
+
 function assetCard(a) {
+  if (!a) return "";
   return `<div class="card">
     <div class="card-head">
-      <div><h2>${esc(pbTitle(a.playbook))}</h2><div class="subtle num" style="font-size:12px">#${a.id} · ${fmtDate(a.created_at)}</div></div>
-      <div class="row gap-8">${a.provider === "offline" ? `<span class="badge warn">Demo data</span>` : ""}<button class="btn btn-sm" data-action="copy-md" data-id="${a.id}">Copy Markdown</button></div>
+      <div><h2>${esc(a.title || pbTitle(a.playbook))}</h2><div class="subtle num" style="font-size:12px">${fmtDate(a.created_at)}</div></div>
+      <div class="row gap-8">${a.provider === "demo" ? `<span class="badge warn">Demo output</span>` : ""}
+        <button class="btn btn-sm" data-action="copy-md" data-id="${esc(a.id)}">Copy Markdown</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-action="del-asset" data-id="${esc(a.id)}">Delete</button></div>
     </div>
-    <div class="card-body doc">${renderValue(a.output, 0)}</div>
+    <div class="card-body doc">${md(a.text)}</div>
   </div>`;
-}
-
-const STATUS_CLASS = { green: "good", yellow: "warn", red: "bad" };
-function renderValue(v, depth) {
-  if (Array.isArray(v)) {
-    if (v.every((x) => typeof x !== "object")) return `<ul>${v.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
-    return v.map((x) => {
-      const title = ["name", "title", "heading", "subject", "competitor", "pillar", "persona", "question", "kpi", "action", "hook"].map((k) => x[k]).find(Boolean);
-      const rest = Object.fromEntries(Object.entries(x).filter(([k, val]) => val !== title));
-      return `<div class="item">${title ? `<div class="item-title">${esc(title)}</div>` : ""}${renderValue(rest, depth + 1)}</div>`;
-    }).join("");
-  }
-  if (v && typeof v === "object") {
-    return Object.entries(v).map(([k, x]) => {
-      if (typeof x === "object" && x !== null) return `<h3>${esc(label(k))}</h3>${renderValue(x, depth + 1)}`;
-      const val = k === "status" && STATUS_CLASS[String(x).toLowerCase()]
-        ? `<span class="badge ${STATUS_CLASS[String(x).toLowerCase()]}">${esc(x)}</span>`
-        : esc(x).replace(/\n/g, "<br>");
-      return `<div class="kv"><div class="k">${esc(label(k))}</div><div>${val}</div></div>`;
-    }).join("");
-  }
-  return esc(v);
 }
 
 /* ---------------------------------------------------------------- workspaces */
@@ -495,11 +522,23 @@ document.addEventListener("click", async (e) => {
         await api(`/api/workspaces/${S.ws.id}/notes/${a.dataset.id}`, { method: "DELETE" });
         return renderKnowledge($("#view"));
       case "launch-kit": return await launchKit();
-      case "copy-md": {
-        const md = await api(`/api/assets/${a.dataset.id}/markdown`);
-        try { await navigator.clipboard.writeText(md); toast("Copied as Markdown"); } catch { toast("Clipboard blocked by the browser", true); }
+      case "toggle-note": {
+        const body = a.previousElementSibling;
+        a.textContent = body.classList.toggle("clamped") ? "Show all" : "Show less";
         return;
       }
+      case "copy-md": {
+        const text = assetCache.get(a.dataset.id)?.text || "";
+        try { await navigator.clipboard.writeText(text); toast("Copied as Markdown"); } catch { toast("Clipboard blocked by the browser", true); }
+        return;
+      }
+      case "del-asset":
+        if (!confirm("Delete this output?")) return;
+        await api(`/api/workspaces/${S.ws.id}/assets/${a.dataset.id}`, { method: "DELETE" });
+        toast("Output deleted");
+        if (S.route === "library") { S.param = null; return renderLibrary($("#view")); }
+        $("#result").innerHTML = "";
+        return;
       case "export": {
         const md = await api(`/api/workspaces/${S.ws.id}/export`);
         const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
@@ -517,10 +556,10 @@ window.addEventListener("hashchange", onRoute);
 
 (async function init() {
   const [health, pb, cats] = await Promise.all([api("/api/health"), api("/api/playbooks"), api("/api/note-categories")]);
-  S.health = health; S.playbooks = pb.playbooks; S.categories = cats;
+  S.health = health; S.playbooks = pb.playbooks; S.launchKit = pb.launch_kit; S.categories = cats;
   const live = health.provider === "claude";
   $("#providerDot").className = "status-dot " + (live ? "live" : "demo");
-  $("#providerLabel").textContent = live ? `Claude · ${health.model}` : "Demo mode · add an API key";
+  $("#providerLabel").textContent = live ? `Claude · ${health.model}` : "Demo mode";
   await loadWorkspaces();
   if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/overview`; return; }
   await onRoute();

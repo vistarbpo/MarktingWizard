@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Marketing Wizard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div class="shell">
@@ -40,7 +41,8 @@
 
     <div class="sidebar-foot">
       <span class="status-dot" id="providerDot"></span>
-      <span id="providerLabel" class="muted">Connecting…</span>
+      <span id="providerLabel" class="muted grow">Connecting…</span>
+      <form method="post" action="/logout"><button class="btn btn-sm btn-ghost" type="submit">Log out</button></form>
     </div>
   </aside>
 
@@ -58,6 +60,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <dialog id="dialog" class="dialog"></dialog>
-<script src="/static/app.js"></script>
+<script src="/vendor/marked.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

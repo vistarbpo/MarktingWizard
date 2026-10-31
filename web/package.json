@@ -1,0 +1,20 @@
+{
+  "name": "marketing-wizard-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Marketing Wizard: AI marketing engine (DAP ADS)",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.137.0",
+    "express": "^4.22.3",
+    "marked": "^15.0.12"
+  }
+}
