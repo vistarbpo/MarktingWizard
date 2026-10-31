@@ -617,3 +617,14 @@ window.addEventListener("hashchange", onRoute);
   if (!location.hash && S.workspaces.length) { location.hash = `#/${S.workspaces[0].id}/sop`; return; }
   await onRoute();
 })();
+
+/* ---------------------------------------------------------------- mobile menu */
+(() => {
+  const shell = document.querySelector(".shell"), btn = $("#menuBtn"), scrim = $("#navScrim");
+  const set = (open) => { shell.classList.toggle("nav-open", open); scrim.hidden = !open; btn.setAttribute("aria-expanded", open); };
+  btn.addEventListener("click", () => set(!shell.classList.contains("nav-open")));
+  scrim.addEventListener("click", () => set(false));
+  $("#nav").addEventListener("click", (e) => { if (e.target.closest("a")) set(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shell.classList.contains("nav-open")) set(false); });
+  matchMedia("(min-width: 1025px)").addEventListener("change", (m) => { if (m.matches) set(false); });
+})();

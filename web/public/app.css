@@ -85,9 +85,9 @@ a { color: var(--accent); text-decoration: none; }
 .stack-lg > * + * { margin-top: var(--s-6); }
 
 /* ---------- shell ---------- */
-.shell { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; min-height: 100dvh; }
 .sidebar {
-  position: sticky; top: 0; height: 100vh;
+  position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--s-5);
   padding: var(--s-5) var(--s-4);
   border-right: 1px solid var(--border);
@@ -115,7 +115,7 @@ a { color: var(--accent); text-decoration: none; }
   border-bottom: 1px solid var(--border);
 }
 .topbar .eyebrow { margin-bottom: var(--s-1); }
-.view { padding: var(--s-6); max-width: 1200px; }
+.view { padding: var(--s-6); width: 100%; }
 
 /* ---------- controls ---------- */
 .btn {
@@ -254,23 +254,45 @@ td.right, th.right { text-align: right; }
 
 .notice { display: flex; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-sm); }
 
-@media (max-width: 960px) {
-  .split, .grid-3 { grid-template-columns: 1fr; }
+/* ---------- responsive ----------
+   Full width at every size. Wide screens get more columns; below 1024px the
+   sidebar becomes a slide-in menu; below 640px everything stacks. */
+.menu-btn { display: none; flex: none; }
+.topbar-title { min-width: 0; flex: 1; }
+.page-actions { flex-wrap: wrap; justify-content: flex-end; }
+.nav-scrim { position: fixed; inset: 0; background: rgba(10, 10, 10, .35); z-index: 50; }
+
+@media (min-width: 1600px) {
+  .view, .topbar { padding-left: var(--s-7); padding-right: var(--s-7); }
+}
+@media (max-width: 1200px) {
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 760px) {
-  .shell { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
-  .nav { flex-direction: row; flex-wrap: wrap; }
-  .nav-group { display: none; }
-  .topbar, .view { padding-left: var(--s-4); padding-right: var(--s-4); }
-  .grid-2, .grid-form { grid-template-columns: 1fr; }
-  .topbar { flex-direction: column; align-items: flex-start; padding-top: var(--s-5); }
+@media (max-width: 1024px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 51; width: min(280px, 86vw); height: auto;
+    transform: translateX(-100%); transition: transform .2s ease; box-shadow: var(--shadow);
+    padding-top: max(var(--s-5), env(safe-area-inset-top)); padding-bottom: max(var(--s-5), env(safe-area-inset-bottom));
+  }
+  .shell.nav-open .sidebar { transform: none; }
+  .menu-btn { display: inline-flex; align-self: center; }
+  .topbar { align-items: center; padding: var(--s-4) var(--s-5); position: sticky; top: 0; z-index: 30; background: var(--bg); }
+  .topbar h1 { font-size: var(--fs-lg); }
+  .view { padding: var(--s-5); }
+  .split, .grid-3 { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; gap: var(--s-3); padding: var(--s-3) var(--s-4); }
+  .page-actions { width: 100%; justify-content: flex-start; }
+  .view { padding: var(--s-4); padding-left: max(var(--s-4), env(safe-area-inset-left)); padding-right: max(var(--s-4), env(safe-area-inset-right)); }
+  .grid-2, .grid-4, .grid-form { grid-template-columns: 1fr; }
   .card-head { flex-wrap: wrap; }
   .hide-sm { display: none; }
-  .sidebar-foot { margin-top: 0; }
   .grid-form .span-2 { grid-column: auto; }
   .doc .kv { grid-template-columns: 1fr; gap: 2px; }
+  .dialog { width: calc(100vw - 24px); }
 }
 
 /* ---------------------------------------------------------------- Sales module */
@@ -341,3 +363,15 @@ td.right, th.right { text-align: right; }
 .s-timeline li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--border); }
 .s-timeline li:first-child { border-top: 0; }
 @media (max-width: 560px) { .s-facts, .s-form { grid-template-columns: 1fr; } }
+
+/* Sales: full-width board that fills wide screens, snaps on phones */
+.s-board { grid-auto-columns: minmax(250px, 1fr); scroll-snap-type: x proximity; }
+.s-col { scroll-snap-align: start; }
+@media (min-width: 1800px) { .s-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
+@media (max-width: 640px) {
+  .s-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .s-kpi b { font-size: var(--fs-xl); }
+  .s-board { grid-auto-columns: 82%; }
+  .s-drawer { padding: var(--s-4); padding-top: max(var(--s-4), env(safe-area-inset-top)); }
+  .s-tabs { order: 2; }
+}
