@@ -127,7 +127,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -207,4 +207,54 @@ test("sales: deals, AI-first next steps, stage log, drafts and sent", async () =
 
   assert.equal((await call(`${base}/${big.id}`, { method: "DELETE" })).status, 204);
   assert.equal((await call(`${base}/${big.id}`)).status, 404);
+});
+
+test("hr: suggested org, roles, AI screening with score, human-only steps", async () => {
+  const [ws] = await json("/api/workspaces");
+  const base = `/api/workspaces/${ws.id}/hr`;
+  assert.equal((await post(`${base}/suggested-org`, {})).status, 201);
+  let hr = await json(base);
+  assert.ok(hr.summary.agents >= 5);
+  assert.ok(hr.roles.some((r) => r.kind === "human" && r.must_be_human));
+  // Loading twice adds nothing new.
+  assert.equal((await (await post(`${base}/suggested-org`, {})).json()).added, 0);
+  const engineer = hr.roles.find((r) => r.title.startsWith("Product Engineer"));
+  const ceo = hr.roles.find((r) => r.department === "Leadership");
+  assert.equal(engineer.reports_to, ceo.id);
+
+  assert.equal((await post(`${base}/roles`, { title: "" })).status, 422);
+  assert.equal((await call(`${base}/roles/${engineer.id}`, { method: "PUT", body: JSON.stringify({ reports_to: engineer.id }) })).status, 422);
+  const jp = await (await post(`${base}/roles/${engineer.id}/ai/job_post`, {})).text();
+  assert.match(jp, /\[\[MWIZ_SAVED\]\]/);
+  assert.match(prompts.at(-1), /Product Engineer/);
+
+  // Candidate without CV: a person must add it. With CV: AI screens, sets score and stage.
+  const noCv = await (await post(`${base}/candidates`, { name: "Sara", role_id: engineer.id })).json();
+  assert.equal(noCv.next.owner, "you");
+  assert.equal((await post(`${base}/candidates/${noCv.id}/ai/screen`, {})).status, 422);
+  const cand = await (await post(`${base}/candidates`, { name: "Omar", role_id: engineer.id, cv_text: "5 years Node.js, built Salla apps" })).json();
+  assert.equal(cand.next.owner, "ai");
+  assert.equal(cand.next.task, "screen");
+  // Demo output has no score line, so the stage moves but the score stays empty.
+  await (await post(`${base}/candidates/${cand.id}/ai/screen`, {})).text();
+  assert.match(prompts.at(-1), /Ignore name, gender, age, nationality/);
+  let c = (await json(`${base}/candidates/${cand.id}`)).candidate;
+  assert.equal(c.stage, "screened");
+  assert.equal(c.next.owner, "you"); // no score in the screen: a person decides
+  await call(`${base}/candidates/${cand.id}`, { method: "PUT", body: JSON.stringify({ stage: "interview" }) });
+  hr = await json(base);
+  assert.ok(hr.summary.needs_you.some((n) => n.name === "Omar"));
+
+  // Deleting a role detaches its candidates.
+  assert.equal((await call(`${base}/roles/${engineer.id}`, { method: "DELETE" })).status, 204);
+  c = (await json(`${base}/candidates/${cand.id}`)).candidate;
+  assert.equal(c.role_id, null);
+});
+
+test("hr: score parsing", async () => {
+  const { parseScore } = await import("../lib/hr.js");
+  assert.equal(parseScore("SCORE: 8/10\n## Summary"), 8);
+  assert.equal(parseScore("score : 6.5 / 10"), 6.5);
+  assert.equal(parseScore("no score"), null);
+  assert.equal(parseScore("SCORE: 14/10"), 10);
 });

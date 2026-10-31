@@ -51,7 +51,8 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 4 | Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles. | Performance marketer | Playbooks → Paid Ads Campaign |
 | 5 | Update the SEO Content Plan and publish the planned articles. | Content | Playbooks → SEO Content Plan |
 | 6 | Refresh Competitor Battlecards with this month's competitor notes. | Sales | Playbooks → Competitor Battlecards |
-| 7 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
+| 7 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
+| 8 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
 
 ## Quarterly strategy
 
@@ -65,4 +66,5 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 3 | Re-run the Messaging Matrix and roll changes into the landing page and ads. | Head of Growth | Playbooks → Messaging Matrix |
 | 4 | Re-run Pricing & Packaging Strategy; decide on any price or plan change. | Founder | Playbooks → Pricing & Packaging Strategy |
 | 5 | Generate the next 90-Day Go-To-Market Plan and set next quarter's KPI targets. | Founder | Playbooks → 90-Day Go-To-Market Plan |
-| 6 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |
+| 6 | Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring. | Founder | Team & hiring |
+| 7 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |

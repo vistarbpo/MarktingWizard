@@ -30,7 +30,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -138,6 +138,78 @@ export class Store {
     return a;
   }
 
+  // ---- HR: roles (human seats and AI agents), candidates, activity log
+  listHrRoles(wsId) { return this.db.hr_roles.filter((r) => r.workspace_id === String(wsId)); }
+  getHrRole(wsId, id) { return this.db.hr_roles.find((r) => r.workspace_id === String(wsId) && r.id === String(id)) || null; }
+  addHrRole(wsId, fields, persist = true) {
+    const r = { id: this.#id(), workspace_id: String(wsId), created_at: this.#now(), ...fields };
+    this.db.hr_roles.push(r);
+    if (persist) this.save();
+    return r;
+  }
+  updateHrRole(wsId, id, fields) {
+    const r = this.getHrRole(wsId, id);
+    if (!r) return null;
+    Object.assign(r, fields);
+    this.save();
+    return r;
+  }
+  deleteHrRole(wsId, id) {
+    const before = this.db.hr_roles.length;
+    this.db.hr_roles = this.db.hr_roles.filter((r) => !(r.workspace_id === String(wsId) && r.id === String(id)));
+    if (this.db.hr_roles.length === before) return false;
+    for (const r of this.db.hr_roles) if (r.reports_to === String(id)) r.reports_to = null;
+    for (const c of this.db.hr_candidates) if (c.role_id === String(id)) c.role_id = null;
+    this.db.hr_activities = this.db.hr_activities.filter((a) => !(a.entity === "role" && a.entity_id === String(id)));
+    this.save();
+    return true;
+  }
+  listHrCandidates(wsId) { return this.db.hr_candidates.filter((c) => c.workspace_id === String(wsId)); }
+  getHrCandidate(wsId, id) { return this.db.hr_candidates.find((c) => c.workspace_id === String(wsId) && c.id === String(id)) || null; }
+  addHrCandidate(wsId, fields) {
+    const now = this.#now();
+    const c = { id: this.#id(), workspace_id: String(wsId), stage: "applied", score: null, created_at: now, stage_changed_at: now, last_activity_at: now, ...fields };
+    this.db.hr_candidates.push(c);
+    this.addHrActivity(String(wsId), "candidate", c.id, { type: "created", by: "you" }, false);
+    this.save();
+    return c;
+  }
+  updateHrCandidate(wsId, id, fields) {
+    const c = this.getHrCandidate(wsId, id);
+    if (!c) return null;
+    const now = this.#now();
+    if (fields.stage && fields.stage !== c.stage) {
+      this.addHrActivity(c.workspace_id, "candidate", c.id, { type: "stage", by: fields.by || "you", text: `${c.stage} → ${fields.stage}` }, false);
+      c.stage_changed_at = now;
+    }
+    const { by, ...rest } = fields;
+    Object.assign(c, rest, { last_activity_at: now });
+    this.save();
+    return c;
+  }
+  deleteHrCandidate(wsId, id) {
+    const before = this.db.hr_candidates.length;
+    this.db.hr_candidates = this.db.hr_candidates.filter((c) => !(c.workspace_id === String(wsId) && c.id === String(id)));
+    if (this.db.hr_candidates.length === before) return false;
+    this.db.hr_activities = this.db.hr_activities.filter((a) => !(a.entity === "candidate" && a.entity_id === String(id)));
+    this.save();
+    return true;
+  }
+  listHrActivities(entity, id) {
+    return this.db.hr_activities.filter((a) => a.entity === entity && a.entity_id === String(id)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+  listWorkspaceHrActivities(wsId) { return this.db.hr_activities.filter((a) => a.workspace_id === String(wsId)); }
+  addHrActivity(wsId, entity, entityId, { type, by, text = "", task = null }, persist = true) {
+    const a = { id: this.#id(), workspace_id: String(wsId), entity, entity_id: String(entityId), type, by, task, text, created_at: this.#now() };
+    this.db.hr_activities.push(a);
+    if (entity === "candidate" && type !== "ai_draft") {
+      const c = this.db.hr_candidates.find((x) => x.id === String(entityId));
+      if (c) c.last_activity_at = a.created_at;
+    }
+    if (persist) this.save();
+    return a;
+  }
+
   // ---- SOP ticks: one row per workspace + cadence period + step
   listSopChecks(wsId, periods) {
     return this.db.sop_checks.filter((c) => c.workspace_id === String(wsId) && periods.includes(c.period));
@@ -175,7 +247,7 @@ export class Store {
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
     const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
     this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }

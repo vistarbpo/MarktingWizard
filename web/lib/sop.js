@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { team: "Team & hiring", pipeline: "Sales pipeline", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -52,6 +52,7 @@ export const SOP = [
       { id: "ads", text: "Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles.", owner: "Performance marketer", go: "playbooks", param: "ad_campaign" },
       { id: "seo", text: "Update the SEO Content Plan and publish the planned articles.", owner: "Content", go: "playbooks", param: "seo_content_plan" },
       { id: "battlecards", text: "Refresh Competitor Battlecards with this month's competitor notes.", owner: "Sales", go: "playbooks", param: "competitor_battlecards" },
+      { id: "hiring", text: "Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent.", owner: "Founder", go: "team" },
       { id: "brief", text: "Update the Brief with anything that changed: pricing, features, markets, proof points.", owner: "Founder", go: "brief" },
     ],
   },
@@ -66,6 +67,7 @@ export const SOP = [
       { id: "messaging", text: "Re-run the Messaging Matrix and roll changes into the landing page and ads.", owner: "Head of Growth", go: "playbooks", param: "messaging_matrix" },
       { id: "pricing", text: "Re-run Pricing & Packaging Strategy; decide on any price or plan change.", owner: "Founder", go: "playbooks", param: "pricing_strategy" },
       { id: "gtm", text: "Generate the next 90-Day Go-To-Market Plan and set next quarter's KPI targets.", owner: "Founder", go: "playbooks", param: "gtm_plan" },
+      { id: "team", text: "Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring.", owner: "Founder", go: "team" },
       { id: "targets", text: "Update KPI targets on the KPIs page to match the new plan.", owner: "Head of Growth", go: "kpis" },
     ],
   },

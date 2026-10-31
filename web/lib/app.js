@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGaps } from "./catalog.js";
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
+import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
 import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
 
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -169,6 +170,144 @@ export function createApp({ store, provider, password }) {
       if (!(e instanceof LLMError)) console.error("sales draft failed:", e?.status, e?.message);
       res.end("\n\n[[MWIZ_ERROR]]" + (e instanceof LLMError ? e.message : "Something went wrong. Try again in a moment."));
     }
+  });
+
+  // ---- HR
+  const streamDraft = async (req, res, { prompt, onDone }) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+    const ac = new AbortController();
+    res.on("close", () => { if (!res.writableFinished) ac.abort(); });
+    try {
+      const text = await provider.generate({ system: SYSTEM, prompt, signal: ac.signal, onText: (d) => res.write(d) });
+      const id = onDone(text);
+      res.end("\n\n[[MWIZ_SAVED]]" + id);
+    } catch (e) {
+      if (ac.signal.aborted) return;
+      if (!(e instanceof LLMError)) console.error("hr draft failed:", e?.status, e?.message);
+      res.end("\n\n[[MWIZ_ERROR]]" + (e instanceof LLMError ? e.message : "Something went wrong. Try again in a moment."));
+    }
+  };
+  const cleanRole = (b, partial = false) => {
+    const out = {}, err = [];
+    const str = (k, max = 200) => { if (b[k] !== undefined) out[k] = String(b[k] ?? "").trim().slice(0, max); };
+    ["title", "holder", "location"].forEach((k) => str(k));
+    ["must_be_human", "duties", "notes"].forEach((k) => str(k, 2000));
+    if (b.department !== undefined) out.department = DEPARTMENTS.includes(b.department) ? b.department : "Operations";
+    if (b.kind !== undefined) { if (!["ai", "human"].includes(b.kind)) err.push("kind must be ai or human"); else out.kind = b.kind; }
+    if (b.status !== undefined) { if (!ROLE_STATUS.includes(b.status)) err.push("unknown status"); else out.status = b.status; }
+    if (b.employment !== undefined) out.employment = EMPLOYMENT.includes(b.employment) ? b.employment : "Full-time";
+    for (const k of ["salary_min", "salary_max"]) if (b[k] !== undefined) { const n = b[k] === "" || b[k] === null ? null : Math.round(Number(b[k])); if (n !== null && !(n >= 0)) err.push(`${k} must be a number`); else out[k] = n; }
+    if (b.reports_to !== undefined) out.reports_to = b.reports_to ? String(b.reports_to) : null;
+    if (!partial && !out.title) err.push("title is required");
+    if (partial && b.title !== undefined && !out.title) err.push("title cannot be empty");
+    return { out, err };
+  };
+  app.get("/api/hr/meta", (req, res) => res.json({ departments: DEPARTMENTS, statuses: ROLE_STATUS, employment: EMPLOYMENT, stages: CAND_STAGES,
+    role_tasks: Object.fromEntries(Object.entries(ROLE_TASKS).map(([k, t]) => [k, t.title])), candidate_tasks: Object.fromEntries(Object.entries(CANDIDATE_TASKS).map(([k, t]) => [k, t.title])) }));
+  app.get("/api/workspaces/:ws/hr", (req, res) => {
+    if (!ws(req, res)) return;
+    const roles = store.listHrRoles(req.params.ws), cands = store.listHrCandidates(req.params.ws);
+    res.json({ roles, candidates: cands.map((c) => enrichCandidate(c, roles)), summary: hrSummary(roles, cands, store.listWorkspaceHrActivities(req.params.ws)) });
+  });
+  app.post("/api/workspaces/:ws/hr/suggested-org", (req, res) => {
+    if (!ws(req, res)) return;
+    const existing = new Set(store.listHrRoles(req.params.ws).map((r) => r.title.toLowerCase()));
+    const added = SUGGESTED_ORG.filter((r) => !existing.has(r.title.toLowerCase())).map((r) => store.addHrRole(req.params.ws, { location: "", duties: "", must_be_human: "", notes: "", reports_to: null, ...r }, false));
+    const ceo = store.listHrRoles(req.params.ws).find((r) => r.department === "Leadership");
+    if (ceo) for (const r of added) if (r.id !== ceo.id && !r.reports_to) r.reports_to = ceo.id;
+    store.save();
+    res.status(201).json({ added: added.length });
+  });
+  app.post("/api/workspaces/:ws/hr/roles", (req, res) => {
+    if (!ws(req, res)) return;
+    const { out, err } = cleanRole({ department: "Operations", kind: "human", status: "planned", employment: "Full-time", ...req.body });
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    res.status(201).json(store.addHrRole(req.params.ws, out));
+  });
+  app.get("/api/workspaces/:ws/hr/roles/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const r = store.getHrRole(req.params.ws, req.params.id);
+    if (!r) return res.status(404).json({ detail: "Role not found" });
+    const cands = store.listHrCandidates(req.params.ws).filter((c) => c.role_id === r.id).map((c) => enrichCandidate(c, [r]));
+    res.json({ role: r, candidates: cands, activities: store.listHrActivities("role", r.id) });
+  });
+  app.put("/api/workspaces/:ws/hr/roles/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const { out, err } = cleanRole(req.body || {}, true);
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    if (out.reports_to === req.params.id) return res.status(422).json({ detail: "A role cannot report to itself" });
+    const r = store.updateHrRole(req.params.ws, req.params.id, out);
+    r ? res.json(r) : res.status(404).json({ detail: "Role not found" });
+  });
+  app.delete("/api/workspaces/:ws/hr/roles/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    store.deleteHrRole(req.params.ws, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Role not found" });
+  });
+  app.post("/api/workspaces/:ws/hr/roles/:id/ai/:task", async (req, res) => {
+    const w = ws(req, res);
+    if (!w) return;
+    const r = store.getHrRole(w.id, req.params.id);
+    if (!r) return res.status(404).json({ detail: "Role not found" });
+    if (!Object.hasOwn(ROLE_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
+    await streamDraft(req, res, { prompt: rolePrompt(store, w, r, req.params.task),
+      onDone: (text) => store.addHrActivity(w.id, "role", r.id, { type: "ai_draft", by: "ai", task: req.params.task, text }).id });
+  });
+  app.post("/api/workspaces/:ws/hr/candidates", (req, res) => {
+    if (!ws(req, res)) return;
+    const b = req.body || {};
+    const name = String(b.name || "").trim().slice(0, 200);
+    if (!name) return res.status(422).json({ detail: "name is required" });
+    const role = b.role_id ? store.getHrRole(req.params.ws, b.role_id) : null;
+    if (b.role_id && !role) return res.status(422).json({ detail: "Unknown role" });
+    const c = store.addHrCandidate(req.params.ws, { name, role_id: role?.id || null, email: String(b.email || "").slice(0, 200), phone: String(b.phone || "").slice(0, 60), source: String(b.source || "").slice(0, 200), cv_text: String(b.cv_text || "").slice(0, 30000), notes: "" });
+    res.status(201).json(enrichCandidate(c, store.listHrRoles(req.params.ws)));
+  });
+  app.get("/api/workspaces/:ws/hr/candidates/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const c = store.getHrCandidate(req.params.ws, req.params.id);
+    if (!c) return res.status(404).json({ detail: "Candidate not found" });
+    res.json({ candidate: enrichCandidate(c, store.listHrRoles(req.params.ws)), activities: store.listHrActivities("candidate", c.id) });
+  });
+  app.put("/api/workspaces/:ws/hr/candidates/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    const b = req.body || {}, out = {};
+    for (const [k, max] of [["name", 200], ["email", 200], ["phone", 60], ["source", 200], ["notes", 4000], ["cv_text", 30000]]) if (b[k] !== undefined) out[k] = String(b[k] ?? "").trim().slice(0, max);
+    if (out.name === "") return res.status(422).json({ detail: "name cannot be empty" });
+    if (b.stage !== undefined) { if (!CAND_STAGE_IDS.includes(b.stage)) return res.status(422).json({ detail: "unknown stage" }); out.stage = b.stage; }
+    if (b.role_id !== undefined) { if (b.role_id && !store.getHrRole(req.params.ws, b.role_id)) return res.status(422).json({ detail: "Unknown role" }); out.role_id = b.role_id || null; }
+    const c = store.updateHrCandidate(req.params.ws, req.params.id, out);
+    c ? res.json(enrichCandidate(c, store.listHrRoles(req.params.ws))) : res.status(404).json({ detail: "Candidate not found" });
+  });
+  app.delete("/api/workspaces/:ws/hr/candidates/:id", (req, res) => {
+    if (!ws(req, res)) return;
+    store.deleteHrCandidate(req.params.ws, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Candidate not found" });
+  });
+  app.post("/api/workspaces/:ws/hr/candidates/:id/notes", (req, res) => {
+    if (!ws(req, res)) return;
+    const c = store.getHrCandidate(req.params.ws, req.params.id);
+    if (!c) return res.status(404).json({ detail: "Candidate not found" });
+    const type = ["note", "sent", "interview"].includes(req.body?.type) ? req.body.type : "note";
+    res.status(201).json(store.addHrActivity(req.params.ws, "candidate", c.id, { type, by: "you", task: Object.hasOwn(CANDIDATE_TASKS, req.body?.task) ? req.body.task : null, text: String(req.body?.text || "").slice(0, 8000) }));
+  });
+  app.post("/api/workspaces/:ws/hr/candidates/:id/ai/:task", async (req, res) => {
+    const w = ws(req, res);
+    if (!w) return;
+    const c = store.getHrCandidate(w.id, req.params.id);
+    if (!c) return res.status(404).json({ detail: "Candidate not found" });
+    if (!Object.hasOwn(CANDIDATE_TASKS, req.params.task)) return res.status(404).json({ detail: "Unknown AI task" });
+    if (req.params.task === "screen" && !c.cv_text) return res.status(422).json({ detail: "Add the CV text first" });
+    const role = c.role_id ? store.getHrRole(w.id, c.role_id) : null;
+    await streamDraft(req, res, { prompt: candidatePrompt(store, w, c, role, req.params.task),
+      onDone: (text) => {
+        if (req.params.task === "screen") {
+          const fields = { score: parseScore(text), by: "ai" };
+          if (c.stage === "applied") fields.stage = "screened";
+          store.updateHrCandidate(w.id, c.id, fields);
+        }
+        return store.addHrActivity(w.id, "candidate", c.id, { type: "ai_draft", by: "ai", task: req.params.task, text }).id;
+      } });
   });
 
   // ---- SOP: the operating procedure and this period's ticks
