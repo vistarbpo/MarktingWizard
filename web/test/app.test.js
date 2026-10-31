@@ -550,3 +550,37 @@ test("sample data: loads into every module and removes cleanly", async () => {
   assert.equal((await json(`${W}/kpis`)).kpis.length, 0);
   await call(W, { method: "DELETE" });
 });
+
+test("finance income: billed MRR replaces the estimate; investment isn't revenue; import sorts in/out", async () => {
+  const w = await (await post("/api/workspaces", { company_name: "Income Co" })).json();
+  const fb = `/api/workspaces/${w.id}/finance`;
+  const d = await (await post(`/api/workspaces/${w.id}/deals`, { name: "Paying Store", skus: 300 })).json();
+  await call(`/api/workspaces/${w.id}/deals/${d.id}`, { method: "PUT", body: JSON.stringify({ stage: "paying" }) });
+  let s = (await json(fb)).snapshot;
+  assert.equal(s.revenue.source, "estimated");
+  assert.equal(s.revenue.mrr_sar, Math.round(149 * 3.75));
+  assert.ok(s.needs.some((n) => /no subscription income is logged/.test(n.text)));
+  assert.equal((await post(`${fb}/income`, { amount_sar: 10 })).status, 422);
+  const sub = await (await post(`${fb}/income`, { source: "Paying Store", type: "subscription", amount_sar: 600, recurring: "monthly", vat_sar: 78.26 })).json();
+  await post(`${fb}/income`, { source: "Investor", type: "investment", amount_sar: 100000, recurring: "one-off" });
+  await post(`${fb}/income`, { source: "Paying Store", type: "setup", amount_sar: 900, recurring: "one-off" });
+  await post(`${fb}/expenses`, { vendor: "Tools", amount_sar: 2000, recurring: "monthly" });
+  s = (await json(fb)).snapshot;
+  assert.equal(s.revenue.source, "billed");
+  assert.equal(s.revenue.mrr_sar, 600);
+  assert.equal(s.revenue.one_off_month_sar, 900);
+  assert.equal(s.revenue.capital_month_sar, 100000);
+  assert.equal(s.costs.net_burn_sar, 500); // 2000 costs - 600 MRR - 900 one-off; investment excluded
+  assert.ok(!s.needs.some((n) => /no subscription income/.test(n.text)));
+  await call(`${fb}/income/${sub.id}`, { method: "PUT", body: JSON.stringify({ ended: true }) });
+  s = (await json(fb)).snapshot;
+  assert.equal(s.revenue.source, "estimated"); // the only subscription ended
+
+  const { parseImport } = await import("../lib/finance.js");
+  const items = parseImport('[{"direction":"in","date":"2026-10-02","vendor":"Salla payout","amount_sar":1200,"category":"subscription"},{"direction":"out","date":"2026-10-03","vendor":"Render","amount_sar":900,"category":"hosting"},{"direction":"in","date":"2026-10-04","vendor":"?","amount_sar":50,"category":"hosting"}]');
+  assert.deepEqual(items.map((i) => [i.direction, i.category]), [["in", "subscription"], ["out", "hosting"], ["in", "other_revenue"]]);
+  const r = await (await post(`${fb}/expenses/bulk`, { items })).json();
+  assert.deepEqual([r.expenses, r.income], [1, 2]);
+  assert.equal((await json(fb)).income.filter((i) => i.entry === "ai_import").length, 2);
+  await call(`/api/workspaces/${w.id}`, { method: "DELETE" });
+});

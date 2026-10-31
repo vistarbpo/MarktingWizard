@@ -11,7 +11,7 @@ import { commandSnapshot } from "./command.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
-import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
+import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, INCOME_IDS, INCOME_TYPES, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
 import { CATEGORIES as SUPPORT_CATEGORIES, CHANNELS, ESCALATION_RULES, SYSTEM_SUPPORT, TICKET_STATUS, parseArticles, parseReply, replyPrompt, starterKbPrompt, supportSummary } from "./support.js";
 import { CANDIDATE_TASKS, CAND_STAGES, CAND_STAGE_IDS, DEPARTMENTS, EMPLOYMENT, ROLE_STATUS, ROLE_TASKS, SUGGESTED_ORG, SAMPLE_TEAM, candidatePrompt, enrichCandidate, hrSummary, parseScore, rolePrompt } from "./hr.js";
 import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, salesPrompt, summary } from "./sales.js";
@@ -399,7 +399,8 @@ export function createApp({ store, provider, password }) {
   });
 
   // ---- finance
-  const finSnap = (w) => financeSnapshot({ expenses: store.listExpenses(w.id), cash: store.listCash(w.id), deals: store.listDeals(w.id), roles: store.listHrRoles(w.id), settings: w.finance });
+  const listIncome = (wsId) => store.listOps("finance_income", wsId).sort((a, b) => b.date.localeCompare(a.date));
+  const finSnap = (w) => financeSnapshot({ expenses: store.listExpenses(w.id), income: listIncome(w.id), cash: store.listCash(w.id), deals: store.listDeals(w.id), roles: store.listHrRoles(w.id), settings: w.finance });
   const cleanExpense = (b, partial = false) => {
     const out = {}, err = [];
     if (b.date !== undefined) { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) err.push("date must be YYYY-MM-DD"); else out.date = String(b.date); }
@@ -411,11 +412,39 @@ export function createApp({ store, provider, password }) {
     if (!partial) { if (!out.vendor) err.push("vendor is required"); if (!out.amount_sar) err.push("amount_sar is required"); }
     return { out, err };
   };
-  app.get("/api/finance/meta", (req, res) => res.json({ categories: FIN_CATEGORIES, tasks: Object.fromEntries(Object.entries(FIN_TASKS).map(([k, t]) => [k, t.title])) }));
+  app.get("/api/finance/meta", (req, res) => res.json({ income_types: INCOME_TYPES, categories: FIN_CATEGORIES, tasks: Object.fromEntries(Object.entries(FIN_TASKS).map(([k, t]) => [k, t.title])) }));
   app.get("/api/workspaces/:ws/finance", (req, res) => {
     const w = ws(req, res); if (!w) return;
-    res.json({ snapshot: finSnap(w), expenses: store.listExpenses(w.id), cash: store.listCash(w.id), reports: store.listFinanceReports(w.id).map(({ text, ...r }) => r) });
+    res.json({ paying_stores: store.listDeals(w.id).filter((d) => d.stage === "paying").map((d) => d.name), snapshot: finSnap(w), expenses: store.listExpenses(w.id), income: listIncome(w.id), cash: store.listCash(w.id), reports: store.listFinanceReports(w.id).map(({ text, ...r }) => r) });
   });
+  // income: money received. Subscriptions set billed MRR; investment, grants and loans are not revenue.
+  const cleanIncome = (b, partial = false) => {
+    const o = {}, err = [];
+    if (b.date !== undefined) { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) err.push("date must be YYYY-MM-DD"); else o.date = String(b.date); }
+    if (b.source !== undefined) o.source = String(b.source || "").trim().slice(0, 120);
+    for (const k of ["amount_sar", "vat_sar"]) if (b[k] !== undefined) { const n = Math.round(Number(b[k]) * 100) / 100; if (!(n >= 0)) err.push(`${k} must be a positive number`); else o[k] = n; }
+    if (b.type !== undefined) o.type = INCOME_IDS.includes(b.type) ? b.type : "other_revenue";
+    if (b.recurring !== undefined) o.recurring = ["monthly", "yearly", "one-off"].includes(b.recurring) ? b.recurring : "one-off";
+    if (b.note !== undefined) o.note = String(b.note || "").slice(0, 300);
+    if (b.deal_id !== undefined) o.deal_id = b.deal_id ? String(b.deal_id) : null;
+    if (b.ended !== undefined) o.ended_at = b.ended ? new Date().toISOString() : null;
+    if (!partial) { if (!o.source) err.push("who paid is required"); if (!o.amount_sar) err.push("amount_sar is required"); }
+    return { o, err };
+  };
+  app.post("/api/workspaces/:ws/finance/income", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { o, err } = cleanIncome({ date: new Date().toISOString().slice(0, 10), type: "subscription", recurring: "one-off", vat_sar: 0, note: "", deal_id: null, ...req.body });
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    res.status(201).json(store.addOps("finance_income", w.id, { ...o, ended_at: null, entry: "manual" }));
+  });
+  app.put("/api/workspaces/:ws/finance/income/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const { o, err } = cleanIncome(req.body || {}, true);
+    if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    const i = store.updateOps("finance_income", w.id, req.params.id, o);
+    i ? res.json(i) : res.status(404).json({ detail: "Income not found" });
+  });
+  app.delete("/api/workspaces/:ws/finance/income/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("finance_income", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Income not found" }); });
   app.put("/api/workspaces/:ws/finance/settings", (req, res) => {
     const w = ws(req, res); if (!w) return;
     const b = req.body || {}, f = {};
@@ -442,9 +471,18 @@ export function createApp({ store, provider, password }) {
     const w = ws(req, res); if (!w) return;
     const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : [];
     const saved = [];
-    for (const it of items) { const { out, err } = cleanExpense({ category: "other", recurring: "one-off", vat_sar: 0, note: "", ...it }); if (!err.length && out.date) saved.push(store.addExpense(w.id, { ...out, source: "ai_import", reviewed: true }, false)); }
+    let incomeSaved = 0;
+    for (const it of items) {
+      if (it.direction === "in") {
+        const { o, err } = cleanIncome({ source: it.vendor, type: it.category, recurring: "one-off", vat_sar: 0, note: "", deal_id: null, ...it });
+        if (!err.length && o.date) { store.addOps("finance_income", w.id, { ...o, ended_at: null, entry: "ai_import" }, false); incomeSaved++; }
+        continue;
+      }
+      const { out, err } = cleanExpense({ category: "other", recurring: "one-off", vat_sar: 0, note: "", ...it });
+      if (!err.length && out.date) saved.push(store.addExpense(w.id, { ...out, source: "ai_import", reviewed: true }, false));
+    }
     store.save();
-    res.status(201).json({ saved: saved.length });
+    res.status(201).json({ saved: saved.length + incomeSaved, expenses: saved.length, income: incomeSaved });
   });
   app.put("/api/workspaces/:ws/finance/expenses/:id", (req, res) => {
     const w = ws(req, res); if (!w) return;

@@ -15,15 +15,15 @@ const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
-  const d = await api(`/api/workspaces/${S.ws.id}/command`);
+  const [d, sopData] = await Promise.all([api(`/api/workspaces/${S.ws.id}/command`), api(`/api/workspaces/${S.ws.id}/sop`)]);
   $("#pageActions").innerHTML = `${d.has_samples ? `<span class="badge warn">Sample data loaded</span><button class="btn btn-sm btn-ghost btn-danger" data-cmd="unsample">Remove sample data</button>` : `<button class="btn btn-sm" data-cmd="sample">Load sample data</button>`}<span class="subtle s-small">Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><button class="btn btn-sm" data-cmd="refresh">Refresh</button>`;
   view.innerHTML = `${d.has_samples ? `<div class="notice" style="margin-bottom:16px">You're looking at sample data in every module (names start with "Sample ·"). Remove it from the top-right before entering real data, so reports and AI drafts only use your real numbers.</div>` : ""}<div class="cc">
     ${ccGoal(d)}
     ${ccNeeds(d)}
     ${ccTiles(d)}
+    ${ccSopFull(sopData)}
     ${ccWork(d)}
     ${ccTeam(d)}
-    ${ccSop(d)}
     ${ccFunnel(d)}
     ${ccKpis(d)}
     ${ccFeed(d)}
@@ -108,7 +108,7 @@ function ccWork(d) {
 function ccTeam(d) {
   const t = d.team, total = t.agents + t.humans;
   const C = 2 * Math.PI * 38, aiLen = total ? (t.agents / total) * C : 0;
-  return `<section class="card card-pad cc-span-3 clickable" data-go="team">
+  return `<section class="card card-pad cc-span-6 clickable" data-go="team">
     <span class="eyebrow">Team</span>
     <div class="row gap-16" style="margin-top:8px">
       <svg viewBox="0 0 100 100" width="96" height="96" role="img" aria-label="${t.agents} AI agents, ${t.humans} people">
@@ -124,16 +124,39 @@ function ccTeam(d) {
   </section>`;
 }
 
-/* ---- SOP progress rings */
-function ccSop(d) {
-  const ring = (s) => { const C = 2 * Math.PI * 16, p = s.total ? s.done / s.total : 0;
-    return `<div class="cc-ring"><svg viewBox="0 0 40 40" width="46" height="46" aria-hidden="true"><circle cx="20" cy="20" r="16" fill="none" stroke="var(--surface-2)" stroke-width="5"></circle><circle cx="20" cy="20" r="16" fill="none" stroke="${p === 1 ? "var(--good)" : "var(--accent)"}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${p * C} ${C}" transform="rotate(-90 20 20)"></circle></svg>
-      <div style="min-width:0"><b class="num">${s.done}/${s.total}</b><span class="subtle s-small"> ${esc(s.title.replace(/^(One-time|Weekly|Monthly|Quarterly) /, (m) => m))}</span></div></div>`; };
-  const weekly = d.sop.find((s) => s.cadence === "weekly");
-  return `<section class="card card-pad cc-span-3 clickable" data-go="sop">
-    <span class="eyebrow">SOP progress</span>
-    <div class="cc-rings">${d.sop.map(ring).join("")}</div>
-    ${weekly?.next ? `<p class="s-small muted cc-clamp" style="margin-top:8px"><b>Next this week:</b> ${esc(weekly.next)}</p>` : ""}
+/* ---- The whole operating SOP, on the founder's home screen */
+const CC_SOP = { cadence: null };
+function ccSopFull(sd) {
+  const done = new Set(sd.checks.map((c) => c.step));
+  const secs = sd.sop.map((s) => ({ ...s, total: s.steps.length, n: s.steps.filter((st) => done.has(`${s.cadence}:${st.id}`)).length }));
+  const setupDone = secs.find((s) => s.cadence === "setup");
+  // Default view: setup until it's finished, then this week.
+  const pick = CC_SOP.cadence || (setupDone && setupDone.n < setupDone.total ? "setup" : "weekly");
+  const LABEL = { setup: "Set-up", weekly: "This week", monthly: "This month", quarterly: "This quarter" };
+  const cur = secs.find((s) => s.cadence === pick) || secs[0];
+  const pageName = (st) => st.param ? (S.playbooks.find((p) => p.key === st.param)?.title || st.param) : st.go ? (ROUTES[st.go]?.title || st.go) : "";
+  const day = new Date().getDay(); // 0 Sun … 5 Fri
+  const today = (t) => (/^Monday:/.test(t) && day === 1) || (/^Friday:/.test(t) && day === 5) || /^Daily:/.test(t);
+  return `<section class="card cc-span-12 cc-sop">
+    <div class="cc-sop-head">
+      <div><span class="eyebrow">Operating SOP</span><p class="s-small muted">Everything the company runs on, in one list. Tick steps here; each one opens the page that does it.</p></div>
+      <div class="cc-sop-tabs" role="tablist" aria-label="SOP cadence">${secs.map((s) => {
+        const p = s.total ? s.n / s.total : 0, C = 2 * Math.PI * 9;
+        return `<button role="tab" aria-selected="${s.cadence === cur.cadence}" data-ccsoptab="${s.cadence}">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--surface-2)" stroke-width="4"></circle><circle cx="12" cy="12" r="9" fill="none" stroke="${p === 1 ? "var(--good)" : "var(--accent)"}" stroke-width="4" stroke-dasharray="${p * C} ${C}" transform="rotate(-90 12 12)"></circle></svg>
+          <span><b>${LABEL[s.cadence]}</b><span class="subtle s-small num"> ${s.n}/${s.total}</span></span></button>`;
+      }).join("")}</div>
+    </div>
+    <p class="subtle s-small cc-sop-when">${esc(cur.when)} · ${esc(cur.goal)} · <span class="mono">${esc(sd.periods[cur.cadence])}</span></p>
+    <ul class="cc-sop-list">${cur.steps.map((st, i) => {
+      const key = `${cur.cadence}:${st.id}`, ok = done.has(key);
+      return `<li class="${ok ? "done" : ""} ${!ok && today(st.text) ? "today" : ""}">
+        <input type="checkbox" id="cc-${esc(key)}" data-ccsop="${esc(cur.cadence)}" data-step="${esc(st.id)}" ${ok ? "checked" : ""}>
+        <label for="cc-${esc(key)}"><span class="subtle num">${i + 1}.</span> ${esc(st.text)}${!ok && today(st.text) ? ' <span class="badge warn">today</span>' : ""}</label>
+        <span class="cc-sop-owner s-small">${esc(st.owner)}</span>
+        ${st.go ? `<button class="btn btn-sm" data-go="${esc(st.go)}"${st.param ? ` data-param="${esc(st.param)}"` : ""}>${esc(pageName(st))} →</button>` : `<span class="subtle s-small">outside the dashboard</span>`}
+      </li>`;
+    }).join("")}</ul>
   </section>`;
 }
 
@@ -178,8 +201,21 @@ function ccFeed(d) {
   </section>`;
 }
 
+document.addEventListener("change", async (e) => {
+  const box = e.target.closest?.("[data-ccsop]");
+  if (!box || S.route !== "command") return;
+  box.disabled = true;
+  try {
+    await api(`/api/workspaces/${S.ws.id}/sop`, { method: "POST", body: JSON.stringify({ cadence: box.dataset.ccsop, step: box.dataset.step, done: box.checked }) });
+    CC_SOP.cadence = box.dataset.ccsop;
+    await renderCommand($("#view"));
+  } catch (err) { box.checked = !box.checked; box.disabled = false; toast("Couldn't save that tick. Try again.", true); }
+});
+
 document.addEventListener("click", async (e) => {
   if (S.route !== "command") return;
+  const tab = e.target.closest("[data-ccsoptab]");
+  if (tab) { CC_SOP.cadence = tab.dataset.ccsoptab; return renderCommand($("#view")); }
   if (e.target.closest('[data-cmd="refresh"]')) return renderCommand($("#view"));
   const b = e.target.closest('[data-cmd="sample"],[data-cmd="unsample"]');
   if (!b) return;

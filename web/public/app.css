@@ -303,7 +303,8 @@ td.right, th.right { text-align: right; }
 .s-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .s-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s-3); }
 .s-kpi { padding: var(--s-4); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.s-kpi b { font-size: clamp(20px, 1.7vw, 28px); font-weight: 600; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-kpi b { font-size: clamp(18px, 1.4vw, 28px); font-weight: 600; letter-spacing: -.02em; white-space: nowrap; }
+.s-kpi { overflow: hidden; }
 .s-kpi .subtle { font-size: var(--fs-xs); }
 .s-kpi.warn { border-color: var(--warn); }
 .s-kpi.warn b { color: var(--warn); }
@@ -555,3 +556,20 @@ td.right, th.right { text-align: right; }
 .p-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; margin-top: 6px; }
 details > summary { cursor: pointer; }
 @media (max-width: 640px) { .p-board { grid-auto-columns: 82%; } .p-link { max-width: 100%; flex-basis: 100%; } }
+
+/* Command Center: full SOP */
+.cc-sop { padding: var(--s-4) var(--s-5) var(--s-3); }
+.cc-sop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-4); flex-wrap: wrap; }
+.cc-sop-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.cc-sop-tabs button { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 6px 10px; cursor: pointer; font: inherit; color: inherit; }
+.cc-sop-tabs button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.cc-sop-when { margin: var(--s-3) 0 var(--s-2); }
+.cc-sop-list { list-style: none; margin: 0; padding: 0; }
+.cc-sop-list li { display: grid; grid-template-columns: 20px minmax(0, 1fr) 170px auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+.cc-sop-list li input { width: 18px; height: 18px; margin: 0; }
+.cc-sop-list li label { cursor: pointer; font-size: var(--fs-sm); }
+.cc-sop-list li.done label { text-decoration: line-through; color: var(--text-3); }
+.cc-sop-list li.today { background: linear-gradient(90deg, var(--warn-soft), transparent 60%); }
+.cc-sop-owner { color: var(--text-2); }
+.cc-sop-list .btn { white-space: nowrap; }
+@media (max-width: 900px) { .cc-sop-list li { grid-template-columns: 20px minmax(0, 1fr); } .cc-sop-owner, .cc-sop-list li > .btn, .cc-sop-list li > .subtle { grid-column: 2; justify-self: start; } }

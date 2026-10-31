@@ -16,6 +16,17 @@ export const CATEGORIES = [
   { id: "other", name: "Other", cogs: false },
 ];
 export const CAT_IDS = CATEGORIES.map((c) => c.id);
+export const INCOME_TYPES = [
+  { id: "subscription", name: "Subscription", revenue: true },
+  { id: "setup", name: "Setup / onboarding fee", revenue: true },
+  { id: "services", name: "Agency / services", revenue: true },
+  { id: "other_revenue", name: "Other revenue", revenue: true },
+  { id: "investment", name: "Investment", revenue: false },
+  { id: "grant", name: "Grant / support program", revenue: false },
+  { id: "loan", name: "Loan", revenue: false },
+];
+export const INCOME_IDS = INCOME_TYPES.map((t) => t.id);
+const isRevenue = (i) => INCOME_TYPES.find((t) => t.id === i.type)?.revenue !== false;
 export const VAT_RATE = 0.15;
 // ZATCA thresholds (check with your accountant): mandatory above SAR 375,000 taxable supplies in 12 months.
 export const VAT_MANDATORY_SAR = 375000;
@@ -29,7 +40,7 @@ const addMonths = (y, m, n) => { const d = new Date(Date.UTC(y, m - 1 + n, 1)); 
 // Monthly cost of a recurring expense, in SAR.
 const monthlyOf = (e) => (e.recurring === "monthly" ? e.amount_sar : e.recurring === "yearly" ? e.amount_sar / 12 : 0);
 
-export function financeSnapshot({ expenses, cash, deals, roles, settings, now = new Date() }) {
+export function financeSnapshot({ expenses, income = [], cash, deals, roles, settings, now = new Date() }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}), budgets: { ...DEFAULT_SETTINGS.budgets, ...(settings?.budgets || {}) } };
   const thisMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const lastMonth = addMonths(now.getUTCFullYear(), now.getUTCMonth() + 1, -1);
@@ -39,9 +50,18 @@ export function financeSnapshot({ expenses, cash, deals, roles, settings, now = 
   const latestCash = cashSorted.at(-1) || null;
   const cashSar = latestCash ? latestCash.balance_sar : 0;
 
-  // Revenue from the Sales module (USD plans → SAR).
+  // Revenue: billed MRR from logged recurring income; until income is logged, estimate from paying stores in Sales.
   const paying = deals.filter((d) => d.stage === "paying");
-  const mrrSar = paying.reduce((a, d) => a + planFor(d.skus).usd * SAR_PER_USD, 0);
+  const salesMrr = paying.reduce((a, d) => a + planFor(d.skus).usd * SAR_PER_USD, 0);
+  const activeRecurring = income.filter((i) => isRevenue(i) && i.recurring !== "one-off" && !i.ended_at);
+  const billedMrr = activeRecurring.reduce((a, i) => a + monthlyOf(i), 0);
+  const mrrSar = billedMrr > 0 ? billedMrr : salesMrr;
+  const mrrSource = billedMrr > 0 ? "billed" : salesMrr > 0 ? "estimated" : "none";
+  const inMonth = (month, rev) => income.filter((i) => ym(i.date) === month && i.recurring === "one-off" && isRevenue(i) === rev).reduce((a, i) => a + i.amount_sar, 0);
+  const oneOffRevenueMonth = inMonth(thisMonth, true);
+  const capitalMonth = inMonth(thisMonth, false);
+  const yearAgo = new Date(now.getTime() - 365 * 864e5).toISOString().slice(0, 10);
+  const oneOffRevenue12m = income.filter((i) => i.recurring === "one-off" && isRevenue(i) && i.date >= yearAgo).reduce((a, i) => a + i.amount_sar, 0);
 
   // Costs: recurring run-rate, and actual spend this month and last month by category.
   const recurring = expenses.filter((e) => e.recurring !== "one-off");
@@ -55,7 +75,7 @@ export function financeSnapshot({ expenses, cash, deals, roles, settings, now = 
     return { id: c.id, name: c.name, cogs: c.cogs, month: Math.round(rec + once), budget, over: budget > 0 && rec + once > budget };
   });
 
-  const netBurn = Math.max(0, monthBurn - mrrSar);
+  const netBurn = Math.max(0, monthBurn - mrrSar - oneOffRevenueMonth);
   const runway = netBurn > 0 ? cashSar / netBurn : null; // null = not burning (profitable or no costs logged)
   const cogs = byCategory.filter((c) => c.cogs).reduce((a, c) => a + c.month, 0);
   const grossMargin = mrrSar > 0 ? (mrrSar - cogs) / mrrSar : null;
@@ -92,8 +112,10 @@ export function financeSnapshot({ expenses, cash, deals, roles, settings, now = 
   const qExp = expenses.filter((e) => ym(e.date) >= qStart && ym(e.date) <= thisMonth);
   const inputVat = qExp.reduce((a, e) => a + (Number(e.vat_sar) || 0), 0);
   const qMonthsElapsed = now.getUTCMonth() - q * 3 + 1;
-  const outputVat = s.vat_registered ? mrrSar * qMonthsElapsed * VAT_RATE : 0;
-  const annualRevenue = mrrSar * 12;
+  const qIncome = income.filter((i) => isRevenue(i) && ym(i.date) >= qStart && ym(i.date) <= thisMonth);
+  const loggedOutputVat = qIncome.reduce((a, i) => a + (Number(i.vat_sar) || 0), 0);
+  const outputVat = s.vat_registered ? (qIncome.length ? loggedOutputVat : mrrSar * qMonthsElapsed * VAT_RATE) : 0;
+  const annualRevenue = mrrSar * 12 + oneOffRevenue12m;
   const qEnd = new Date(Date.UTC(now.getUTCFullYear(), q * 3 + 3, 0));
   const vatDue = new Date(Date.UTC(qEnd.getUTCFullYear(), qEnd.getUTCMonth() + 2, 0)); // end of the month after the quarter
 
@@ -106,13 +128,14 @@ export function financeSnapshot({ expenses, cash, deals, roles, settings, now = 
   for (const c of byCategory.filter((x) => x.over)) needs.push({ text: `${c.name} is over budget this month (SAR ${c.month.toLocaleString("en-US")} of ${c.budget.toLocaleString("en-US")})`, tab: "expenses" });
   if (s.vat_registered) needs.push({ text: `File the Q${q + 1} VAT return with ZATCA by ${vatDue.toISOString().slice(0, 10)}`, tab: "reports", soft: true });
   else if (annualRevenue >= VAT_VOLUNTARY_SAR) needs.push({ text: `Revenue run-rate SAR ${Math.round(annualRevenue).toLocaleString("en-US")}/yr: check VAT registration with your accountant`, tab: "reports" });
+  if (paying.length && !billedMrr) needs.push({ text: `Sales shows ${paying.length} paying store${paying.length === 1 ? "" : "s"} but no subscription income is logged: add it under Income`, tab: "income" });
   const unreviewed = expenses.filter((e) => e.source === "ai_import" && !e.reviewed).length;
   if (unreviewed) needs.push({ text: `${unreviewed} AI-imported expense${unreviewed === 1 ? "" : "s"} to review`, tab: "expenses" });
 
   return {
     settings: s, month: thisMonth, last_month: lastMonth,
     cash: { balance_sar: cashSar, as_of: latestCash?.date || null, history: cashSorted.slice(-12) },
-    revenue: { mrr_sar: Math.round(mrrSar), mrr_usd: Math.round(mrrSar / SAR_PER_USD), paying: paying.length },
+    revenue: { mrr_sar: Math.round(mrrSar), mrr_usd: Math.round(mrrSar / SAR_PER_USD), paying: paying.length, source: mrrSource, billed_mrr_sar: Math.round(billedMrr), sales_mrr_sar: Math.round(salesMrr), one_off_month_sar: Math.round(oneOffRevenueMonth), capital_month_sar: Math.round(capitalMonth), recurring_count: activeRecurring.length },
     costs: { run_rate_sar: Math.round(runRate), month_burn_sar: Math.round(monthBurn), net_burn_sar: Math.round(netBurn), by_category: byCategory, last_month_one_off_sar: Math.round(spentIn(lastMonth)) },
     runway_months: runway === null ? null : Math.round(runway * 10) / 10,
     gross_margin: grossMargin === null ? null : Math.round(grossMargin * 1000) / 10,
@@ -148,9 +171,9 @@ export function financePrompt(ws, snap, expenses, task) {
 }
 
 export function importPrompt(text) {
-  return `Extract business expenses from these bank or card statement lines. Return ONLY a JSON array, no prose, each item:
-{"date":"YYYY-MM-DD","vendor":"short name","amount_sar":number (positive, in SAR; convert USD at 3.75 and note it),"vat_sar":number (VAT included in the amount if shown, else 0),"category":"one of ${CAT_IDS.join("|")}","recurring":"monthly|yearly|one-off","note":"anything uncertain"}
-Skip incoming payments, transfers between own accounts and refunds. If a line is unclear, still include it with category "other" and explain in note.
+  return `Extract money paid out and money received from these bank or card statement lines. Return ONLY a JSON array, no prose, each item:
+{"direction":"out|in","date":"YYYY-MM-DD","vendor":"who was paid, or who paid us","amount_sar":number (positive, in SAR; convert USD at 3.75 and note it),"vat_sar":number (VAT included in the amount if shown, else 0),"category":"for out: one of ${CAT_IDS.join("|")}; for in: one of ${INCOME_IDS.join("|")}","recurring":"monthly|yearly|one-off","note":"anything uncertain"}
+Money paid out is "out"; money received (customer payments, payouts from Salla/Zid/Stripe/Moyasar/Tap, investment, grants) is "in". Skip transfers between own accounts. If a line is unclear, still include it with category "other" (out) or "other_revenue" (in) and explain in note.
 
 <statement>
 ${String(text).slice(0, 15000)}
@@ -169,7 +192,8 @@ export function parseImport(text) {
     vendor: String(x?.vendor || "Unknown").slice(0, 120),
     amount_sar: Math.max(0, Math.round((Number(x?.amount_sar) || 0) * 100) / 100),
     vat_sar: Math.max(0, Math.round((Number(x?.vat_sar) || 0) * 100) / 100),
-    category: CAT_IDS.includes(x?.category) ? x.category : "other",
+    direction: x?.direction === "in" ? "in" : "out",
+    category: x?.direction === "in" ? (INCOME_IDS.includes(x?.category) ? x.category : "other_revenue") : (CAT_IDS.includes(x?.category) ? x.category : "other"),
     recurring: ["monthly", "yearly", "one-off"].includes(x?.recurring) ? x.recurring : "one-off",
     note: String(x?.note || "").slice(0, 300),
   })).filter((x) => x.amount_sar > 0);

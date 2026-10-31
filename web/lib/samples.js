@@ -129,6 +129,12 @@ export function loadSampleData(store, wsId, now = Date.now()) {
     ["Hostinger", "hosting", 1200, "yearly", 156.52, 200], ["Figma + Notion + Google Workspace", "tools", 650, "monthly", 84.78, 25], ["Freelance motion designer", "freelancers", 4000, "monthly", 0, 22],
     ["Snapchat ads", "marketing", 6500, "one-off", 847.83, 12], ["TikTok ads", "marketing", 3200, "one-off", 417.39, 8], ["CR renewal", "legal_gov", 1200, "one-off", 0, 40],
   ]) { tag(store.addExpense(id, { date: dateAgo(age, now), vendor: S(vendor), category, amount_sar, recurring, vat_sar, note: "", source: "manual" }, false)); counts.expenses++; }
+  counts.income = 0;
+  for (const [source, type, amount_sar, recurring, vat_sar, age, note] of [
+    ["Coast Optics", "subscription", 1683.75, "monthly", 219.62, 20, "Growth plan"], ["Lavender Spa", "subscription", 558.75, "monthly", 72.88, 15, "Starter plan"],
+    ["Pearl Jewels", "subscription", 1683.75, "monthly", 219.62, 10, "Growth plan"], ["Pearl Jewels", "setup", 1875, "one-off", 244.57, 10, "Template setup"],
+    ["Angel investor", "investment", 187500, "one-off", 0, 75, "Pre-seed SAFE"],
+  ]) { tag(store.addOps("finance_income", id, { date: dateAgo(age, now), source: S(source), type, amount_sar, vat_sar, recurring, note, deal_id: null, ended_at: null, entry: "manual" }, false)); counts.income++; }
   tag(store.addCash(id, { date: dateAgo(60, now), balance_sar: 420000, note: "sample" }));
   tag(store.addCash(id, { date: dateAgo(30, now), balance_sar: 392000, note: "sample" }));
   tag(store.addCash(id, { date: dateAgo(1, now), balance_sar: 365000, note: "sample" }));
@@ -187,7 +193,7 @@ export function removeSampleData(store, wsId) {
   const myKpis = new Set(db.kpis.filter(mine).map((k) => k.id));
   db.kpi_values = db.kpi_values.filter((v) => !(myKpis.has(v.kpi_id) && (v.sample || kpiIds.has(v.kpi_id))));
   removed.kpis = drop("kpis");
-  for (const c of ["notes", "support_articles", "support_tickets", "finance_expenses", "finance_cash", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "product_feedback", "product_releases", "sop_checks"]) removed[c] = drop(c);
+  for (const c of ["notes", "support_articles", "support_tickets", "finance_expenses", "finance_income", "finance_cash", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "product_feedback", "product_releases", "sop_checks"]) removed[c] = drop(c);
   // Product items added by samples go; feedback links to them are cleared.
   const itemIds = new Set(db.product_items.filter((i) => mine(i) && i.sample).map((i) => i.id));
   for (const f of db.product_feedback) if (itemIds.has(f.item_id)) f.item_id = null;

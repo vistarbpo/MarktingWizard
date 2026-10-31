@@ -19,8 +19,8 @@ async function renderFinance(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   await finLoad();
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Finance views">
-    ${[["overview", "Overview"], ["expenses", "Expenses"], ["reports", "Reports & VAT"]].map(([k, l]) => `<button role="tab" data-ftab="${k}" aria-selected="${FIN.tab === k}">${l}</button>`).join("")}</div>
-    <button class="btn btn-primary" data-faction="add-expense">Add expense</button>`;
+    ${[["overview", "Overview"], ["income", "Income"], ["expenses", "Expenses"], ["reports", "Reports & VAT"]].map(([k, l]) => `<button role="tab" data-ftab="${k}" aria-selected="${FIN.tab === k}">${l}</button>`).join("")}</div>
+    <button class="btn" data-faction="add-income">Add income</button><button class="btn btn-primary" data-faction="add-expense">Add expense</button>`;
   view.innerHTML = `<section class="s-kpis" id="fKpis"></section><div id="fBody" style="margin-top:20px"></div>`;
   finRerender();
 }
@@ -35,10 +35,10 @@ function finRerender() {
     tile("Monthly costs", sarFmt(s.costs.month_burn_sar), `${sarFmt(s.costs.run_rate_sar)} recurring`),
     tile("Net burn", sarFmt(s.costs.net_burn_sar), "costs minus revenue, per month"),
     tile("Runway", r == null ? (s.costs.month_burn_sar ? "∞" : "–") : `${r} mo`, r == null ? (s.costs.month_burn_sar ? "revenue covers costs" : "log costs to see runway") : s.forecast.cash_zero_month ? `today's burn · with the plan, cash out ${s.forecast.cash_zero_month}` : "at current net burn", r != null && r < 3 ? "bad" : r != null && r < 6 ? "warn" : ""),
-    tile("MRR", sarFmt(s.revenue.mrr_sar), `$${s.revenue.mrr_usd.toLocaleString("en-US")} · ${s.revenue.paying} paying stores`),
+    tile("MRR", sarFmt(s.revenue.mrr_sar), s.revenue.source === "billed" ? `billed · ${s.revenue.recurring_count} subscription${s.revenue.recurring_count === 1 ? "" : "s"}${s.revenue.one_off_month_sar ? ` · +${sarShort(s.revenue.one_off_month_sar)} one-off this month` : ""}` : s.revenue.source === "estimated" ? `estimated from ${s.revenue.paying} paying stores in Sales · log income to make it real` : "log income to see revenue", s.revenue.source === "estimated" ? "warn" : ""),
     tile("Gross margin", s.gross_margin == null ? "–" : s.gross_margin + "%", "after AI, APIs and hosting"),
   ].join("");
-  ({ overview: finOverview, expenses: finExpenses, reports: finReports })[FIN.tab]();
+  ({ overview: finOverview, income: finIncome, expenses: finExpenses, reports: finReports })[FIN.tab]();
 }
 
 /* ------------------------------------------------ Overview */
@@ -115,6 +115,39 @@ function finChart(s) {
   $("#fChart").innerHTML = svg;
 }
 
+/* ------------------------------------------------ Income */
+function finIncome() {
+  const all = FIN.d.income, types = FIN.meta.income_types, s = FIN.d.snapshot;
+  const tName = (id) => types.find((t) => t.id === id)?.name || id;
+  const isRev = (id) => types.find((t) => t.id === id)?.revenue !== false;
+  $("#fBody").innerHTML = `
+    <div class="row between" style="flex-wrap:wrap;gap:12px;margin-bottom:12px"><div><h2>Income</h2><p class="subtle s-small">Money received. Monthly or yearly subscriptions set your real (billed) MRR; one-off fees count in the month received. Investment, grants and loans are tracked but never counted as revenue. Paste bank lines under Expenses → AI bookkeeper and money-in lines land here too.</p></div>
+      <button class="btn btn-primary" data-faction="add-income">Add income</button></div>
+    ${s.revenue.source === "estimated" ? `<div class="notice" style="margin-bottom:16px">MRR is currently an estimate from ${s.revenue.paying} paying store${s.revenue.paying === 1 ? "" : "s"} in Sales (SAR ${s.revenue.sales_mrr_sar.toLocaleString("en-US")}). Add each store's subscription here to switch to billed MRR.</div>` : ""}
+    <form class="card s-add" id="fInc" hidden>
+      <div class="field"><label for="fi-date">Date received</label><input class="input" id="fi-date" type="date" value="${today()}" required></div>
+      <div class="field"><label for="fi-src">From</label><input class="input" id="fi-src" list="fi-deals" required placeholder="Store or investor"><datalist id="fi-deals">${(FIN.d.paying_stores || []).map((n) => `<option value="${esc(n)}">`).join("")}</datalist></div>
+      <div class="field"><label for="fi-type">Type</label><select class="input" id="fi-type">${types.map((t) => `<option value="${t.id}">${esc(t.name)}${t.revenue ? "" : " (not revenue)"}</option>`).join("")}</select></div>
+      <div class="field"><label for="fi-amt">Amount (SAR, incl. VAT)</label><input class="input" id="fi-amt" type="number" step="0.01" min="0" required></div>
+      <div class="field"><label for="fi-vat">VAT charged (SAR)</label><input class="input" id="fi-vat" type="number" step="0.01" min="0" value="0"></div>
+      <div class="field"><label for="fi-rec">Repeats</label><select class="input" id="fi-rec"><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="one-off">One-off</option></select></div>
+      <div class="field h-span"><label for="fi-note">Note</label><input class="input" id="fi-note" placeholder="Plan, invoice number…"></div>
+      <div class="row gap-8 h-span"><button class="btn btn-primary" type="submit">Save income</button><button class="btn" type="button" data-faction="add-income">Cancel</button></div>
+    </form>
+    <div class="f-unit" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:16px">
+      <div class="card card-pad"><span class="s-small muted">Billed MRR</span><b class="num">${sarFmt(s.revenue.billed_mrr_sar)}</b><span class="subtle s-small">${s.revenue.recurring_count} active subscriptions</span></div>
+      <div class="card card-pad"><span class="s-small muted">One-off revenue this month</span><b class="num">${sarFmt(s.revenue.one_off_month_sar)}</b><span class="subtle s-small">setup, services, other</span></div>
+      <div class="card card-pad"><span class="s-small muted">Investment & grants this month</span><b class="num">${sarFmt(s.revenue.capital_month_sar)}</b><span class="subtle s-small">not counted as revenue</span></div>
+    </div>
+    ${all.length ? `<section class="card"><div class="table-wrap"><table class="f-table"><thead><tr><th>Date</th><th>From</th><th>Type</th><th>Repeats</th><th class="num">VAT</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+      ${all.map((i) => `<tr style="${i.ended_at ? "opacity:.55" : ""}"><td class="num">${i.date}</td><td>${esc(i.source)}${i.entry === "ai_import" ? ' <span class="s-owner ai">AI</span>' : ""}${i.note ? `<div class="subtle s-small">${esc(i.note)}</div>` : ""}</td>
+        <td>${isRev(i.type) ? esc(tName(i.type)) : `<span class="badge">${esc(tName(i.type))}</span>`}</td>
+        <td>${i.recurring === "one-off" ? '<span class="subtle">One-off</span>' : i.ended_at ? '<span class="subtle">Ended</span>' : `<span class="badge good">${i.recurring === "monthly" ? "Monthly" : "Yearly"}</span>`}</td>
+        <td class="num">${i.vat_sar ? sarShort(i.vat_sar) : "–"}</td><td class="num"><b>${sarFmt(i.amount_sar)}</b></td>
+        <td style="white-space:nowrap">${i.recurring !== "one-off" && !i.ended_at ? `<button class="btn btn-sm" data-fincend="${i.id}" title="Customer cancelled">End</button>` : ""}<button class="btn btn-sm btn-ghost btn-danger" data-fincdel="${i.id}" aria-label="Delete">✕</button></td></tr>`).join("")}
+    </tbody></table></div></section>` : `<div class="card empty"><h2>No income logged yet</h2><p>Add each paying store's subscription (monthly or yearly) and any setup fees. Investment and grants go here too, kept separate from revenue.</p><button class="btn btn-primary" data-faction="add-income">Add income</button></div>`}`;
+}
+
 /* ------------------------------------------------ Expenses */
 function finExpenses() {
   const all = FIN.d.expenses, cats = FIN.meta.categories;
@@ -133,7 +166,7 @@ function finExpenses() {
       <div class="row gap-8 h-span"><button class="btn btn-primary" type="submit">Save expense</button><button class="btn" type="button" data-faction="add-expense">Cancel</button></div>
     </form>
     <section class="card card-pad stack" style="margin-bottom:16px">
-      <div class="row between" style="flex-wrap:wrap;gap:8px"><div><h2>AI bookkeeper</h2><p class="subtle s-small">Paste bank or card statement lines. AI pulls out the expenses, categories and VAT. You check the list before anything is saved.</p></div></div>
+      <div class="row between" style="flex-wrap:wrap;gap:8px"><div><h2>AI bookkeeper</h2><p class="subtle s-small">Paste bank or card statement lines. AI sorts money out (expenses) from money in (income), with categories and VAT. You check the list before anything is saved.</p></div></div>
       <textarea class="input mono" id="fImportText" rows="4" placeholder="2026-10-03  ANTHROPIC*API  USD 120.00&#10;2026-10-05  HOSTINGER  SAR 89.00&#10;2026-10-09  SNAP INC ADS  SAR 1,500.00"></textarea>
       <div class="row gap-8"><button class="btn" data-faction="ai-import">AI: read these lines</button><span class="subtle s-small" id="fImportMsg"></span></div>
       <div id="fImportPreview"></div>
@@ -152,10 +185,10 @@ function finExpenses() {
 }
 
 function finImportPreview() {
-  const items = FIN.importItems, cats = FIN.meta.categories;
-  $("#fImportPreview").innerHTML = `<div class="table-wrap" style="margin-top:8px"><table class="f-table"><thead><tr><th><input type="checkbox" id="fi-all" checked aria-label="Select all"></th><th>Date</th><th>Vendor</th><th>Category</th><th>Repeats</th><th class="num">VAT</th><th class="num">SAR</th><th>AI note</th></tr></thead><tbody>
-    ${items.map((it, i) => `<tr><td><input type="checkbox" data-fi="${i}" checked aria-label="Include ${esc(it.vendor)}"></td><td class="num">${it.date}</td><td>${esc(it.vendor)}</td>
-      <td><select class="input input-sm" data-ficat="${i}">${cats.map((c) => `<option value="${c.id}" ${c.id === it.category ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></td>
+  const items = FIN.importItems, cats = FIN.meta.categories, types = FIN.meta.income_types;
+  $("#fImportPreview").innerHTML = `<div class="table-wrap" style="margin-top:8px"><table class="f-table"><thead><tr><th><input type="checkbox" id="fi-all" checked aria-label="Select all"></th><th>In / out</th><th>Date</th><th>Who</th><th>Category</th><th>Repeats</th><th class="num">VAT</th><th class="num">SAR</th><th>AI note</th></tr></thead><tbody>
+    ${items.map((it, i) => `<tr><td><input type="checkbox" data-fi="${i}" checked aria-label="Include ${esc(it.vendor)}"></td><td>${it.direction === "in" ? '<span class="badge good">In</span>' : '<span class="badge">Out</span>'}</td><td class="num">${it.date}</td><td>${esc(it.vendor)}</td>
+      <td><select class="input input-sm" data-ficat="${i}">${(it.direction === "in" ? types : cats).map((c) => `<option value="${c.id}" ${c.id === it.category ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></td>
       <td><select class="input input-sm" data-firec="${i}">${["one-off", "monthly", "yearly"].map((r) => `<option ${r === it.recurring ? "selected" : ""}>${r}</option>`).join("")}</select></td>
       <td class="num">${it.vat_sar || "–"}</td><td class="num"><b>${it.amount_sar.toLocaleString("en-US")}</b></td><td class="subtle s-small">${esc(it.note)}</td></tr>`).join("")}
   </tbody></table></div><div class="row gap-8" style="margin-top:10px"><button class="btn btn-primary" data-faction="save-import">Save selected</button><button class="btn" data-faction="cancel-import">Discard</button></div>`;
@@ -216,17 +249,20 @@ document.addEventListener("click", async (e) => {
     const mf = t.closest("[data-fmonth]"); if (mf) { FIN.month = mf.dataset.fmonth; finExpenses(); return; }
     const del = t.closest("[data-fdel]");
     if (del) { if (del.dataset.confirm !== "1") { del.dataset.confirm = "1"; del.textContent = "Sure?"; return; } await api(`/api/workspaces/${S.ws.id}/finance/expenses/${del.dataset.fdel}`, { method: "DELETE" }); await finLoad(); finRerender(); return toast("Expense deleted"); }
+    const ie = t.closest("[data-fincend]"); if (ie) { await api(`/api/workspaces/${S.ws.id}/finance/income/${ie.dataset.fincend}`, { method: "PUT", body: JSON.stringify({ ended: true }) }); await finLoad(); finRerender(); return toast("Subscription ended"); }
+    const idl = t.closest("[data-fincdel]"); if (idl) { if (idl.dataset.confirm !== "1") { idl.dataset.confirm = "1"; idl.textContent = "Sure?"; return; } await api(`/api/workspaces/${S.ws.id}/finance/income/${idl.dataset.fincdel}`, { method: "DELETE" }); await finLoad(); finRerender(); return toast("Income deleted"); }
     const ai = t.closest("[data-fai]"); if (ai) return finRunAi(ai.dataset.fai);
     const rep = t.closest("[data-freport]"); if (rep) { const r = await api(`/api/workspaces/${S.ws.id}/finance/reports/${rep.dataset.freport}`); finShowReport(r.text); $("#fDraft").scrollIntoView({ behavior: "smooth", block: "nearest" }); return; }
     if (t.id === "fi-all") { document.querySelectorAll("[data-fi]").forEach((c) => (c.checked = t.checked)); return; }
     const a = t.closest("[data-faction]"); if (!a) return;
     const act = a.dataset.faction;
+    if (act === "add-income") { if (FIN.tab !== "income") { FIN.tab = "income"; document.querySelectorAll("[data-ftab][role=tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.ftab === "income")); finRerender(); } const f = $("#fInc"); f.hidden = !f.hidden; if (!f.hidden) $("#fi-src").focus(); return; }
     if (act === "add-expense") { if (FIN.tab !== "expenses") { FIN.tab = "expenses"; document.querySelectorAll("[data-ftab][role=tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.ftab === "expenses")); finRerender(); } const f = $("#fAdd"); f.hidden = !f.hidden; if (!f.hidden) $("#fe-vendor").focus(); return; }
     if (act === "budgets") { const f = $("#fBudgets"); f.hidden = !f.hidden; return; }
     if (act === "ai-import") {
       const text = $("#fImportText").value.trim(); if (!text) return toast("Paste some statement lines first", true);
       a.disabled = true; $("#fImportMsg").textContent = "AI is reading the lines…";
-      try { const r = await api(`/api/workspaces/${S.ws.id}/finance/expenses/ai-import`, { method: "POST", body: JSON.stringify({ text }) }); FIN.importItems = r.items; $("#fImportMsg").textContent = `${r.items.length} expense${r.items.length === 1 ? "" : "s"} found. Check them, then save.`; finImportPreview(); }
+      try { const r = await api(`/api/workspaces/${S.ws.id}/finance/expenses/ai-import`, { method: "POST", body: JSON.stringify({ text }) }); FIN.importItems = r.items; $("#fImportMsg").textContent = `${r.items.filter((x) => x.direction !== "in").length} out, ${r.items.filter((x) => x.direction === "in").length} in. Check them, then save.`; finImportPreview(); }
       catch (err) { $("#fImportMsg").textContent = ""; toast(err.message, true); }
       finally { a.disabled = false; }
       return;
@@ -234,7 +270,7 @@ document.addEventListener("click", async (e) => {
     if (act === "save-import") {
       const items = FIN.importItems.map((it, i) => ({ ...it, category: $(`[data-ficat="${i}"]`).value, recurring: $(`[data-firec="${i}"]`).value })).filter((_, i) => $(`[data-fi="${i}"]`).checked);
       const r = await api(`/api/workspaces/${S.ws.id}/finance/expenses/bulk`, { method: "POST", body: JSON.stringify({ items }) });
-      FIN.importItems = null; await finLoad(); finRerender(); return toast(`Saved ${r.saved} expenses`);
+      FIN.importItems = null; await finLoad(); finRerender(); return toast(`Saved ${r.expenses} expense${r.expenses === 1 ? "" : "s"} and ${r.income} income line${r.income === 1 ? "" : "s"}`);
     }
     if (act === "cancel-import") { FIN.importItems = null; $("#fImportPreview").innerHTML = ""; $("#fImportMsg").textContent = ""; return; }
     if (act === "copy-report") { try { await navigator.clipboard.writeText($("#fDraft")._text || ""); toast("Copied"); } catch { toast("Clipboard blocked by the browser", true); } return; }
@@ -251,16 +287,17 @@ document.addEventListener("change", async (e) => {
 
 document.addEventListener("submit", async (e) => {
   const id = e.target.id;
-  if (!["fAdd", "fCash", "fAssume", "fBudgets"].includes(id)) return;
+  if (!["fAdd", "fInc", "fCash", "fAssume", "fBudgets"].includes(id)) return;
   e.preventDefault();
   const base = `/api/workspaces/${S.ws.id}/finance`;
   try {
     if (id === "fAdd") await api(`${base}/expenses`, { method: "POST", body: JSON.stringify({ date: $("#fe-date").value, vendor: $("#fe-vendor").value, amount_sar: $("#fe-amt").value, vat_sar: $("#fe-vat").value || 0, category: $("#fe-cat").value, recurring: $("#fe-rec").value, note: $("#fe-note").value }) });
+    if (id === "fInc") await api(`${base}/income`, { method: "POST", body: JSON.stringify({ date: $("#fi-date").value, source: $("#fi-src").value, type: $("#fi-type").value, amount_sar: $("#fi-amt").value, vat_sar: $("#fi-vat").value || 0, recurring: $("#fi-rec").value, note: $("#fi-note").value }) });
     if (id === "fCash") await api(`${base}/cash`, { method: "POST", body: JSON.stringify({ date: $("#fc-date").value, balance_sar: $("#fc-bal").value }) });
     if (id === "fAssume") await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ mrr_growth_pct: $("#f-growth").value, include_hires: $("#f-hires").checked }) });
     if (id === "fBudgets") await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ budgets: Object.fromEntries([...document.querySelectorAll("[data-budget]")].map((i) => [i.dataset.budget, i.value || 0])) }) });
     await finLoad(); finRerender();
-    toast({ fAdd: "Expense saved", fCash: "Bank balance saved", fAssume: "Forecast updated", fBudgets: "Budgets saved" }[id]);
+    toast({ fInc: "Income saved", fAdd: "Expense saved", fCash: "Bank balance saved", fAssume: "Forecast updated", fBudgets: "Budgets saved" }[id]);
   } catch (err) { toast(err.message || "Couldn't save", true); }
 });
 
