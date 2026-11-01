@@ -811,3 +811,18 @@ test("store CRM: import 30k-style CSV, segments, sequences in Saudi hours, repli
   assert.match(exp, /store_name,domain,email/);
   assert.equal((await call("/hooks/whatsapp?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1")).status, 403);
 });
+
+test("store CRM: old starter campaigns switch to the Arabic category placeholder", async () => {
+  const { CrmStore } = await import("../lib/crmstore.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "crm-mig-"));
+  fs.writeFileSync(path.join(d, "crm.json"), JSON.stringify({ seq: 2, contacts: [], campaigns: [
+    { id: "1", workspace_id: "1", created_by: "starter", steps: [{ subject: "x", body: "متاجر {{category}} اللي" }, { subject: "Hi", body: "Stores in {{category}}" }] },
+    { id: "2", workspace_id: "1", created_by: "Founder", steps: [{ subject: "", body: "متاجر {{category}}" }] },
+  ] }));
+  const c = new CrmStore(d);
+  assert.equal(c.db.campaigns[0].steps[0].body, "متاجر {{category_ar}} اللي");
+  assert.equal(c.db.campaigns[0].steps[1].body, "Stores in {{category}}"); // English text keeps the English name
+  assert.equal(c.db.campaigns[1].steps[0].body, "متاجر {{category}}"); // people's own campaigns are untouched
+  assert.match(fs.readFileSync(path.join(d, "crm.json"), "utf8"), /category_ar/);
+  fs.rmSync(d, { recursive: true, force: true });
+});

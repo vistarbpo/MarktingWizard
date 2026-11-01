@@ -15,6 +15,19 @@ export class CrmStore {
     this.db = fs.existsSync(this.file) ? { ...EMPTY(), ...JSON.parse(fs.readFileSync(this.file, "utf8")) } : EMPTY();
     this.flushMs = flushMs; this.timer = null;
     this.#index();
+    if (this.#migrate()) this.flush();
+  }
+  // Starter campaigns loaded before {{category_ar}} existed put English category names into Arabic
+  // text. Swap the placeholder in Arabic steps of starter campaigns only; your own campaigns are untouched.
+  #migrate() {
+    let n = 0;
+    for (const c of this.db.campaigns) {
+      if (c.created_by !== "starter") continue;
+      for (const st of c.steps || []) for (const k of ["subject", "body"]) {
+        if (/[\u0600-\u06FF]/.test(st[k] || "") && st[k].includes("{{category}}")) { st[k] = st[k].replaceAll("{{category}}", "{{category_ar}}"); n++; }
+      }
+    }
+    return n > 0;
   }
   #index() {
     this.byId = new Map(this.db.contacts.map((c) => [c.id, c]));
