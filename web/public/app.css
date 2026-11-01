@@ -656,3 +656,4 @@ details > summary { cursor: pointer; }
 .c-plan > div.warn b { color: var(--warn); }
 .c-exp { margin: 0 20px 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 4px; }
 .c-exp.warn { background: var(--warn-soft); }
+.c-call { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }

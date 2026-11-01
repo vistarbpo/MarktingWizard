@@ -109,6 +109,8 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   const churn = Math.max(0.5, Number(s.churn_pct) || 3) / 100;
   const ltv = arpaSar && grossMargin > 0 ? (arpaSar * grossMargin) / churn : null;
   const ltvCac = ltv && cac ? ltv / cac : null;
+  // DPA AD rule: spend up to 50% of a store's first-year revenue to win it.
+  const allowableCac = arpaSar ? arpaSar * 12 * 0.5 : null;
 
   // VAT: quarter-to-date input VAT on expenses; output VAT on revenue if registered.
   const q = Math.floor(now.getUTCMonth() / 3);
@@ -146,7 +148,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
     gross_margin: grossMargin === null ? null : Math.round(grossMargin * 1000) / 10,
     hires: { list: hires, monthly_sar: Math.round(hires.reduce((a, h) => a + h.monthly, 0)), included: s.include_hires },
     forecast: { months, cash_zero_month: zeroAt },
-    unit: { arpa_sar: arpaSar && Math.round(arpaSar), cac_sar: cac && Math.round(cac), ltv_sar: ltv && Math.round(ltv), ltv_cac: ltvCac && Math.round(ltvCac * 10) / 10, churn_pct: churn * 100, payback_months: payback && Math.round(payback * 10) / 10, new_paying_30d: newPaying30 },
+    unit: { arpa_sar: arpaSar && Math.round(arpaSar), cac_sar: cac && Math.round(cac), ltv_sar: ltv && Math.round(ltv), allowable_cac_sar: allowableCac && Math.round(allowableCac), ltv_cac: ltvCac && Math.round(ltvCac * 10) / 10, churn_pct: churn * 100, payback_months: payback && Math.round(payback * 10) / 10, new_paying_30d: newPaying30 },
     vat: { registered: s.vat_registered, quarter: `Q${q + 1} ${now.getUTCFullYear()}`, input_vat_sar: Math.round(inputVat), output_vat_sar: Math.round(outputVat), net_sar: Math.round(outputVat - inputVat), due: vatDue.toISOString().slice(0, 10), annual_revenue_sar: Math.round(annualRevenue), mandatory_sar: VAT_MANDATORY_SAR, voluntary_sar: VAT_VOLUNTARY_SAR },
     needs,
   };

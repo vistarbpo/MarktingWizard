@@ -780,7 +780,7 @@ test("store CRM: import 30k-style CSV, segments, sequences in Saudi hours, repli
   assert.equal(guessIntent("لاحقاً إن شاء الله"), "not_now");
 
   // HTTP: starter campaigns, preview, launch in test mode, inbox, unsubscribe page, sample stores, permissions.
-  assert.equal((await (await post(`${P}/campaigns/starter`)).json()).added, 4);
+  assert.equal((await (await post(`${P}/campaigns/starter`)).json()).added, 5);
   const camps = await json(`${P}/campaigns`);
   const cold = camps.find((x) => x.type === "outreach");
   const prev = await json(`${P}/campaigns/${cold.id}/preview`);
@@ -876,6 +876,31 @@ test("masterclass rules: close rate, LTV:CAC, intent tags, one-variable A/B test
   assert.ok(ea.every((c) => c.status === "running" && c.stats.enrolled > 50));
   assert.ok(Math.abs(ea[0].stats.enrolled - ea[1].stats.enrolled) < 40); // roughly half each, no store in both
   const ov = await json(`${P}/overview`);
-  assert.equal(ov.rates.bench.reply, 0.05);
+  assert.equal(ov.rates.bench.reply, 0.02);
   await json(`${P}/sample`, { method: "DELETE" });
+});
+
+test("store CRM: phone-call steps become tasks; ICP focus list; allowable CAC", async () => {
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+  await post(`${P}/sample`);
+  const icp = await (await post(`${P}/bulk`, { filter: { tags: ["sample"] }, action: "icp", value: 30 })).json();
+  assert.equal(icp.affected, 30);
+  const camp = await (await post(`${P}/campaigns`, { name: "Call test", type: "outreach", filter: { tags: ["icp"], has_whatsapp: true }, window: { from: 0, to: 24, skip_friday: false },
+    steps: [{ channel: "call", delay_days: 0, body: "Call {{store_name}}" }] })).json();
+  assert.equal(camp.steps[0].channel, "call");
+  await post(`${P}/campaigns/${camp.id}/launch`);
+  const r = await json(`${P}/run`, { method: "POST" });
+  assert.ok(r.calls > 0);
+  const calls = await json(`${P}/calls`);
+  assert.ok(calls.length > 0 && calls.every((c) => c.store.phone));
+  assert.match(calls[0].body, /^Call Sample/);
+  assert.equal((await post(`${P}/calls/${calls[0].id}`, { outcome: "bogus" })).status, 422);
+  await post(`${P}/calls/${calls[0].id}`, { outcome: "meeting", note: "Thursday 4pm" });
+  const c = (await json(`${P}/contacts/${calls[0].store.id}`)).contact;
+  assert.equal(c.stage, "qualified"); assert.ok(c.deal_id);
+  assert.equal((await json(`${P}/calls`)).length, calls.length - 1);
+  await json(`${P}/sample`, { method: "DELETE" });
+  const fin = await json(`/api/workspaces/${ws.id}/finance`);
+  assert.ok("allowable_cac_sar" in (fin.snapshot || fin).unit);
 });

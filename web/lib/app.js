@@ -324,7 +324,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
   app.get("/api/workspaces/:ws/deals", (req, res) => {
     if (!ws(req, res)) return;
     const deals = store.listDeals(req.params.ws);
-    res.json({ deals: deals.map((d) => enrich(d)), summary: summary(deals, store.listWorkspaceActivities(req.params.ws)) });
+    res.json({ deals: deals.map((d) => enrich(d)), summary: summary(deals, store.listWorkspaceActivities(req.params.ws), Date.now(), outreach.settings(req.params.ws).targets.close_pct / 100) });
   });
   app.post("/api/workspaces/:ws/deals", (req, res) => {
     if (!ws(req, res)) return;

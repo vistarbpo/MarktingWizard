@@ -17,7 +17,7 @@ const within = (iso, days, now) => Date.parse(iso) >= now - days * 864e5;
 export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
   const id = ws.id;
   const deals = store.listDeals(id), dealActs = store.listWorkspaceActivities(id);
-  const sales = salesSummary(deals, dealActs, now);
+  const sales = salesSummary(deals, dealActs, now, ((crm?.db.settings[id]?.targets?.close_pct) ?? 20) / 100);
   const roles = store.listHrRoles(id), cands = store.listHrCandidates(id), hrActs = store.listWorkspaceHrActivities(id);
   const hr = hrSummary(roles, cands, hrActs, now);
   const tickets = store.listTickets(id), articles = store.listArticles(id);

@@ -36,7 +36,7 @@ function finRerender() {
     tile("Net burn", sarFmt(s.costs.net_burn_sar), "costs minus revenue, per month"),
     tile("Runway", r == null ? (s.costs.month_burn_sar ? "∞" : "–") : `${r} mo`, r == null ? (s.costs.month_burn_sar ? "revenue covers costs" : "log costs to see runway") : s.forecast.cash_zero_month ? `today's burn · with the plan, cash out ${s.forecast.cash_zero_month}` : "at current net burn", r != null && r < 3 ? "bad" : r != null && r < 6 ? "warn" : ""),
     tile("MRR", sarFmt(s.revenue.mrr_sar), s.revenue.source === "billed" ? `billed · ${s.revenue.recurring_count} subscription${s.revenue.recurring_count === 1 ? "" : "s"}${s.revenue.one_off_month_sar ? ` · +${sarShort(s.revenue.one_off_month_sar)} one-off this month` : ""}` : s.revenue.source === "estimated" ? `estimated from ${s.revenue.paying} paying stores in Sales · log income to make it real` : "log income to see revenue", s.revenue.source === "estimated" ? "warn" : ""),
-    tile("Gross margin", s.gross_margin == null ? "–" : s.gross_margin + "%", "after AI, APIs and hosting"),
+    tile("Gross margin", s.gross_margin == null ? "–" : s.gross_margin + "%", "after AI, APIs and hosting · early SaaS 50–70%, mature 80–85%"),
   ].join("");
   ({ overview: finOverview, income: finIncome, expenses: finExpenses, reports: finReports })[FIN.tab]();
 }
@@ -75,7 +75,7 @@ function finOverview() {
       <span class="eyebrow">Unit economics</span>
       <div class="f-unit">
         <div><span class="s-small muted">Revenue per store (ARPA)</span><b class="num">${sarFmt(s.unit.arpa_sar)}</b><span class="subtle s-small">per month</span></div>
-        <div><span class="s-small muted">Cost to win a store (CAC)</span><b class="num">${sarFmt(s.unit.cac_sar)}</b><span class="subtle s-small">${s.unit.new_paying_30d} new paying in 30 days</span></div>
+        <div><span class="s-small muted">Cost to win a store (CAC)</span><b class="num">${sarFmt(s.unit.cac_sar)}</b><span class="subtle s-small">${s.unit.new_paying_30d} new paying in 30 days${s.unit.allowable_cac_sar ? ` · allowed up to ${sarFmt(s.unit.allowable_cac_sar)} (50% of first-year revenue)` : ""}</span></div>
         <div><span class="s-small muted">Lifetime value (LTV)</span><b class="num">${sarFmt(s.unit.ltv_sar)}</b><span class="subtle s-small">at ${s.unit.churn_pct}% monthly churn (set in settings)</span></div>
         <div><span class="s-small muted">LTV : CAC</span><b class="num" style="color:${s.unit.ltv_cac == null ? "inherit" : s.unit.ltv_cac >= 3 ? "var(--good)" : "var(--bad)"}">${s.unit.ltv_cac == null ? "–" : s.unit.ltv_cac + " : 1"}</b><span class="subtle s-small">healthy is 3 : 1 or better</span></div>
         <div><span class="s-small muted">Payback</span><b class="num">${s.unit.payback_months == null ? "–" : s.unit.payback_months + " mo"}</b><span class="subtle s-small">${s.unit.payback_months == null && s.gross_margin != null && s.gross_margin <= 0 ? "can't pay back while gross margin is negative" : "target under 12"}</span></div>

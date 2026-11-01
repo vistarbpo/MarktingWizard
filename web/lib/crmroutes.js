@@ -2,7 +2,7 @@
 // (module "crm" in Teams & roles).
 import crypto from "node:crypto";
 import express from "express";
-import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
+import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, STEP_CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
 import { DEFAULT_SETTINGS } from "./outreach.js";
 import { zTest } from "./roas.js";
 
@@ -101,6 +101,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
       total: all.length, by_stage: counts(all, "stage"), categories: cats,
       reachable: { email: all.filter((c) => c.email && !c.email_opt_out && !c.bounced && c.stage !== "do_not_contact").length, whatsapp: all.filter((c) => c.phone && c.wa_opt_in && !c.wa_opt_out).length, phone: all.filter((c) => c.phone).length },
       week: { sent: outW.length, replies: inW.length, reply_rate: outW.length ? Math.round((new Set(inW.map((m) => m.contact_id)).size / new Set(outW.map((m) => m.contact_id)).size) * 1000) / 10 : null, unsubscribed: all.filter((c) => c.email_opt_out).length, bounced: all.filter((c) => c.bounced).length },
+      calls: msgs.filter((m) => m.channel === "call" && m.status === "todo").length,
       inbox: { open: msgs.filter((m) => m.direction === "in" && !m.handled).length, needs_person: msgs.filter((m) => m.direction === "in" && !m.handled && m.needs_person).length },
       campaigns: { running: crm.campaigns(ws).filter((c) => c.status === "running").length, total: crm.campaigns(ws).length },
       daily, mode: outreach.settings(ws).mode,
@@ -109,8 +110,9 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
         const contacted = all.filter((c) => c.last_contacted_at).length, replied = all.filter((c) => c.last_contacted_at && c.last_reply_at).length;
         const meetings = all.filter((c) => c.deal_id || ["qualified", "onboarding", "active", "churned"].includes(c.stage)).length;
         const customers = all.filter((c) => ["onboarding", "active", "churned"].includes(c.stage)).length;
-        const outreach = crm.campaigns(ws).filter((c) => c.type === "outreach");
-        return { contacted, replied, meetings, customers, bench: OUTBOUND_BENCH, steps: outreach.length ? Math.round(outreach.reduce((a, c) => a + c.steps.length, 0) / outreach.length) : 4 };
+        const outCamps = crm.campaigns(ws).filter((c) => c.type === "outreach");
+        const T = outreach.settings(ws).targets;
+        return { contacted, replied, meetings, customers, bench: { reply: T.reply_pct / 100, meeting: T.meeting_pct / 100, close: T.close_pct / 100 }, steps: outCamps.length ? Math.round(outCamps.reduce((a, c) => a + c.steps.length, 0) / outCamps.length) : 4 };
       })(),
       settings: outreach.settings(ws),
       owners: Object.entries(counts(all.filter((c) => c.owner_id), "owner_id")).map(([id, n]) => ({ id, name: userName(id) || "Unknown", stores: n })),
@@ -215,6 +217,11 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
       if (!t) return res.status(422).json({ detail: "Write the tag." });
       for (const c of list) { const has = c.tags.includes(t); if (b.action === "tag" && !has) { c.tags.push(t); n++; } if (b.action === "untag" && has) { c.tags = c.tags.filter((x) => x !== t); n++; } }
       crm.save();
+    } else if (b.action === "icp") {
+      // Focus list: the best-fit stores get the full cadence, including phone calls by a person.
+      const nTop = Math.max(1, Math.min(5000, Number(b.value) || outreach.settings(ws).targets.focus_list));
+      for (const c of [...list].sort((x, y) => y.score - x.score).filter((c) => c.stage !== "do_not_contact").slice(0, nTop)) if (!c.tags.includes("icp")) { c.tags.push("icp"); n++; }
+      crm.save();
     } else if (b.action === "enroll") {
       const camp = crm.campaign(ws, b.value);
       if (!camp || camp.type === "onboarding") return res.status(422).json({ detail: "Pick an outreach, nurture or newsletter campaign." });
@@ -298,7 +305,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (b.name !== undefined) o.name = String(b.name).trim().slice(0, 120) || "Untitled campaign";
     if (b.type !== undefined) o.type = CAMPAIGN_TYPES.some((t) => t.id === b.type) ? b.type : "outreach";
     if (b.filter !== undefined) o.filter = cleanFilter(b.filter);
-    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100) }));
+    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: STEP_CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100) }));
     if (b.daily_limit !== undefined) o.daily_limit = Math.max(1, Math.min(5000, Math.round(Number(b.daily_limit) || 150)));
     if (b.start_at !== undefined) o.start_at = b.start_at ? new Date(b.start_at).toISOString() : null;
     if (b.window !== undefined) o.window = { from: Math.max(0, Math.min(23, Number(b.window.from) || 9)), to: Math.max(1, Math.min(24, Number(b.window.to) || 21)), skip_friday: b.window.skip_friday !== false };
@@ -394,6 +401,35 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     } catch (e) { res.status(502).json({ detail: e?.message || "AI failed" }); }
   });
 
+  // ---- calls: phone-call steps waiting for a person
+  app.get(`${P}/calls`, (req, res) => {
+    if (!W(req, res)) return;
+    const mine = req.query.mine === "1" ? req.user?.id : null;
+    const rows = crm.db.messages.filter((m) => m.workspace_id === req.params.ws && m.channel === "call" && m.status === "todo")
+      .map((m) => { const c = crm.get(req.params.ws, m.contact_id); return c && { ...m, store: { id: c.id, store_name: c.store_name, phone: c.phone, category: c.category, city: c.city, products: c.products, stage: c.stage, owner_id: c.owner_id, owner_name: userName(c.owner_id), last_reply_at: c.last_reply_at } }; })
+      .filter((m) => m && (!mine || m.store.owner_id === mine));
+    res.json(rows);
+  });
+  app.post(`${P}/calls/:id`, (req, res) => {
+    if (!W(req, res)) return;
+    const m = crm.message(req.params.ws, req.params.id), outcome = String(req.body?.outcome || "");
+    if (!m || m.channel !== "call") return res.status(404).json({ detail: "Call not found" });
+    const OUT = { meeting: "Booked a meeting", reached: "Talked, no meeting yet", no_answer: "No answer", not_interested: "Not interested", wrong_number: "Wrong number" };
+    if (!OUT[outcome]) return res.status(422).json({ detail: "Pick the outcome." });
+    const c = crm.get(req.params.ws, m.contact_id);
+    Object.assign(m, { status: "done", outcome, by: by(req), done_at: crm.now() });
+    crm.addNote(req.params.ws, c.id, `Call: ${OUT[outcome]}${req.body?.note ? " — " + String(req.body.note).slice(0, 1000) : ""}`, by(req));
+    crm.update(req.params.ws, c.id, { last_contacted_at: crm.now(), ...(outcome === "wrong_number" ? { phone: "" } : {}) });
+    if (outcome === "meeting") {
+      if (["new", "contacted", "engaged", "not_now"].includes(c.stage)) outreach.setStage(c, "qualified", by(req));
+      if (!c.deal_id) { const d = store.addDeal(req.params.ws, { name: c.store_name, category: c.category, city: "Other", platform: ["Salla", "Zid", "Shopify", "WooCommerce"].includes(c.platform) ? c.platform : "Other", skus: c.products || 0, contact_phone: c.phone ? "+" + c.phone : "", contact_email: c.email || "", notes: "Meeting booked by phone from the Store CRM.", stage: "demo" }); crm.update(req.params.ws, c.id, { deal_id: d.id }); }
+      crm.stopEnrollments(c.id, "replied", { types: ["outreach", "nurture"] });
+    } else if (outcome === "not_interested") outreach.setStage(c, "not_now", by(req));
+    else if (outcome === "reached" && ["new", "contacted"].includes(c.stage)) outreach.setStage(c, "engaged", by(req));
+    crm.save();
+    res.json(m);
+  });
+
   // ---- inbox: replies and new messages from stores
   app.get(`${P}/inbox`, (req, res) => {
     if (!W(req, res)) return;
@@ -421,6 +457,11 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (b.mode !== undefined) o.mode = b.mode === "live" ? "live" : "test";
     for (const k of ["email_daily_cap", "wa_daily_cap", "per_tick"]) if (b[k] !== undefined) o[k] = Math.max(0, Math.min(10000, Math.round(Number(b[k]) || 0)));
     for (const k of ["auto_reply", "auto_deal"]) if (b[k] !== undefined) o[k] = !!b[k];
+    if (b.targets && typeof b.targets === "object") {
+      const t = { ...cur.targets }, lim = { reply_pct: [0.1, 50], meeting_pct: [1, 100], close_pct: [1, 100], focus_list: [10, 5000] };
+      for (const [k, [lo, hi]] of Object.entries(lim)) if (b.targets[k] !== undefined) { const v = Number(b.targets[k]); if (!(v >= lo && v <= hi)) return res.status(422).json({ detail: `${k.replace("_pct", "")} target must be between ${lo} and ${hi}` }); t[k] = v; }
+      o.targets = t;
+    }
     if (b.sender_name !== undefined) o.sender_name = String(b.sender_name).trim().slice(0, 60);
     crm.db.settings[req.params.ws] = Object.fromEntries(Object.entries(o).filter(([k]) => k in DEFAULT_SETTINGS)); crm.save();
     res.json(outreach.settings(req.params.ws));

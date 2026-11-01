@@ -57,10 +57,13 @@ export function makeSenders(cfg) {
   };
 }
 
-export const DEFAULT_SETTINGS = { mode: "test", email_daily_cap: 200, wa_daily_cap: 250, per_tick: 25, auto_reply: false, sender_name: "", auto_deal: true };
+// DPA AD's own funnel targets (editable in Store CRM → Settings). Starting points: cold email ~2% replies,
+// ~10% of replies become a meeting, 20%+ of meetings close. Focus list: the best-fit stores worked by hand.
+export const DEFAULT_TARGETS = { reply_pct: 2, meeting_pct: 10, close_pct: 20, focus_list: 300 };
+export const DEFAULT_SETTINGS = { mode: "test", email_daily_cap: 150, wa_daily_cap: 250, per_tick: 25, auto_reply: false, sender_name: "", auto_deal: true, targets: DEFAULT_TARGETS };
 
 export function createOutreach({ store, crm, provider, cfg = channelConfig(), senders = makeSenders(cfg), log = console }) {
-  const settings = (wsId) => ({ ...DEFAULT_SETTINGS, ...(crm.db.settings[wsId] || {}) });
+  const settings = (wsId) => { const s = crm.db.settings[wsId] || {}; return { ...DEFAULT_SETTINGS, ...s, targets: { ...DEFAULT_TARGETS, ...(s.targets || {}) } }; };
   const ws = (wsId) => store.getWorkspace(wsId);
   const lastIn = (contactId, channel) => { const ms = crm.messagesFor(contactId).filter((m) => m.direction === "in" && m.channel === channel); return ms.length ? Date.parse(ms[ms.length - 1].at) : 0; };
   const sentToday = (wsId, channel, day) => crm.db.messages.filter((m) => m.workspace_id === wsId && m.direction === "out" && m.channel === channel && ["sent", "test"].includes(m.status) && riyadhDay(new Date(m.at)) === day).length;
@@ -127,6 +130,17 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
         if (c.stage === "do_not_contact") { e.status = "stopped"; continue; }
         const st = camp.steps[e.step];
         if (!st) { e.status = "done"; continue; }
+        if (st.channel === "call") {
+          // A person makes this call: queue it with the script; it doesn't use sending caps.
+          const vars = { sender_name: s.sender_name || store.getWorkspace(camp.workspace_id)?.brief?.company_name || "DPA AD" };
+          crm.addMessage(c.phone
+            ? { workspace_id: camp.workspace_id, contact_id: c.id, campaign_id: camp.id, step: e.step, channel: "call", direction: "out", subject: "", body: renderTemplate(st.body, c, vars), status: "todo", by: "ai" }
+            : { workspace_id: camp.workspace_id, contact_id: c.id, campaign_id: camp.id, step: e.step, channel: "call", direction: "out", subject: "", body: "", status: "skipped", error: "No phone number", by: "ai" });
+          out.calls = (out.calls || 0) + 1;
+          e.step++;
+          if (e.step >= camp.steps.length) { e.status = "done"; e.next_at = null; } else e.next_at = new Date(now.getTime() + (camp.steps[e.step].delay_days || 0) * 864e5).toISOString();
+          continue;
+        }
         if (budget[key(st.channel)] <= 0) { out.waiting++; continue; }
         const m = await sendOne(camp.workspace_id, c, { ...st, campaign_id: camp.id, step: e.step });
         if (m.status === "skipped") out.skipped++; else { out.sent++; campLeft--; tickLeft--; budget[key(st.channel)]--; }

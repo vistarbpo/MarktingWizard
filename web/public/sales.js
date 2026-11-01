@@ -52,7 +52,7 @@ function salesRenderKpis() {
     tile("Open deals", s.open_count, `${usd(s.open_value)}/mo if all close`),
     tile("Beta and beyond", s.beta_plus, "stores in beta, trial or paying"),
     tile("Handled by AI", s.ai_share + "%", "of open deals' next steps"),
-    tile("Close rate", s.close.rate == null ? "–" : Math.round(s.close.rate * 100) + "%", s.close.verdict === "too early" ? `${s.close.closed} of 10 closed opportunities needed to judge` : `${s.close.verdict} · target over 20%${s.close.lost_to_status_quo ? ` · ${s.close.lost_to_status_quo} lost to status quo` : ""}`, s.close.verdict === "broken" ? "bad" : s.close.verdict === "borderline" ? "warn" : s.close.verdict === "healthy" ? "good" : ""),
+    tile("Close rate", s.close.rate == null ? "–" : Math.round(s.close.rate * 100) + "%", s.close.verdict === "too early" ? `${s.close.closed} of 10 closed opportunities needed to judge` : `${s.close.verdict} · target ${Math.round((s.close.target || 0.2) * 100)}%+${s.close.lost_to_status_quo ? ` · ${s.close.lost_to_status_quo} lost to status quo` : ""}`, s.close.verdict === "broken" ? "bad" : s.close.verdict === "borderline" ? "warn" : s.close.verdict === "healthy" ? "good" : ""),
     tile("Needs you", s.needs_you.length, "only human-required steps", s.needs_you.length ? "warn" : ""),
   ].join("");
 }

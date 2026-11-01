@@ -36,6 +36,8 @@ export const CAMPAIGN_TYPES = [
   { id: "nurture", name: "Nurture", hint: "Slow drip for 'Not now' stores: tips, case studies, offers." },
 ];
 export const CHANNELS = ["email", "whatsapp"];
+// Campaign steps can also be a phone call: a task with a script for the store's owner (a person calls).
+export const STEP_CHANNELS = [...CHANNELS, "call"];
 export const INTENTS = ["interested", "question", "not_now", "not_interested", "unsubscribe", "wrong_person", "out_of_office", "other"];
 
 export const SALLA_CATEGORIES = ["Fashion & abayas", "Perfumes & oud", "Beauty & cosmetics", "Electronics & accessories", "Home & furniture",
@@ -159,9 +161,8 @@ export function parseStores(text, { platform = "Salla", source = "import" } = {}
 // Meta Ad Library or Snap ads) and they rise to the top of every list and segment.
 export const INTENT_TAGS = { "running-ads": 15, "hiring-marketer": 10, "new-collection": 8, "seasonal": 5, "visited-site": 12, "inbound": 20, "referral": 15 };
 
-// Masterclass benchmarks for cold outbound (Arjun): ~5% of contacted stores reply, ~10% of replies become a
-// meeting, and a healthy sales process closes 20%+ of opportunities.
-export const OUTBOUND_BENCH = { reply: 0.05, meeting: 0.1, close: 0.2 };
+// Default funnel targets (see DEFAULT_TARGETS in outreach.js for the editable copy).
+export const OUTBOUND_BENCH = { reply: 0.02, meeting: 0.1, close: 0.2 };
 
 export function scoreContact(c) {
   let s = 0;
@@ -226,6 +227,24 @@ export const STARTER_CAMPAIGNS = [
         body: "السلام عليكم، معك {{sender_name}} من DPA AD. جهزنا فكرة إعلانات مصممة لمنتجات {{store_name}} لسناب وتيك توك. تحب أرسل لك ٣ نماذج مجانية؟" },
       { channel: "email", delay_days: 6, subject: "آخر رسالة مني",
         body: "{{owner_name}}، ما أبي أزعجكم. إذا التوقيت مو مناسب الحين، ردّوا بـ \"لاحقاً\" وأرجع لكم بعد شهرين.\n\nوإذا تبون تشوفون كيف تطلع منتجاتكم كإعلانات مصممة، الرابط: https://dpa.ad\n\n{{sender_name}}" },
+    ],
+  },
+  {
+    name: "Focus list (icp) · email + WhatsApp + call", type: "outreach", stop_on_reply: true,
+    filter: { tags: ["icp"], stage: ["new", "contacted"] },
+    steps: [
+      { channel: "email", delay_days: 0, subject: "فكرة لإعلانات {{store_name}} في سناب",
+        body: "السلام عليكم {{owner_name}}،\n\nشفت متجر {{store_name}}. عندكم {{products}} منتج، وأغلب إعلانات الكتالوج تطلع صورة منتج عادية.\n\nDPA AD يحوّل منتجاتكم لإعلانات مصممة بالعربي، والسعر يتحدّث تلقائياً.\n\nأقدر أرسل لكم ٣ نماذج مجانية من منتجاتكم؟\n\n{{sender_name}}" },
+      { channel: "email", delay_days: 2, subject: "نماذج {{store_name}}",
+        body: "{{owner_name}}، أتابع رسالتي. متاجر {{category_ar}} تستفيد أكثر لما تجرّب أكثر من تصميم لكل منتج وتعرف وش يبيع.\n\nتبون فيديو دقيقة واحدة يوضح الفكرة على منتجاتكم؟\n\n{{sender_name}}" },
+      { channel: "whatsapp", delay_days: 1, subject: "", wa_template: "dpa_intro_ar",
+        body: "السلام عليكم، معك {{sender_name}} من DPA AD. جهزنا فكرة إعلانات مصممة لمنتجات {{store_name}}. تحب أرسل لك ٣ نماذج مجانية؟" },
+      { channel: "call", delay_days: 2, subject: "",
+        body: "١. الاستئذان: \"السلام عليكم، معك {{sender_name}} من DPA AD. عندك ١٥ ثانية أشرح ليش اتصلت؟\"\n٢. الفكرة (١٥ ثانية): \"نحوّل منتجات {{store_name}} لإعلانات مصممة لسناب وتيك توك، بالعربي والسعر يتحدّث لحاله. المتاجر تختبر أكثر من تصميم لكل منتج وتعرف وش يبيع.\"\n٣. طلب خفيف: \"أرسل لك ٣ نماذج مجانية من منتجاتكم على الواتساب؟\"\n\nإذا سأل عن السعر: يبدأ من ١٩٩ دولار شهرياً حسب عدد المنتجات، والنماذج مجانية.\nإذا قال مشغول: \"متى أنسب وقت أرجع لك؟\" وسجّل الموعد." },
+      { channel: "email", delay_days: 2, subject: "دقيقة واحدة: إعلانات {{store_name}}",
+        body: "{{owner_name}}، جهزت لكم مثال سريع لكيف تطلع منتجات {{category_ar}} كإعلانات مصممة: https://dpa.ad\n\nإذا عجبكم، ردّوا بـ \"نعم\" وأجهز نماذج من منتجاتكم أنتم.\n\n{{sender_name}}" },
+      { channel: "call", delay_days: 2, subject: "",
+        body: "مكالمة أخيرة قصيرة: \"معك {{sender_name}} من DPA AD، أرسلت لكم كم رسالة عن إعلانات مصممة لمنتجات {{store_name}}. أحب أعرف: هل الموضوع يهمكم الحين أو أرجع لكم بعد شهرين؟\"\nسجّل النتيجة: موعد / ليس الآن / غير مهتم." },
     ],
   },
   {

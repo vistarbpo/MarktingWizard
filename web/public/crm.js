@@ -10,7 +10,7 @@ const crmEdit = () => levelFor("crm") === "edit";
 const stageName = (id) => CRM.meta.stages.find((s) => s.id === id)?.name || id;
 const stageBadge = (id) => `<span class="badge ${CRM_STAGE_TONE[id] || ""}">${esc(stageName(id))}</span>`;
 const nf = (n) => (n == null ? "–" : Number(n).toLocaleString("en-US"));
-const chIcon = (c) => (c === "whatsapp" ? "WhatsApp" : "Email");
+const chIcon = (c) => (c === "whatsapp" ? "WhatsApp" : c === "call" ? "Phone call" : "Email");
 
 ROUTES.crm = { title: "Store CRM", crumb: "Store CRM", render: renderCrm };
 
@@ -18,7 +18,7 @@ async function renderCrm(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   CRM.meta = await api(`${crmP()}/meta`);
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Store CRM views">
-    ${[["overview", "Overview"], ["stores", "Stores"], ["pipeline", "Pipeline"], ["campaigns", "Campaigns"], ["inbox", "Inbox"], ["settings", "Channels"]].map(([k, l]) => `<button role="tab" data-ctab="${k}" aria-selected="${CRM.tab === k}">${l}</button>`).join("")}</div>
+    ${[["overview", "Overview"], ["stores", "Stores"], ["pipeline", "Pipeline"], ["campaigns", "Campaigns"], ["inbox", "Inbox"], ["settings", "Settings"]].map(([k, l]) => `<button role="tab" data-ctab="${k}" aria-selected="${CRM.tab === k}">${l}</button>`).join("")}</div>
     ${crmEdit() ? `<button class="btn btn-primary" data-caction="import">Import stores</button>` : ""}`;
   view.innerHTML = `<div id="cBody"></div>`;
   crmRerender();
@@ -33,7 +33,7 @@ async function crmRerender() {
     if (CRM.tab === "stores") await crmStores(body);
     if (CRM.tab === "pipeline") await crmPipeline(body);
     if (CRM.tab === "campaigns") CRM.editId ? await crmEditor(body) : body.innerHTML = crmCampaigns(await api(`${crmP()}/campaigns`));
-    if (CRM.tab === "inbox") body.innerHTML = crmInbox(await api(`${crmP()}/inbox${CRM.inboxAll ? "?status=all" : ""}`));
+    if (CRM.tab === "inbox") { const [calls, inbox] = await Promise.all([api(`${crmP()}/calls${CRM.myCalls ? "?mine=1" : ""}`), api(`${crmP()}/inbox${CRM.inboxAll ? "?status=all" : ""}`)]); body.innerHTML = crmCalls(calls) + crmInbox(inbox); }
     if (CRM.tab === "settings") body.innerHTML = crmSettings();
   } catch (e) { body.innerHTML = `<div class="card empty"><p>${esc(e.message)}</p></div>`; }
 }
@@ -66,6 +66,7 @@ function crmOverview(o) {
     ${tile("WhatsApp opt-in", nf(o.reachable.whatsapp), `${nf(o.reachable.phone)} have a phone`, "", "stores")}
     ${tile("Sent this week", nf(o.week.sent), `${o.campaigns.running} campaigns running`, "", "campaigns")}
     ${tile("Reply rate", o.week.reply_rate == null ? "–" : o.week.reply_rate + "%", `${nf(o.week.replies)} replies this week`, "", "inbox")}
+    ${o.calls ? tile("Calls to make", nf(o.calls), "phone steps waiting for a person", "warn", "inbox") : ""}
     ${tile("Inbox", nf(o.inbox.open), `${nf(o.inbox.needs_person)} need a person`, o.inbox.needs_person ? "warn" : "", "inbox")}
     ${tile("Customers", nf(customers), `${nf(st.onboarding || 0)} onboarding`, "good", "pipeline")}
   </section>
@@ -84,7 +85,7 @@ function crmOverview(o) {
   ${o.owners.length ? `<div class="card" style="margin-top:20px"><div class="card-head"><h2>Owners</h2></div><div class="card-body row gap-8" style="padding:14px 18px;flex-wrap:wrap">${o.owners.map((x) => `<span class="badge">${esc(x.name)} · ${nf(x.stores)}</span>`).join("")}</div></div>` : ""}`;
 }
 
-/* ------------------------------------------------ Work backwards (masterclass: SDR math) */
+/* ------------------------------------------------ Work backwards from the goal (DPA AD funnel targets) */
 function crmPlannerTarget() { try { return Number(localStorage.getItem("crm.target")) || 20; } catch { return 20; } }
 function crmPlanner(o) {
   const r = o.rates, B = r.bench, target = crmPlannerTarget();
@@ -95,14 +96,14 @@ function crmPlanner(o) {
   const perDay = Math.ceil((stores * r.steps) / 22); // ~22 working days a month
   const cap = (o.settings?.email_daily_cap || 0) + (o.settings?.wa_daily_cap || 0);
   const pct = (x) => (Math.round(x * 1000) / 10) + "%";
-  const cmp = (x, b) => (own ? (x >= b ? `<span style="color:var(--good)">above</span>` : `<span style="color:var(--bad)">below</span>`) + ` the ${pct(b)} benchmark` : "benchmark");
-  return `<div class="card" style="margin-top:20px"><div class="card-head"><div><h2>Work backwards from your goal</h2><p class="subtle" style="font-size:13px">${own ? "Using your own results so far." : `Using masterclass benchmarks until ${nf(200)} stores have been contacted (now ${nf(r.contacted)}).`} Change one thing at a time to move a rate: test it with an A/B campaign.</p></div>
+  const cmp = (x, b) => (own ? (x >= b ? `<span style="color:var(--good)">above</span>` : `<span style="color:var(--bad)">below</span>`) + ` our ${pct(b)} target` : "our target");
+  return `<div class="card" style="margin-top:20px"><div class="card-head"><div><h2>Work backwards from your goal</h2><p class="subtle" style="font-size:13px">${own ? "Using your own results so far." : `Using our targets until ${nf(200)} stores have been contacted (now ${nf(r.contacted)}); then your real rates. Set targets in Settings.`} Change one thing at a time to move a rate: test it with an A/B campaign.</p></div>
     <label class="row gap-8" style="font-size:13px">New customers / month <input class="input input-sm" type="number" min="1" id="cTarget" value="${target}" style="width:80px"></label></div>
     <div class="c-plan">
       <div><span class="eyebrow">Stores to contact / month</span><b class="num">${nf(stores)}</b><span class="subtle">${nf(perDay)} messages a working day (${r.steps} steps each)</span></div>
       <div><span class="eyebrow">Reply rate</span><b class="num">${pct(reply)}</b><span class="subtle">${cmp(reply, B.reply)} · ${nf(replies)} replies needed</span></div>
       <div><span class="eyebrow">Reply → meeting</span><b class="num">${pct(meeting)}</b><span class="subtle">${cmp(meeting, B.meeting)} · ${nf(meetings)} meetings needed</span></div>
-      <div><span class="eyebrow">Meeting → customer</span><b class="num">${pct(close)}</b><span class="subtle">${cmp(close, B.close)} · below 18% = fix the demo first</span></div>
+      <div><span class="eyebrow">Meeting → customer</span><b class="num">${pct(close)}</b><span class="subtle">${cmp(close, B.close)} · under target = fix the demo and offer first</span></div>
       <div class="${perDay > cap ? "warn" : ""}"><span class="eyebrow">Sending capacity</span><b class="num">${nf(cap)}/day</b><span class="subtle">${perDay > cap ? `${Math.ceil(perDay / Math.max(cap, 1))}× short: warm up more mailboxes or lower the goal` : "enough for this goal"}</span></div>
     </div></div>`;
 }
@@ -150,7 +151,7 @@ async function crmStores(body) {
     <div class="row gap-8"><b class="num">${nf(L.total)}</b><span class="muted">of ${nf(L.all)} stores</span>
       <select class="input input-sm" id="cSort" aria-label="Sort">${[["score", "Best fit first"], ["products", "Most products"], ["recent", "Recent activity"], ["name", "Name"]].map(([v, l]) => `<option value="${v}" ${CRM.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       ${Object.keys(CRM.f).length ? `<button class="btn btn-sm btn-ghost" data-caction="clear-f">Clear filters</button>` : ""}</div>
-    <div class="row gap-8">${edit ? `<button class="btn btn-sm" data-caction="add-store">Add store</button><button class="btn btn-sm" data-caction="seg-camp">Campaign for these ${nf(L.total)}</button>` : ""}<a class="btn btn-sm btn-ghost" href="${crmP()}/export?f=${encodeURIComponent(JSON.stringify(CRM.f))}">Export CSV</a></div>
+    <div class="row gap-8">${edit ? `<button class="btn btn-sm" data-caction="add-store">Add store</button><button class="btn btn-sm" data-caction="icp" title="Tag the best-fit stores in this view as your focus list">Build ICP list</button><button class="btn btn-sm" data-caction="seg-camp">Campaign for these ${nf(L.total)}</button>` : ""}<a class="btn btn-sm btn-ghost" href="${crmP()}/export?f=${encodeURIComponent(JSON.stringify(CRM.f))}">Export CSV</a></div>
   </div>
   ${edit && nSel ? `<div class="card c-bulk"><b>${nf(nSel)} selected</b>${!CRM.allMatching && CRM.sel.size === L.rows.length && L.total > L.rows.length ? `<button class="btn btn-sm btn-ghost" data-caction="sel-all">Select all ${nf(L.total)} matching</button>` : ""}
     <select class="input input-sm" id="cBulkAct"><option value="">Action…</option><option value="stage">Move to stage</option><option value="owner">Assign owner (round-robin)</option><option value="tag">Add tag</option><option value="untag">Remove tag</option><option value="enroll">Add to campaign</option><option value="delete">Delete</option></select>
@@ -260,12 +261,13 @@ async function crmEditor(body) {
 }
 function crmStepHtml(s, i) {
   return `<div class="c-step" data-step="${i}"><div class="row gap-8" style="flex-wrap:wrap"><b>Step ${i + 1}</b>
-    <select class="input input-sm" data-s="channel" style="width:auto"><option value="email" ${s.channel === "email" ? "selected" : ""}>Email</option><option value="whatsapp" ${s.channel === "whatsapp" ? "selected" : ""}>WhatsApp</option></select>
+    <select class="input input-sm" data-s="channel" style="width:auto"><option value="email" ${s.channel === "email" ? "selected" : ""}>Email</option><option value="whatsapp" ${s.channel === "whatsapp" ? "selected" : ""}>WhatsApp</option><option value="call" ${s.channel === "call" ? "selected" : ""}>Phone call (a person)</option></select>
     <span class="subtle">${i ? "wait" : "send after"}</span><input class="input input-sm" type="number" min="0" data-s="delay_days" value="${s.delay_days}" style="width:64px"><span class="subtle">days</span>
     ${s.channel === "whatsapp" ? `<input class="input input-sm" data-s="wa_template" placeholder="Approved template name" value="${esc(s.wa_template || "")}" style="width:200px" title="First WhatsApp to a store must be an approved template (Meta). The text below is used inside a 24h chat window.">` : ""}
     <button class="btn btn-sm btn-ghost" data-caction="del-step" data-i="${i}" style="margin-left:auto">Remove</button></div>
     ${s.channel === "email" ? `<input class="input" data-s="subject" placeholder="Subject" value="${esc(s.subject || "")}" dir="auto">` : ""}
-    <textarea class="input" data-s="body" rows="6" dir="auto" placeholder="Message. Placeholders: {{store_name}} {{owner_name}} {{category_ar}} {{category}} {{city}} {{products}} {{sender_name}}">${esc(s.body || "")}</textarea></div>`;
+    ${s.channel === "call" ? `<span class="subtle" style="font-size:12px">Creates a call task with this script for the store's owner (Store CRM → Inbox → Calls). Only stores with a phone number.</span>` : ""}
+    <textarea class="input" data-s="body" rows="6" dir="auto" placeholder="${s.channel === "call" ? "Call script: permission opener, 15-second hook, soft ask" : "Message."} Placeholders: {{store_name}} {{owner_name}} {{category_ar}} {{category}} {{city}} {{products}} {{sender_name}}">${esc(s.body || "")}</textarea></div>`;
 }
 function crmReadSteps() {
   return [...document.querySelectorAll("#ceSteps .c-step")].map((el) => {
@@ -287,6 +289,20 @@ async function crmPreview() {
     const p = await api(`${crmP()}/campaigns/${CRM.editId}/preview`);
     el.innerHTML = `<p class="subtle" style="font-size:12px;margin-bottom:10px">As <b dir="auto">${esc(p.store)}</b> would see it</p>` + p.steps.map((s, i) => `<div class="c-msg ${s.channel}"><span class="eyebrow">Step ${i + 1} · ${chIcon(s.channel)}${s.delay_days ? ` · +${s.delay_days}d` : ""}</span>${s.subject ? `<b dir="auto">${esc(s.subject)}</b>` : ""}<div dir="auto" style="white-space:pre-wrap">${esc(s.body)}</div></div>`).join("");
   } catch (e) { el.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+
+/* ------------------------------------------------ Calls to make */
+function crmCalls(rows) {
+  if (!rows.length) return "";
+  const edit = crmEdit();
+  return `<div class="card" style="margin-bottom:20px"><div class="card-head"><div><h2>Calls to make · ${nf(rows.length)}</h2><p class="subtle" style="font-size:13px">Phone steps from campaigns. Call, then log what happened: a booked meeting creates the deal in Sales.</p></div>
+    ${S.me && S.me.user.id !== "owner" ? `<label class="chip"><input type="checkbox" data-caction="mycalls" ${CRM.myCalls ? "checked" : ""}> Only mine</label>` : ""}</div>
+    <div class="stack" style="padding:14px 20px">${rows.slice(0, 50).map((m) => `<div class="c-call"><div class="row gap-8" style="justify-content:space-between;flex-wrap:wrap">
+      <div><button class="linklike" data-copen="${m.store.id}"><b dir="auto">${esc(m.store.store_name)}</b></button> <span class="subtle" style="font-size:12px">· ${esc(m.store.category)} · ${nf(m.store.products)} products${m.store.owner_name ? " · " + esc(m.store.owner_name) : ""}</span></div>
+      <a class="btn btn-sm" href="tel:+${esc(m.store.phone)}">Call +${esc(m.store.phone)}</a></div>
+      <details><summary class="subtle" style="font-size:12px;cursor:pointer">Script</summary><div dir="auto" style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(m.body)}</div></details>
+      ${edit ? `<div class="row gap-8" style="flex-wrap:wrap">${[["meeting", "Meeting booked", "btn-primary"], ["reached", "Talked"], ["no_answer", "No answer"], ["not_interested", "Not interested"], ["wrong_number", "Wrong number"]].map(([o, l, cls]) => `<button class="btn btn-sm ${cls || ""}" data-caction="call-done" data-id="${m.id}" data-o="${o}">${l}</button>`).join("")}</div>` : ""}</div>`).join("")}
+    ${rows.length > 50 ? `<p class="subtle">+ ${nf(rows.length - 50)} more</p>` : ""}</div></div>`;
 }
 
 /* ------------------------------------------------ Inbox */
@@ -318,6 +334,12 @@ function crmSettings() {
       <div class="field"><label for="csTick">Max sends per minute</label><input class="input" type="number" id="csTick" value="${s.per_tick}" min="1"></div>
       <div class="field"><label for="csEmailCap">Email per day (all campaigns)</label><input class="input" type="number" id="csEmailCap" value="${s.email_daily_cap}"><span class="hint">Hostinger mailboxes allow a few hundred to ~3,000/day by plan. Start low.</span></div>
       <div class="field"><label for="csWaCap">WhatsApp per day</label><input class="input" type="number" id="csWaCap" value="${s.wa_daily_cap}"><span class="hint">New WhatsApp numbers start at 250 business-initiated chats/day.</span></div></div>
+    <div class="field"><label>Our funnel targets</label><div class="row gap-8" style="flex-wrap:wrap;font-size:13px">
+      Reply <input class="input input-sm" type="number" step="0.1" id="tReply" value="${s.targets.reply_pct}" style="width:70px">%
+      Reply → meeting <input class="input input-sm" type="number" id="tMeet" value="${s.targets.meeting_pct}" style="width:70px">%
+      Meeting → customer <input class="input input-sm" type="number" id="tClose" value="${s.targets.close_pct}" style="width:70px">%
+      Focus list <input class="input input-sm" type="number" id="tFocus" value="${s.targets.focus_list}" style="width:80px"> stores</div>
+      <span class="hint">Used by the planner until there's real data, and by the Sales close-rate check.</span></div>
     <label class="row gap-8"><input type="checkbox" id="csAuto" ${s.auto_reply ? "checked" : ""}> AI answers simple questions by itself (only when it's confident and no person is needed)</label>
     <label class="row gap-8"><input type="checkbox" id="csDeal" ${s.auto_deal ? "checked" : ""}> Create a deal in Sales when a store says it's interested</label>
     ${edit ? `<div class="row gap-8"><button class="btn btn-primary" data-caction="save-settings">Save</button><button class="btn" data-caction="run-now">Send due messages now</button></div>` : ""}
@@ -458,6 +480,7 @@ document.addEventListener("change", async (e) => {
   if (t.dataset.csel) { t.checked ? CRM.sel.add(t.dataset.csel) : CRM.sel.delete(t.dataset.csel); CRM.allMatching = false; return crmRerender(); }
   if (t.id === "cSelPage") { CRM.list.rows.forEach((r) => (t.checked ? CRM.sel.add(r.id) : CRM.sel.delete(r.id))); CRM.allMatching = false; return crmRerender(); }
   if (t.closest?.(".c-step") && t.dataset.s === "channel") { const steps = crmReadSteps(); $("#ceSteps").innerHTML = steps.map((s, i) => crmStepHtml(s, i)).join(""); }
+  if (t.dataset.caction === "mycalls") { CRM.myCalls = t.checked; return crmRerender(); }
   if (t.dataset.caction === "mine") { CRM.mine = t.checked; return crmRerender(); }
 });
 document.addEventListener("click", async (e) => {
@@ -551,12 +574,18 @@ document.addEventListener("click", async (e) => {
         toast(CRM.meta.settings.mode === "live" ? "Reply sent" : "Reply logged (test mode)"); return crmRerender();
       }
       case "done": await api(`${crmP()}/inbox/${id}/done`, { method: "POST" }); return crmRerender();
+      case "call-done": { const note = b.dataset.o === "no_answer" ? "" : prompt("Anything to note? (optional)") || ""; await api(`${crmP()}/calls/${id}`, { method: "POST", body: JSON.stringify({ outcome: b.dataset.o, note }) }); toast(b.dataset.o === "meeting" ? "Meeting booked: deal added to Sales" : "Logged"); return crmRerender(); }
+      case "icp": {
+        const n = Number(prompt(`Tag the best-fit stores in this view as "icp" (your focus list: they get the full cadence including calls). How many?`, String(CRM.meta.settings.targets?.focus_list || 300))); if (!n) return;
+        const r = await api(`${crmP()}/bulk`, { method: "POST", body: JSON.stringify({ filter: CRM.f, action: "icp", value: n }) });
+        toast(`${nf(r.affected)} stores tagged "icp". Filter by Tag: icp to work the list.`); return crmRerender();
+      }
       case "mode": {
         if (b.dataset.v === "live" && !confirm("Switch to Live? Running campaigns will start really sending emails and WhatsApp messages within the next minute.")) return;
         CRM.meta.settings = await api(`${crmP()}/settings`, { method: "PUT", body: JSON.stringify({ mode: b.dataset.v }) }); toast(b.dataset.v === "live" ? "Live" : "Test mode"); return crmRerender();
       }
       case "save-settings":
-        CRM.meta.settings = await api(`${crmP()}/settings`, { method: "PUT", body: JSON.stringify({ sender_name: $("#csSender").value, per_tick: $("#csTick").value, email_daily_cap: $("#csEmailCap").value, wa_daily_cap: $("#csWaCap").value, auto_reply: $("#csAuto").checked, auto_deal: $("#csDeal").checked }) });
+        CRM.meta.settings = await api(`${crmP()}/settings`, { method: "PUT", body: JSON.stringify({ sender_name: $("#csSender").value, per_tick: $("#csTick").value, email_daily_cap: $("#csEmailCap").value, wa_daily_cap: $("#csWaCap").value, auto_reply: $("#csAuto").checked, auto_deal: $("#csDeal").checked, targets: { reply_pct: $("#tReply").value, meeting_pct: $("#tMeet").value, close_pct: $("#tClose").value, focus_list: $("#tFocus").value } }) });
         return toast("Saved");
       case "run-now": { const r = await api(`${crmP()}/run`, { method: "POST" }); return toast(`${nf(r.sent)} sent, ${nf(r.skipped)} skipped, ${nf(r.waiting)} waiting for tomorrow's cap`); }
       // drawer

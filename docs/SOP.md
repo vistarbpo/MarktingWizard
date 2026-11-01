@@ -21,7 +21,7 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 7 | Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat. | Founder | AI Support |
 | 8 | Product: load the starter roadmap and confirm what's Now, Next and Later. | Founder | Product |
 | 9 | Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams. | Founder | Teams & roles |
-| 10 | Store CRM: import the Salla store list, connect the sending mailbox (SPF/DKIM/DMARC) and WhatsApp, run the starter campaigns in Test mode for a week, then switch to Live. | Head of Growth | Store CRM |
+| 10 | Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first. | Head of Growth | Store CRM |
 | 11 | Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd "yes". Losing to "we'll keep doing it by hand" is more common than losing to a competitor: log that as the lost reason. | Founder | Sales pipeline |
 | 12 | Make DPA AD easy for AI agents to evaluate: public help center, clear pricing page and API docs (buyers increasingly send an agent to check first). | Founder | AI Support |
 | 13 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
@@ -87,4 +87,5 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 6 | Finance → Reports & VAT: check the quarter's VAT position; if registered, a person files and pays the ZATCA return before the due date. | Founder | Finance |
 | 7 | Product: re-score the roadmap with the quarter's feedback, decide the Now / Next / Later list, and write specs for what's Next. | Founder | Product |
 | 8 | Review the org chart on a 2×2 of repeatability × judgment: repeatable work with little judgment → autonomous AI agent; work needing judgment → AI co-pilot where a person approves each step. Confirm which roles truly must be human before hiring. | Founder | Team & hiring |
-| 9 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |
+| 9 | Founder-led sales: the founder takes the sales calls until the pitch, price and demo close reliably (20%+). Starter and Growth stay self-serve (Salla app, trial, onboarding flow); people only sell Scale and Enterprise. | Founder | Sales pipeline |
+| 10 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |

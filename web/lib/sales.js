@@ -72,12 +72,12 @@ export function enrich(deal, now = Date.now()) {
   };
 }
 
-// Close rate on real opportunities (deals that reached a demo or later), per the masterclass rule:
-// above 20% is healthy, below 18% means the sales process is broken. Needs 10+ closed opportunities to judge.
+// Close rate on real opportunities (deals that reached a demo or later). DPA AD target: 20%+ (editable in
+// Store CRM settings); 10% under target means the sales process needs fixing. Needs 10+ closed opportunities.
 export const CLOSE_RATE = { healthy: 0.2, broken: 0.18, min_closed: 10 };
 const OPP_STAGES = ["demo", "beta", "trial"];
 export const STATUS_QUO = /status quo|no decision|did nothing|doing nothing|not now|no budget|stay(ing)? with|manual|canva|in-house|ما قرر|لاحق/i;
-export function closeRate(deals, activities) {
+export function closeRate(deals, activities, target = CLOSE_RATE.healthy) {
   const lostFrom = (d) => {
     const a = activities.filter((x) => x.deal_id === d.id && x.type === "stage" && /→\s*lost/.test(x.text || "")).at(-1);
     return a ? String(a.text).split("→")[0].trim() : "";
@@ -86,14 +86,14 @@ export function closeRate(deals, activities) {
   const lostOpps = deals.filter((d) => d.stage === "lost" && OPP_STAGES.includes(lostFrom(d)));
   const closed = won + lostOpps.length;
   const rate = closed ? won / closed : null;
-  const verdict = closed < CLOSE_RATE.min_closed ? "too early" : rate >= CLOSE_RATE.healthy ? "healthy" : rate < CLOSE_RATE.broken ? "broken" : "borderline";
+  const verdict = closed < CLOSE_RATE.min_closed ? "too early" : rate >= target ? "healthy" : rate < target * 0.9 ? "broken" : "borderline";
   const lost = deals.filter((d) => d.stage === "lost");
-  return { rate, won, lost_opportunities: lostOpps.length, closed, verdict,
+  return { rate, target, won, lost_opportunities: lostOpps.length, closed, verdict,
     lost_to_status_quo: lost.filter((d) => STATUS_QUO.test(d.lost_reason || "")).length, lost_total: lost.length };
 }
 
 // Summary numbers for the KPI strip and the AI team cards.
-export function summary(deals, activities, now = Date.now()) {
+export function summary(deals, activities, now = Date.now(), closeTarget = CLOSE_RATE.healthy) {
   const e = deals.map((d) => enrich(d, now));
   const open = e.filter((d) => OPEN.includes(d.stage));
   const paying = e.filter((d) => d.stage === "paying");
@@ -108,9 +108,9 @@ export function summary(deals, activities, now = Date.now()) {
     open_value: open.reduce((a, d) => a + d.plan_usd, 0),
     beta_plus: e.filter((d) => ["beta", "trial", "paying"].includes(d.stage)).length,
     ai_share: open.length ? Math.round((open.filter((d) => d.next.owner === "ai").length / open.length) * 100) : 100,
-    close: closeRate(deals, activities),
+    close: closeRate(deals, activities, closeTarget),
     needs_you: [
-      ...(() => { const c = closeRate(deals, activities); return c.verdict === "broken" ? [{ id: null, name: "Sales process", text: `Close rate on opportunities is ${Math.round(c.rate * 100)}% (below 18%): review demos and lost reasons before adding more leads` }] : []; })(),
+      ...(() => { const c = closeRate(deals, activities, closeTarget); return c.verdict === "broken" ? [{ id: null, name: "Sales process", text: `Close rate on opportunities is ${Math.round(c.rate * 100)}% (target ${Math.round(closeTarget * 100)}%): fix the demo and offer before adding more leads` }] : []; })(),
       ...open.filter((d) => d.next.owner === "you").map((d) => ({ id: d.id, name: d.name, text: d.next.text }))],
     agents: {
       prospector: { drafts: count((a) => a.type === "ai_draft" && a.task === "opener"), sent: count((a) => a.type === "sent" && a.task === "opener") },
@@ -143,6 +143,15 @@ export const AI_TASKS = {
     title: "Follow-up message",
     agent: "AI Follow-up",
     task: (d) => `Write the next message for this deal. Goal: ${d.next.text}. The deal is at stage "${d.stage}" and has been quiet for ${d.days_quiet} days. Write it in Saudi Arabic dialect for WhatsApp (max 70 words), then an English translation under "### English", then a 2-line email version in English under "### Email".`,
+  },
+  call_prep: {
+    title: "Call prep: script + discovery + demo focus",
+    agent: "AI Demo",
+    task: (d) => `Prepare a person for a phone call and discovery meeting with this store. Sections:
+## 15-second call script (Saudi Arabic, then English): a permission opener ("عندك ١٥ ثانية أشرح ليش اتصلت؟"), a one-line hook about what designed catalog ads change for a ${d.category || "store"} with ${d.skus} products, and a soft ask (send a 1-minute video or 3 free sample ads), never a hard 30-minute meeting ask.
+## 5 discovery questions: how they make ad creatives today and who does it, how many products they advertise and how often prices change, which channels (Snap, TikTok, Meta) and monthly ad spend range, what they've tried and what's missing, their must-haves for any tool.
+## Demo focus: the 3 DPA AD capabilities that match their likely pain (show only these, not every feature), and what to skip.
+## Likely objections and one-line answers.`,
   },
   objections: {
     title: "Objection answers",
