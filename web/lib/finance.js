@@ -32,7 +32,7 @@ export const VAT_RATE = 0.15;
 export const VAT_MANDATORY_SAR = 375000;
 export const VAT_VOLUNTARY_SAR = 187500;
 
-export const DEFAULT_SETTINGS = { vat_registered: false, mrr_growth_pct: 15, include_hires: true, budgets: { marketing: 11250 } };
+export const DEFAULT_SETTINGS = { vat_registered: false, mrr_growth_pct: 15, include_hires: true, churn_pct: 3, budgets: { marketing: 11250 } };
 
 const ym = (d) => d.slice(0, 7);
 const addMonths = (y, m, n) => { const d = new Date(Date.UTC(y, m - 1 + n, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
@@ -105,6 +105,10 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   const arpaSar = paying.length ? mrrSar / paying.length : null;
   const cac = newPaying30 ? mktSpend / newPaying30 : null;
   const payback = cac && arpaSar && grossMargin > 0 ? cac / (arpaSar * grossMargin) : null;
+  // Lifetime value = monthly gross profit per store ÷ monthly churn. Healthy LTV:CAC is 3:1 or better.
+  const churn = Math.max(0.5, Number(s.churn_pct) || 3) / 100;
+  const ltv = arpaSar && grossMargin > 0 ? (arpaSar * grossMargin) / churn : null;
+  const ltvCac = ltv && cac ? ltv / cac : null;
 
   // VAT: quarter-to-date input VAT on expenses; output VAT on revenue if registered.
   const q = Math.floor(now.getUTCMonth() / 3);
@@ -129,6 +133,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   if (s.vat_registered) needs.push({ text: `File the Q${q + 1} VAT return with ZATCA by ${vatDue.toISOString().slice(0, 10)}`, tab: "reports", soft: true });
   else if (annualRevenue >= VAT_VOLUNTARY_SAR) needs.push({ text: `Revenue run-rate SAR ${Math.round(annualRevenue).toLocaleString("en-US")}/yr: check VAT registration with your accountant`, tab: "reports" });
   if (paying.length && !billedMrr) needs.push({ text: `Sales shows ${paying.length} paying store${paying.length === 1 ? "" : "s"} but no subscription income is logged: add it under Income`, tab: "income" });
+  if (ltvCac !== null && ltvCac < 3) needs.push({ text: `LTV:CAC is ${ltvCac.toFixed(1)}:1 (healthy is 3:1): lower the cost to win a store or raise revenue per store before spending more on ads`, tab: "overview" });
   const unreviewed = expenses.filter((e) => e.source === "ai_import" && !e.reviewed).length;
   if (unreviewed) needs.push({ text: `${unreviewed} AI-imported expense${unreviewed === 1 ? "" : "s"} to review`, tab: "expenses" });
 
@@ -141,7 +146,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
     gross_margin: grossMargin === null ? null : Math.round(grossMargin * 1000) / 10,
     hires: { list: hires, monthly_sar: Math.round(hires.reduce((a, h) => a + h.monthly, 0)), included: s.include_hires },
     forecast: { months, cash_zero_month: zeroAt },
-    unit: { arpa_sar: arpaSar && Math.round(arpaSar), cac_sar: cac && Math.round(cac), payback_months: payback && Math.round(payback * 10) / 10, new_paying_30d: newPaying30 },
+    unit: { arpa_sar: arpaSar && Math.round(arpaSar), cac_sar: cac && Math.round(cac), ltv_sar: ltv && Math.round(ltv), ltv_cac: ltvCac && Math.round(ltvCac * 10) / 10, churn_pct: churn * 100, payback_months: payback && Math.round(payback * 10) / 10, new_paying_30d: newPaying30 },
     vat: { registered: s.vat_registered, quarter: `Q${q + 1} ${now.getUTCFullYear()}`, input_vat_sar: Math.round(inputVat), output_vat_sar: Math.round(outputVat), net_sar: Math.round(outputVat - inputVat), due: vatDue.toISOString().slice(0, 10), annual_revenue_sar: Math.round(annualRevenue), mandatory_sar: VAT_MANDATORY_SAR, voluntary_sar: VAT_VOLUNTARY_SAR },
     needs,
   };

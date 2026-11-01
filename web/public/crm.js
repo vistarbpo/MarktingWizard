@@ -75,12 +75,36 @@ function crmOverview(o) {
       <p class="subtle" style="font-size:12px">Not now: ${nf(st.not_now || 0)} · Churned: ${nf(st.churned || 0)} · Do not contact: ${nf(st.do_not_contact || 0)}</p></div></div>
     <div class="card"><div class="card-head"><h2>Messages, last 14 days</h2><span class="subtle" style="font-size:12px"><span style="color:var(--accent)">■</span> Email <span style="color:var(--good)">■</span> WhatsApp <span style="color:var(--warn)">●</span> Replies</span></div><div class="card-body s-grid2" style="padding:12px 16px">${chart}</div></div>
   </div>
+  ${crmPlanner(o)}
   <div class="card" style="margin-top:20px"><div class="card-head"><div><h2>By category</h2><p class="subtle" style="font-size:13px">Write one sequence per category: the message fits the store, and you see which categories answer.</p></div></div>
     <div class="table-wrap"><table><thead><tr><th>Category</th><th>Stores</th><th>Contacted</th><th>Replied</th><th>Reply rate</th><th>Customers</th><th></th></tr></thead><tbody>
     ${o.categories.map((c) => `<tr><td><b>${esc(c.category)}</b></td><td class="num">${nf(c.stores)}</td><td class="num">${nf(c.contacted)}</td><td class="num">${nf(c.replied)}</td><td class="num">${c.contacted ? Math.round((c.replied / c.contacted) * 1000) / 10 + "%" : "–"}</td><td class="num">${nf(c.customers)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-ghost" data-caction="see-cat" data-cat="${esc(c.category)}">Stores</button>${crmEdit() ? `<button class="btn btn-sm" data-caction="camp-cat" data-cat="${esc(c.category)}">Campaign</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div></div>
   ${o.owners.length ? `<div class="card" style="margin-top:20px"><div class="card-head"><h2>Owners</h2></div><div class="card-body row gap-8" style="padding:14px 18px;flex-wrap:wrap">${o.owners.map((x) => `<span class="badge">${esc(x.name)} · ${nf(x.stores)}</span>`).join("")}</div></div>` : ""}`;
+}
+
+/* ------------------------------------------------ Work backwards (masterclass: SDR math) */
+function crmPlannerTarget() { try { return Number(localStorage.getItem("crm.target")) || 20; } catch { return 20; } }
+function crmPlanner(o) {
+  const r = o.rates, B = r.bench, target = crmPlannerTarget();
+  const own = r.contacted >= 200; // enough history to trust our own rates
+  const rate = (num, den, b) => (own && den ? num / den : b);
+  const reply = rate(r.replied, r.contacted, B.reply), meeting = rate(r.meetings, r.replied, B.meeting), close = rate(r.customers, r.meetings, B.close);
+  const meetings = Math.ceil(target / Math.max(close, 0.001)), replies = Math.ceil(meetings / Math.max(meeting, 0.001)), stores = Math.ceil(replies / Math.max(reply, 0.001));
+  const perDay = Math.ceil((stores * r.steps) / 22); // ~22 working days a month
+  const cap = (o.settings?.email_daily_cap || 0) + (o.settings?.wa_daily_cap || 0);
+  const pct = (x) => (Math.round(x * 1000) / 10) + "%";
+  const cmp = (x, b) => (own ? (x >= b ? `<span style="color:var(--good)">above</span>` : `<span style="color:var(--bad)">below</span>`) + ` the ${pct(b)} benchmark` : "benchmark");
+  return `<div class="card" style="margin-top:20px"><div class="card-head"><div><h2>Work backwards from your goal</h2><p class="subtle" style="font-size:13px">${own ? "Using your own results so far." : `Using masterclass benchmarks until ${nf(200)} stores have been contacted (now ${nf(r.contacted)}).`} Change one thing at a time to move a rate: test it with an A/B campaign.</p></div>
+    <label class="row gap-8" style="font-size:13px">New customers / month <input class="input input-sm" type="number" min="1" id="cTarget" value="${target}" style="width:80px"></label></div>
+    <div class="c-plan">
+      <div><span class="eyebrow">Stores to contact / month</span><b class="num">${nf(stores)}</b><span class="subtle">${nf(perDay)} messages a working day (${r.steps} steps each)</span></div>
+      <div><span class="eyebrow">Reply rate</span><b class="num">${pct(reply)}</b><span class="subtle">${cmp(reply, B.reply)} · ${nf(replies)} replies needed</span></div>
+      <div><span class="eyebrow">Reply → meeting</span><b class="num">${pct(meeting)}</b><span class="subtle">${cmp(meeting, B.meeting)} · ${nf(meetings)} meetings needed</span></div>
+      <div><span class="eyebrow">Meeting → customer</span><b class="num">${pct(close)}</b><span class="subtle">${cmp(close, B.close)} · below 18% = fix the demo first</span></div>
+      <div class="${perDay > cap ? "warn" : ""}"><span class="eyebrow">Sending capacity</span><b class="num">${nf(cap)}/day</b><span class="subtle">${perDay > cap ? `${Math.ceil(perDay / Math.max(cap, 1))}× short: warm up more mailboxes or lower the goal` : "enough for this goal"}</span></div>
+    </div></div>`;
 }
 
 /* ------------------------------------------------ Filters (shared by Stores and campaign segments) */
@@ -174,11 +198,23 @@ function crmCampaigns(list) {
         ${c.status === "draft" ? `<button class="btn btn-sm btn-primary" data-caction="launch" data-id="${c.id}">Launch</button>` : ""}
         ${c.status === "running" ? `<button class="btn btn-sm" data-caction="pause" data-id="${c.id}">Pause</button>` : ""}
         ${c.status === "paused" ? `<button class="btn btn-sm btn-primary" data-caction="resume" data-id="${c.id}">Resume</button>` : ""}
+        ${c.status === "draft" && !c.experiment && c.type !== "onboarding" ? `<button class="btn btn-sm btn-ghost" data-caction="ab" data-id="${c.id}">A/B test</button>` : ""}
         <button class="btn btn-sm" data-caction="edit-camp" data-id="${c.id}">Edit</button>` : ""}</div></div>
+      ${c.experiment ? crmExpHtml(c) : ""}
       <div class="c-stats">${[["Enrolled", s.enrolled], ["Active", s.active], ["Sent", s.sent], ["Test (not sent)", s.test], ["Replied", s.replied], ["Reply rate", s.reply_rate == null ? "–" : s.reply_rate + "%"], ["Skipped", s.skipped], ["Failed", s.failed]].map(([l, v]) => `<div><span class="eyebrow">${l}</span><b class="num">${typeof v === "number" ? nf(v) : v}</b></div>`).join("")}</div>
       ${s.left ? `<p class="c-eta ${s.eta_days > 60 ? "warn" : ""}">${nf(s.left)} messages still to send at up to ${nf(s.per_day)}/day: about <b>${nf(s.eta_days)} days</b> to finish.${s.eta_days > 60 ? " Raise the daily limit (and the channel caps) as the mailbox warms up, or split the list by category." : ""}</p>` : ""}
       ${s.by_step.some(Boolean) ? `<div class="c-steps-bar">${s.by_step.map((n, i) => `<span>Step ${i + 1}: <b class="num">${nf(n)}</b></span>`).join("")}</div>` : ""}</div>`;
   }).join("")}</div>`;
+}
+
+function crmExpHtml(c) {
+  const x = c.experiment;
+  if (x.orphan) return `<p class="c-exp warn">A/B test: the other version was deleted. This campaign runs on half of its segment only.</p>`;
+  const r = (v) => (v.contacted ? (Math.round((v.replied / v.contacted) * 1000) / 10) + "%" : "–");
+  const many = x.changes.length > 1, none = x.changes.length === 0;
+  return `<div class="c-exp ${many || none ? "warn" : ""}"><b>A/B test · ${esc(x.label)} · version ${x.part}</b><div class="subtle">Paired with “${esc(x.partner_name)}”</div>
+    ${none ? `<div>The two versions are still identical: edit version B to change the ${esc(x.label.toLowerCase())}.</div>` : many ? `<div>Changes more than one thing (${x.changes_labels.map(esc).join(", ")}): you won't know which change made the difference. Keep only one.</div>` : ""}
+    ${x.a.contacted || x.b.contacted ? `<div>A: ${r(x.a)} replies (${nf(x.a.replied)}/${nf(x.a.contacted)}) · B: ${r(x.b)} (${nf(x.b.replied)}/${nf(x.b.contacted)}) · <b>${esc(x.verdict)}</b>${x.p != null ? ` (p=${x.p})` : ""}</div>` : `<div class="subtle">Launching either version launches both; each gets half the segment.</div>`}</div>`;
 }
 
 async function crmEditor(body) {
@@ -189,6 +225,7 @@ async function crmEditor(body) {
   const locked = c.status === "running";
   const dt = c.start_at ? new Date(new Date(c.start_at).getTime() + 3 * 3600e3).toISOString().slice(0, 16) : "";
   body.innerHTML = `<div class="row gap-8" style="margin-bottom:14px"><button class="btn btn-sm btn-ghost" data-caction="back">← Campaigns</button>${locked ? `<span class="badge warn">Running: changes apply to messages not sent yet</span>` : ""}</div>
+  ${c.experiment ? crmExpHtml(c) : ""}
   <div class="c-editor">
    <div class="stack">
     <div class="card"><div class="card-body stack" style="padding:18px 20px">
@@ -334,7 +371,7 @@ async function crmOpen(id) {
     <span>Email</span><span>${esc(c.email || "–")}${c.email_opt_out ? ' <span class="badge bad">unsubscribed</span>' : ""}${c.bounced ? ' <span class="badge bad">bounced</span>' : ""}</span>
     <span>Phone</span><span>${c.phone ? "+" + esc(c.phone) : "–"} ${c.phone ? (edit ? `<label class="chip" style="height:auto"><input type="checkbox" id="cdWa" ${c.wa_opt_in ? "checked" : ""}> WhatsApp opt-in</label>` : c.wa_opt_in ? "· opted in" : "") : ""}</span>
     <span>Owner name</span><span dir="auto">${esc(c.owner_name || "–")}</span><span>Instagram</span><span>${esc(c.instagram || "–")}</span>
-    <span>Tags</span><span>${edit ? `<input class="input input-sm" id="cdTags" value="${esc((c.tags || []).join(", "))}">` : esc((c.tags || []).join(", ") || "–")}</span>
+    <span>Tags</span><span>${edit ? `<input class="input input-sm" id="cdTags" value="${esc((c.tags || []).join(", "))}" title="Intent tags raise the fit score: ${Object.keys(CRM.meta.intent_tags || {}).join(", ")}"><div class="subtle" style="font-size:11px;margin-top:2px">Intent tags: ${Object.keys(CRM.meta.intent_tags || {}).join(", ")}</div>` : esc((c.tags || []).join(", ") || "–")}</span>
     <span>Source</span><span>${esc(c.source || "–")} · added ${fmtDate(c.created_at)}</span>
     ${d.deal ? `<span>Deal</span><span><a href="#/${S.ws.id}/pipeline">${esc(d.deal.name)} · ${esc(d.deal.stage)}</a></span>` : ""}
   </div></div>
@@ -415,6 +452,7 @@ document.addEventListener("input", (e) => {
 document.addEventListener("change", async (e) => {
   if (S.route !== "crm") return;
   const t = e.target;
+  if (t.id === "cTarget") { try { localStorage.setItem("crm.target", String(Math.max(1, Number(t.value) || 20))); } catch {} return crmRerender(); }
   if (t.id === "cSort") { CRM.sort = t.value; CRM.page = 0; return crmRerender(); }
   if (t.id === "cBulkAct") return crmBulkValue();
   if (t.dataset.csel) { t.checked ? CRM.sel.add(t.dataset.csel) : CRM.sel.delete(t.dataset.csel); CRM.allMatching = false; return crmRerender(); }
@@ -468,11 +506,21 @@ document.addEventListener("click", async (e) => {
       case "starter-camps": { const r = await api(`${crmP()}/campaigns/starter`, { method: "POST" }); toast(r.added ? `Added ${r.added} campaigns as drafts` : "Starter campaigns are already there"); return crmRerender(); }
       case "new-camp": return crmNewCampaign({ name: "New campaign", type: "outreach", filter: { stage: ["new"], has_email: true } });
       case "edit-camp": CRM.editId = id; return crmRerender();
+      case "ab": {
+        const d = $("#dialog");
+        d.innerHTML = `<form method="dialog" style="width:min(520px,92vw)"><div style="padding:20px 24px 0"><h2>A/B test: what's the one thing to test?</h2><p class="subtle" style="font-size:13px">Change one thing at a time. If you change the subject and the timing together, you won't know which one worked. The segment is split in half: A keeps this campaign, B gets the change.</p></div>
+          <div class="card-body stack" style="padding:16px 24px">${[["subject", "Subject line"], ["message", "Message text (angle, offer, length)"], ["channel", "Channel: email vs WhatsApp"], ["timing", "Timing: days between steps or send hours"], ["steps", "Number of steps"], ["segment", "Who gets it (persona or category)"]].map(([v, l], i) => `<label class="row gap-8"><input type="radio" name="abv" value="${v}" ${i ? "" : "checked"}> ${l}</label>`).join("")}</div>
+          <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn btn-primary" value="ok">Create version B</button></div></form>`;
+        d.showModal();
+        d.onclose = async () => { if (d.returnValue !== "ok") return;
+          try { const b2 = await api(`${crmP()}/campaigns/${id}/variant`, { method: "POST", body: JSON.stringify({ variable: d.querySelector('input[name="abv"]:checked').value }) }); toast("Version B created: change only that one thing"); CRM.editId = b2.id; crmRerender(); } catch (err) { toast(err.message, true); } };
+        return;
+      }
       case "back": CRM.editId = null; return crmRerender();
       case "launch": case "resume": case "pause": {
         if (act === "launch" && CRM.meta.settings.mode === "live" && !confirm("Live mode is on: this campaign will really send. Launch?")) return;
         const r = await api(`${crmP()}/campaigns/${id}/${act}`, { method: "POST" });
-        toast(act === "launch" ? (r.enrolled ? `Launched: ${nf(r.enrolled)} stores, first sends ${fmtDate(r.starts_at)}` : "Onboarding flow is on: it starts for each store you move to Onboarding") : act === "pause" ? "Paused" : "Running again");
+        toast(act === "launch" && r.ab ? `A/B test launched: ${nf(r.enrolled)} stores split between A and B` : act === "launch" ? (r.enrolled ? `Launched: ${nf(r.enrolled)} stores, first sends ${fmtDate(r.starts_at)}` : "Onboarding flow is on: it starts for each store you move to Onboarding") : act === "pause" ? "Paused" : "Running again");
         return crmRerender();
       }
       case "save-camp": await crmSaveCampaign(); toast("Saved"); return crmPreview();

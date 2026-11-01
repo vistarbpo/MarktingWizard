@@ -838,3 +838,44 @@ test("command center hides modules a role can't see", async () => {
   const own = await json(`/api/workspaces/${ws.id}/command`);
   assert.equal(own.finance.hidden, undefined);
 });
+
+test("masterclass rules: close rate, LTV:CAC, intent tags, one-variable A/B tests", async () => {
+  const { closeRate } = await import("../lib/sales.js");
+  const { financeSnapshot } = await import("../lib/finance.js");
+  const { scoreContact } = await import("../lib/crm.js");
+  // Close rate counts only deals that reached a demo; 2 won of 12 closed = 17% → broken.
+  const deals = [...Array(2)].map((_, i) => ({ id: "w" + i, stage: "paying" })).concat([...Array(10)].map((_, i) => ({ id: "l" + i, stage: "lost", lost_reason: i < 4 ? "staying with Canva" : "price" })), [{ id: "early", stage: "lost" }]);
+  const acts = [...Array(10)].map((_, i) => ({ deal_id: "l" + i, type: "stage", text: "demo → lost" })).concat([{ deal_id: "early", type: "stage", text: "lead → lost" }]);
+  const cr = closeRate(deals, acts);
+  assert.equal(cr.closed, 12); assert.equal(cr.verdict, "broken"); assert.equal(cr.lost_to_status_quo, 4);
+  // LTV:CAC = (ARPA × margin ÷ churn) ÷ CAC.
+  const now = new Date("2026-11-15T00:00:00Z");
+  const snap = financeSnapshot({ now, cash: [], roles: [], income: [], settings: { churn_pct: 5 },
+    deals: [{ stage: "paying", skus: 100, stage_changed_at: "2026-11-10T00:00:00Z" }],
+    expenses: [{ category: "marketing", amount_sar: 3000, recurring: "monthly", date: "2026-11-01" }, { category: "ai_api", amount_sar: 74.625, recurring: "monthly", date: "2026-11-01" }] });
+  assert.equal(snap.unit.cac_sar, 3000); assert.equal(snap.unit.ltv_sar, 13425); // 746.25 SAR × ~90% margin ÷ 5% churn
+  assert.equal(snap.unit.ltv_cac, 4.5);
+  assert.equal(scoreContact({ products: 0, tags: ["running-ads"] }) - scoreContact({ products: 0, tags: [] }), 15);
+
+  // A/B: version B copies A, flags extra changes, and the two split the segment without overlap.
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+  await post(`${P}/sample`);
+  const a = await (await post(`${P}/campaigns`, { name: "AB base", type: "outreach", filter: { tags: ["sample"], has_email: true }, steps: [{ channel: "email", delay_days: 0, subject: "S1", body: "Hello {{store_name}}" }] })).json();
+  assert.equal((await post(`${P}/campaigns/${a.id}/variant`, { variable: "nope" })).status, 422);
+  const b = await (await post(`${P}/campaigns/${a.id}/variant`, { variable: "subject" })).json();
+  assert.equal(b.experiment.part, "B");
+  let list = await json(`${P}/campaigns`);
+  assert.deepEqual(list.find((c) => c.id === b.id).experiment.changes, []);
+  await call(`${P}/campaigns/${b.id}`, { method: "PUT", body: JSON.stringify({ steps: [{ channel: "email", delay_days: 0, subject: "S2", body: "Hi there {{store_name}}" }] }) });
+  list = await json(`${P}/campaigns`);
+  assert.deepEqual(list.find((c) => c.id === b.id).experiment.changes, ["subject", "message"]);
+  const l = await (await post(`${P}/campaigns/${a.id}/launch`)).json();
+  assert.equal(l.ab, true);
+  const ea = (await json(`${P}/campaigns`)).filter((c) => c.experiment?.id === b.experiment.id);
+  assert.ok(ea.every((c) => c.status === "running" && c.stats.enrolled > 50));
+  assert.ok(Math.abs(ea[0].stats.enrolled - ea[1].stats.enrolled) < 40); // roughly half each, no store in both
+  const ov = await json(`${P}/overview`);
+  assert.equal(ov.rates.bench.reply, 0.05);
+  await json(`${P}/sample`, { method: "DELETE" });
+});

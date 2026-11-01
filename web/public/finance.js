@@ -50,6 +50,7 @@ function finOverview() {
         <p class="s-small muted">${s.forecast.cash_zero_month ? `<b style="color:var(--bad)">Cash runs out in ${s.forecast.cash_zero_month}</b> at this plan.` : "Cash stays positive for the next 12 months at this plan."}</p></div>
         <form class="row gap-8 f-assume" id="fAssume">
           <label class="s-small" for="f-growth">MRR growth / month</label><input class="input input-sm" id="f-growth" type="number" step="1" value="${s.settings.mrr_growth_pct}" style="width:70px"><span class="s-small">%</span>
+          <label class="s-small" for="f-churn">Churn / month</label><input class="input input-sm" id="f-churn" type="number" step="0.5" min="0.5" value="${s.settings.churn_pct ?? 3}" style="width:70px"><span class="s-small">%</span>
           <label class="s-small row gap-4"><input type="checkbox" id="f-hires" ${s.settings.include_hires ? "checked" : ""}> Include planned hires (${sarShort(s.hires.monthly_sar)}/mo)</label>
           <button class="btn btn-sm" type="submit">Update</button></form></div>
       <svg id="fChart" viewBox="0 0 900 300" role="img" aria-label="Cash forecast" style="width:100%;height:auto;display:block;margin-top:8px"></svg>
@@ -75,6 +76,8 @@ function finOverview() {
       <div class="f-unit">
         <div><span class="s-small muted">Revenue per store (ARPA)</span><b class="num">${sarFmt(s.unit.arpa_sar)}</b><span class="subtle s-small">per month</span></div>
         <div><span class="s-small muted">Cost to win a store (CAC)</span><b class="num">${sarFmt(s.unit.cac_sar)}</b><span class="subtle s-small">${s.unit.new_paying_30d} new paying in 30 days</span></div>
+        <div><span class="s-small muted">Lifetime value (LTV)</span><b class="num">${sarFmt(s.unit.ltv_sar)}</b><span class="subtle s-small">at ${s.unit.churn_pct}% monthly churn (set in settings)</span></div>
+        <div><span class="s-small muted">LTV : CAC</span><b class="num" style="color:${s.unit.ltv_cac == null ? "inherit" : s.unit.ltv_cac >= 3 ? "var(--good)" : "var(--bad)"}">${s.unit.ltv_cac == null ? "–" : s.unit.ltv_cac + " : 1"}</b><span class="subtle s-small">healthy is 3 : 1 or better</span></div>
         <div><span class="s-small muted">Payback</span><b class="num">${s.unit.payback_months == null ? "–" : s.unit.payback_months + " mo"}</b><span class="subtle s-small">${s.unit.payback_months == null && s.gross_margin != null && s.gross_margin <= 0 ? "can't pay back while gross margin is negative" : "target under 12"}</span></div>
         <div><span class="s-small muted">Planned hires</span><b class="num">${sarFmt(s.hires.monthly_sar)}</b><span class="subtle s-small">${s.hires.list.length} roles, per month</span></div>
       </div>
@@ -294,7 +297,7 @@ document.addEventListener("submit", async (e) => {
     if (id === "fAdd") await api(`${base}/expenses`, { method: "POST", body: JSON.stringify({ date: $("#fe-date").value, vendor: $("#fe-vendor").value, amount_sar: $("#fe-amt").value, vat_sar: $("#fe-vat").value || 0, category: $("#fe-cat").value, recurring: $("#fe-rec").value, note: $("#fe-note").value }) });
     if (id === "fInc") await api(`${base}/income`, { method: "POST", body: JSON.stringify({ date: $("#fi-date").value, source: $("#fi-src").value, type: $("#fi-type").value, amount_sar: $("#fi-amt").value, vat_sar: $("#fi-vat").value || 0, recurring: $("#fi-rec").value, note: $("#fi-note").value }) });
     if (id === "fCash") await api(`${base}/cash`, { method: "POST", body: JSON.stringify({ date: $("#fc-date").value, balance_sar: $("#fc-bal").value }) });
-    if (id === "fAssume") await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ mrr_growth_pct: $("#f-growth").value, include_hires: $("#f-hires").checked }) });
+    if (id === "fAssume") await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ mrr_growth_pct: $("#f-growth").value, churn_pct: $("#f-churn").value, include_hires: $("#f-hires").checked }) });
     if (id === "fBudgets") await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ budgets: Object.fromEntries([...document.querySelectorAll("[data-budget]")].map((i) => [i.dataset.budget, i.value || 0])) }) });
     await finLoad(); finRerender();
     toast({ fInc: "Income saved", fAdd: "Expense saved", fCash: "Bank balance saved", fAssume: "Forecast updated", fBudgets: "Budgets saved" }[id]);

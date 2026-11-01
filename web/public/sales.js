@@ -52,6 +52,7 @@ function salesRenderKpis() {
     tile("Open deals", s.open_count, `${usd(s.open_value)}/mo if all close`),
     tile("Beta and beyond", s.beta_plus, "stores in beta, trial or paying"),
     tile("Handled by AI", s.ai_share + "%", "of open deals' next steps"),
+    tile("Close rate", s.close.rate == null ? "–" : Math.round(s.close.rate * 100) + "%", s.close.verdict === "too early" ? `${s.close.closed} of 10 closed opportunities needed to judge` : `${s.close.verdict} · target over 20%${s.close.lost_to_status_quo ? ` · ${s.close.lost_to_status_quo} lost to status quo` : ""}`, s.close.verdict === "broken" ? "bad" : s.close.verdict === "borderline" ? "warn" : s.close.verdict === "healthy" ? "good" : ""),
     tile("Needs you", s.needs_you.length, "only human-required steps", s.needs_you.length ? "warn" : ""),
   ].join("");
 }
@@ -68,7 +69,7 @@ function salesTeam() {
       ${agent("AI Success", "Watches beta and trial stores, prepares objection answers", `<b class="num">${a.success.watched}</b> watched · <b class="num">${a.success.objections}</b> objection sets`)}
       <div class="card s-agent you"><div class="row gap-8">${ownerBadge("you")}<b>You</b></div>
         <span class="muted s-small">Only what must be human: big-deal calls, discounts, contracts, partnerships</span>
-        ${mine.length ? `<ul class="s-mine">${mine.map((m) => `<li><button class="s-link" data-sopen="${m.id}">${esc(m.name)}</button>: ${esc(m.text)}</li>`).join("")}</ul>` : `<span class="s-small">Nothing needs you right now.</span>`}
+        ${mine.length ? `<ul class="s-mine">${mine.map((m) => `<li>${m.id ? `<button class="s-link" data-sopen="${m.id}">${esc(m.name)}</button>` : `<b>${esc(m.name)}</b>`}: ${esc(m.text)}</li>`).join("")}</ul>` : `<span class="s-small">Nothing needs you right now.</span>`}
       </div>
     </section>`;
 }

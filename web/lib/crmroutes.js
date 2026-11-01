@@ -2,8 +2,9 @@
 // (module "crm" in Teams & roles).
 import crypto from "node:crypto";
 import express from "express";
-import { BOARD, CAMPAIGN_TYPES, CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
+import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
 import { DEFAULT_SETTINGS } from "./outreach.js";
+import { zTest } from "./roas.js";
 
 const page = (title, body) => `<!doctype html><html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{font-family:system-ui,Tahoma,sans-serif;background:#f6f6f4;color:#111;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}.c{background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:32px;max-width:440px;text-align:center}button{background:#1f5eff;color:#fff;border:0;border-radius:8px;padding:10px 20px;font-size:15px;cursor:pointer}p{color:#555;line-height:1.6}</style></head><body><div class="c">${body}</div></body></html>`;
@@ -77,7 +78,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
   app.get(`${P}/meta`, (req, res) => {
     if (!W(req, res)) return;
     const cfg = outreach.cfg;
-    res.json({ stages: STAGES, board: BOARD, types: CAMPAIGN_TYPES, channels: CHANNELS, categories: SALLA_CATEGORIES, onboarding: ONBOARDING_STEPS, intents: INTENTS, users: users(),
+    res.json({ intent_tags: INTENT_TAGS, stages: STAGES, board: BOARD, types: CAMPAIGN_TYPES, channels: CHANNELS, categories: SALLA_CATEGORIES, onboarding: ONBOARDING_STEPS, intents: INTENTS, users: users(),
       settings: outreach.settings(req.params.ws),
       connections: { email: cfg.email.ready, email_from: cfg.email.from, imap: cfg.email.imap.ready, whatsapp: cfg.whatsapp.ready, whatsapp_webhook: !!cfg.whatsapp.verify, public_url: cfg.public_url } });
   });
@@ -103,6 +104,15 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
       inbox: { open: msgs.filter((m) => m.direction === "in" && !m.handled).length, needs_person: msgs.filter((m) => m.direction === "in" && !m.handled && m.needs_person).length },
       campaigns: { running: crm.campaigns(ws).filter((c) => c.status === "running").length, total: crm.campaigns(ws).length },
       daily, mode: outreach.settings(ws).mode,
+      // For the work-backwards planner: what actually happened so far, next to the benchmarks.
+      rates: (() => {
+        const contacted = all.filter((c) => c.last_contacted_at).length, replied = all.filter((c) => c.last_contacted_at && c.last_reply_at).length;
+        const meetings = all.filter((c) => c.deal_id || ["qualified", "onboarding", "active", "churned"].includes(c.stage)).length;
+        const customers = all.filter((c) => ["onboarding", "active", "churned"].includes(c.stage)).length;
+        const outreach = crm.campaigns(ws).filter((c) => c.type === "outreach");
+        return { contacted, replied, meetings, customers, bench: OUTBOUND_BENCH, steps: outreach.length ? Math.round(outreach.reduce((a, c) => a + c.steps.length, 0) / outreach.length) : 4 };
+      })(),
+      settings: outreach.settings(ws),
       owners: Object.entries(counts(all.filter((c) => c.owner_id), "owner_id")).map(([id, n]) => ({ id, name: userName(id) || "Unknown", stores: n })),
     });
   });
@@ -253,11 +263,36 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     const replied = en.filter((e) => e.status === "replied").length;
     const left = en.filter((e) => e.status === "active").reduce((a, e) => a + Math.max(0, camp.steps.length - e.step), 0);
     const st = outreach.settings(camp.workspace_id), perDay = Math.max(1, Math.min(camp.daily_limit, st.email_daily_cap + st.wa_daily_cap));
-    return { left, per_day: perDay, eta_days: left ? Math.ceil(left / perDay) + Math.max(0, ...camp.steps.map((s) => s.delay_days || 0)) : 0, enrolled: en.length, active: en.filter((e) => e.status === "active").length, done: en.filter((e) => e.status === "done").length, replied,
+    return { contacted: contacted.size, left, per_day: perDay, eta_days: left ? Math.ceil(left / perDay) + Math.max(0, ...camp.steps.map((s) => s.delay_days || 0)) : 0, enrolled: en.length, active: en.filter((e) => e.status === "active").length, done: en.filter((e) => e.status === "done").length, replied,
       sent: ms.filter((m) => m.status === "sent").length, test: ms.filter((m) => m.status === "test").length, skipped: ms.filter((m) => m.status === "skipped").length, failed: ms.filter((m) => m.status === "failed").length,
       reply_rate: contacted.size ? Math.round((replied / contacted.size) * 1000) / 10 : null,
       by_step: camp.steps.map((_, i) => ms.filter((m) => m.step === i && ["sent", "test"].includes(m.status)).length) };
   };
+  // ---- A/B tests: change one thing at a time (cadence, persona, channel, message…), never several.
+  const EXP_VARS = { subject: "Subject line", message: "Message text", channel: "Channel (email vs WhatsApp)", timing: "Timing (days between steps, send hours)", segment: "Who gets it (segment)", steps: "Number of steps" };
+  const diffVars = (a, b) => {
+    const out = [];
+    const st = (c, f) => JSON.stringify(c.steps.map(f));
+    if (JSON.stringify(cleanFilter(a.filter)) !== JSON.stringify(cleanFilter(b.filter))) out.push("segment");
+    if (a.steps.length !== b.steps.length) out.push("steps");
+    if (st(a, (s) => s.channel) !== st(b, (s) => s.channel)) out.push("channel");
+    if (st(a, (s) => s.delay_days) !== st(b, (s) => s.delay_days) || JSON.stringify(a.window) !== JSON.stringify(b.window)) out.push("timing");
+    if (st(a, (s) => s.subject) !== st(b, (s) => s.subject)) out.push("subject");
+    if (st(a, (s) => s.body) !== st(b, (s) => s.body)) out.push("message");
+    return out;
+  };
+  const partnerOf = (c) => c.experiment && crm.campaigns(c.workspace_id).find((x) => x.id !== c.id && x.experiment?.id === c.experiment.id);
+  const experimentView = (c, stats) => {
+    const p = partnerOf(c); if (!p) return null;
+    const changes = diffVars(c, p);
+    const A = c.experiment.part === "A" ? [c, stats(c)] : [p, stats(p)], B = c.experiment.part === "A" ? [p, stats(p)] : [c, stats(c)];
+    const test = zTest(B[1].replied, B[1].contacted, A[1].replied, A[1].contacted);
+    const enough = A[1].contacted >= 100 && B[1].contacted >= 100;
+    const verdict = !enough ? "not enough data yet (100+ stores contacted in each)" : test && test.p < 0.05 ? (B[1].replied / B[1].contacted > A[1].replied / A[1].contacted ? "B wins" : "A wins") : "no clear difference yet";
+    return { ...c.experiment, label: EXP_VARS[c.experiment.variable] || c.experiment.variable, changes, changes_labels: changes.map((v) => EXP_VARS[v]), partner_id: p.id, partner_name: p.name,
+      a: { name: A[0].name, contacted: A[1].contacted, replied: A[1].replied }, b: { name: B[0].name, contacted: B[1].contacted, replied: B[1].replied }, p: test?.p ?? null, verdict };
+  };
+
   const cleanCampaign = (b) => {
     const o = {};
     if (b.name !== undefined) o.name = String(b.name).trim().slice(0, 120) || "Untitled campaign";
@@ -271,7 +306,26 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (o.type === "onboarding") o.trigger = "stage:onboarding";
     return o;
   };
-  app.get(`${P}/campaigns`, (req, res) => { if (!W(req, res)) return; res.json(crm.campaigns(req.params.ws).map((c) => ({ ...c, stats: campStats(c), audience: c.type === "onboarding" ? null : crm.query(req.params.ws, c.filter).length }))); });
+  app.get(`${P}/campaigns`, (req, res) => {
+    if (!W(req, res)) return;
+    res.json(crm.campaigns(req.params.ws).map((c) => {
+      let audience = c.type === "onboarding" ? null : crm.query(req.params.ws, c.filter).length;
+      if (audience && c.experiment) audience = Math.round(audience / 2);
+      return { ...c, stats: campStats(c), audience, experiment: c.experiment ? experimentView(c, campStats) || { ...c.experiment, orphan: true } : null };
+    }));
+  });
+  app.post(`${P}/campaigns/:id/variant`, (req, res) => {
+    if (!W(req, res)) return;
+    const a = crm.campaign(req.params.ws, req.params.id), variable = String(req.body?.variable || "");
+    if (!a) return res.status(404).json({ detail: "Campaign not found" });
+    if (!EXP_VARS[variable]) return res.status(422).json({ detail: "Pick the one thing to test." });
+    if (a.status !== "draft" || a.type === "onboarding") return res.status(422).json({ detail: "A/B tests start from a draft outreach, nurture or newsletter campaign." });
+    if (a.experiment) return res.status(422).json({ detail: "This campaign is already in an A/B test." });
+    const id = "x" + crm.id();
+    crm.updateCampaign(req.params.ws, a.id, { experiment: { id, variable, part: "A" } });
+    const b = crm.addCampaign(req.params.ws, { ...cleanCampaign({ ...a, name: `${a.name} · B (${EXP_VARS[variable].split(" (")[0].toLowerCase()})` }), experiment: { id, variable, part: "B" }, created_by: by(req) });
+    res.status(201).json(b);
+  });
   app.post(`${P}/campaigns`, (req, res) => {
     if (!W(req, res)) return;
     const o = cleanCampaign({ name: "New campaign", type: "outreach", filter: {}, steps: [{ channel: "email", delay_days: 0, subject: "", body: "" }], ...req.body });
@@ -301,9 +355,21 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (req.params.action === "resume") return res.json(crm.updateCampaign(req.params.ws, c.id, { status: "running" }));
     if (!c.steps.length || c.steps.some((s) => !s.body.trim())) return res.status(422).json({ detail: "Every step needs a message." });
     if (c.steps.some((s) => s.channel === "email" && !s.subject.trim())) return res.status(422).json({ detail: "Every email step needs a subject." });
-    const audience = c.type === "onboarding" ? [] : crm.query(req.params.ws, c.filter).filter((x) => x.stage !== "do_not_contact");
-    if (c.type !== "onboarding" && !audience.length) return res.status(422).json({ detail: "No stores match this segment." });
-    res.json({ ...outreach.launch(c, audience), campaign: crm.campaign(req.params.ws, c.id) });
+    // A/B test: both versions launch together and split the stores in half, so nobody gets both.
+    const partner = c.experiment ? partnerOf(c) : null;
+    const group = partner && partner.status === "draft" ? [c, partner] : [c];
+    for (const x of group) {
+      if (!x.steps.length || x.steps.some((s) => !s.body.trim())) return res.status(422).json({ detail: `${x.name}: every step needs a message.` });
+      if (x.steps.some((s) => s.channel === "email" && !s.subject.trim())) return res.status(422).json({ detail: `${x.name}: every email step needs a subject.` });
+    }
+    let enrolled = 0, starts_at = null;
+    for (const x of group) {
+      let audience = x.type === "onboarding" ? [] : crm.query(req.params.ws, x.filter).filter((s) => s.stage !== "do_not_contact");
+      if (x.experiment) audience = audience.filter((s) => (Number(s.id) % 2 === 0) === (x.experiment.part === "A"));
+      if (x.type !== "onboarding" && !audience.length) return res.status(422).json({ detail: "No stores match this segment." });
+      const r = outreach.launch(x, audience); enrolled += r.enrolled; starts_at = r.starts_at;
+    }
+    res.json({ enrolled, starts_at, ab: group.length > 1, campaign: crm.campaign(req.params.ws, c.id) });
   });
   app.get(`${P}/campaigns/:id/preview`, (req, res) => {
     if (!W(req, res)) return;

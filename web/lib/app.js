@@ -608,6 +608,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     if (b.vat_registered !== undefined) f.vat_registered = !!b.vat_registered;
     if (b.include_hires !== undefined) f.include_hires = !!b.include_hires;
     if (b.mrr_growth_pct !== undefined) { const n = Number(b.mrr_growth_pct); if (!(n >= -50 && n <= 200)) return res.status(422).json({ detail: "growth must be between -50 and 200" }); f.mrr_growth_pct = n; }
+    if (b.churn_pct !== undefined) { const n = Number(b.churn_pct); if (!(n >= 0.5 && n <= 50)) return res.status(422).json({ detail: "churn must be between 0.5 and 50% a month" }); f.churn_pct = n; }
     if (b.budgets && typeof b.budgets === "object") f.budgets = Object.fromEntries(Object.entries(b.budgets).filter(([k]) => CAT_IDS.includes(k)).map(([k, v]) => [k, Math.max(0, Number(v) || 0)]));
     res.json(store.setFinanceSettings(w.id, f));
   });

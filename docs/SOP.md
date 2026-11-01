@@ -22,9 +22,11 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 8 | Product: load the starter roadmap and confirm what's Now, Next and Later. | Founder | Product |
 | 9 | Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams. | Founder | Teams & roles |
 | 10 | Store CRM: import the Salla store list, connect the sending mailbox (SPF/DKIM/DMARC) and WhatsApp, run the starter campaigns in Test mode for a week, then switch to Live. | Head of Growth | Store CRM |
-| 11 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
-| 12 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
-| 13 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
+| 11 | Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd "yes". Losing to "we'll keep doing it by hand" is more common than losing to a competitor: log that as the lost reason. | Founder | Sales pipeline |
+| 12 | Make DPA AD easy for AI agents to evaluate: public help center, clear pricing page and API docs (buyers increasingly send an agent to check first). | Founder | AI Support |
+| 13 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
+| 14 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
+| 15 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
 
 ## Weekly cycle
 
@@ -33,19 +35,20 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 
 | # | Step | Owner | Where in the dashboard |
 |---|---|---|---|
-| 1 | Store CRM: clear the Inbox, compare reply rates by category and campaign, rewrite the weakest sequence with AI, and raise daily caps only if bounces and unsubscribes stay low. | Head of Growth | Store CRM |
-| 2 | Monday: log last week's values for every weekly KPI. | Each KPI owner | KPIs |
-| 3 | Monday: run KPI Report & Analysis and agree the one bottleneck to fix this week. | Head of Growth | Playbooks → KPI Report & Analysis |
-| 4 | Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner). | Head of Growth | Knowledge |
-| 5 | Generate this week's Social Media Post Pack and schedule the posts. | Content | Playbooks → Social Media Post Pack |
-| 6 | Generate or refresh an Outbound Email Sequence for the persona in focus and load it into the sending tool. | Sales | Playbooks → Outbound Email Sequence |
-| 7 | Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under "Needs you". | Founder | Sales pipeline |
-| 8 | Daily: clear AI Support's "Needs you" list; Friday: turn repeated questions into new help articles. | Customer Success | AI Support |
-| 9 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
-| 10 | Monday: run the AI weekly operations brief, plan the week's goals with the AI planner, and clear Operations "Needs you" (deadlines, incidents, tasks waiting on a person). | Founder | Operations |
-| 11 | Friday: import new requests from Support into Product, let AI group them, approve or decline AI-suggested ideas, and update what's Now / Next. | Founder | Product |
-| 12 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
-| 13 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
+| 1 | Store CRM: clear the Inbox, compare reply rates by category and campaign, and run one A/B test that changes ONE thing (subject, message, channel, timing or segment). Raise daily caps only if bounces and unsubscribes stay low. | Head of Growth | Store CRM |
+| 2 | Founder branding: post your own thinking (not company news) on X daily and LinkedIn daily, in your own voice. Be where Saudi merchants and agencies are; don't spread across every channel. | Founder | Outside the dashboard (hPanel / app stores) |
+| 3 | Monday: log last week's values for every weekly KPI. | Each KPI owner | KPIs |
+| 4 | Monday: run KPI Report & Analysis and agree the one bottleneck to fix this week. | Head of Growth | Playbooks → KPI Report & Analysis |
+| 5 | Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner). | Head of Growth | Knowledge |
+| 6 | Generate this week's Social Media Post Pack and schedule the posts. | Content | Playbooks → Social Media Post Pack |
+| 7 | Generate or refresh an Outbound Email Sequence for the persona in focus and load it into the sending tool. | Sales | Playbooks → Outbound Email Sequence |
+| 8 | Daily: open the Sales pipeline, review and send the AI drafts, and clear everything under "Needs you". | Founder | Sales pipeline |
+| 9 | Daily: clear AI Support's "Needs you" list; Friday: turn repeated questions into new help articles. | Customer Success | AI Support |
+| 10 | Check app store listings (Salla, Shopify, Zid): reply to every review, note rating changes. | Marketplace Manager | Outside the dashboard (hPanel / app stores) |
+| 11 | Monday: run the AI weekly operations brief, plan the week's goals with the AI planner, and clear Operations "Needs you" (deadlines, incidents, tasks waiting on a person). | Founder | Operations |
+| 12 | Friday: import new requests from Support into Product, let AI group them, approve or decline AI-suggested ideas, and update what's Now / Next. | Founder | Product |
+| 13 | Friday: add Knowledge notes for new objections, wins, lost deals and competitor moves. | Sales + Customer Success | Knowledge |
+| 14 | Friday: clear the Library: everything generated this week is reviewed, used, or deleted. | Head of Growth | Library |
 
 ## Monthly review
 
@@ -55,17 +58,19 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | # | Step | Owner | Where in the dashboard |
 |---|---|---|---|
 | 1 | Send the monthly newsletter to contacted, replied, customer and not-now stores; review Onboarding stores stuck on a checklist step. | Head of Growth | Store CRM |
-| 2 | Teams & roles: deactivate anyone who left, check the activity log for unexpected changes. | Founder | Teams & roles |
-| 3 | Log the monthly KPIs: ARPA, churn, NRR, CAC, merchant ROAS, creatives per product. | Head of Growth | KPIs |
-| 4 | Run KPI Report & Analysis on the month and share it with the team. | Head of Growth | Playbooks → KPI Report & Analysis |
-| 5 | Generate next month's Content Calendar. | Content | Playbooks → Content Calendar |
-| 6 | Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles. | Performance marketer | Playbooks → Paid Ads Campaign |
-| 7 | Update the SEO Content Plan and publish the planned articles. | Content | Playbooks → SEO Content Plan |
-| 8 | Refresh Competitor Battlecards with this month's competitor notes. | Sales | Playbooks → Competitor Battlecards |
-| 9 | ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs. | Customer Success | ROAS results |
-| 10 | Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions. | Founder | Finance |
-| 11 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
-| 12 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
+| 2 | Check the sales engine: close rate on opportunities over 20% (below 18% = fix the demo, not the lead volume), LTV:CAC at 3:1 or better, and how many deals were lost to the status quo. | Founder | Sales pipeline |
+| 3 | Pricing: price on value (designer cost saved), not on our cost. Review the month's discounts: over 10% must have been traded for a case study, logo rights, a public post or a yearly prepay. | Founder | Finance |
+| 4 | Teams & roles: deactivate anyone who left, check the activity log for unexpected changes. | Founder | Teams & roles |
+| 5 | Log the monthly KPIs: ARPA, churn, NRR, CAC, merchant ROAS, creatives per product. | Head of Growth | KPIs |
+| 6 | Run KPI Report & Analysis on the month and share it with the team. | Head of Growth | Playbooks → KPI Report & Analysis |
+| 7 | Generate next month's Content Calendar. | Content | Playbooks → Content Calendar |
+| 8 | Refresh the Paid Ads Campaign: kill losers, brief new creatives and angles. | Performance marketer | Playbooks → Paid Ads Campaign |
+| 9 | Update the SEO Content Plan and publish the planned articles. | Content | Playbooks → SEO Content Plan |
+| 10 | Refresh Competitor Battlecards with this month's competitor notes. | Sales | Playbooks → Competitor Battlecards |
+| 11 | ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs. | Customer Success | ROAS results |
+| 12 | Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions. | Founder | Finance |
+| 13 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
+| 14 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
 
 ## Quarterly strategy
 
@@ -81,5 +86,5 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 5 | Generate the next 90-Day Go-To-Market Plan and set next quarter's KPI targets. | Founder | Playbooks → 90-Day Go-To-Market Plan |
 | 6 | Finance → Reports & VAT: check the quarter's VAT position; if registered, a person files and pays the ZATCA return before the due date. | Founder | Finance |
 | 7 | Product: re-score the roadmap with the quarter's feedback, decide the Now / Next / Later list, and write specs for what's Next. | Founder | Product |
-| 8 | Review the org chart: move any repeatable human work to an AI agent, and confirm which roles truly must be human before hiring. | Founder | Team & hiring |
+| 8 | Review the org chart on a 2×2 of repeatability × judgment: repeatable work with little judgment → autonomous AI agent; work needing judgment → AI co-pilot where a person approves each step. Confirm which roles truly must be human before hiring. | Founder | Team & hiring |
 | 9 | Update KPI targets on the KPIs page to match the new plan. | Head of Growth | KPIs |

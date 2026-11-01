@@ -155,6 +155,14 @@ export function parseStores(text, { platform = "Salla", source = "import" } = {}
 }
 
 // ---- scoring: who to contact first ---------------------------------------------------------
+// Intent signals: proxies for "ready to buy now". Tag stores with these (e.g. after checking the
+// Meta Ad Library or Snap ads) and they rise to the top of every list and segment.
+export const INTENT_TAGS = { "running-ads": 15, "hiring-marketer": 10, "new-collection": 8, "seasonal": 5, "visited-site": 12, "inbound": 20, "referral": 15 };
+
+// Masterclass benchmarks for cold outbound (Arjun): ~5% of contacted stores reply, ~10% of replies become a
+// meeting, and a healthy sales process closes 20%+ of opportunities.
+export const OUTBOUND_BENCH = { reply: 0.05, meeting: 0.1, close: 0.2 };
+
 export function scoreContact(c) {
   let s = 0;
   const p = c.products || 0;
@@ -167,6 +175,7 @@ export function scoreContact(c) {
   if (c.rating >= 4.5) s += 5;
   if (c.last_reply_at) s += 15;
   if (c.stage === "qualified" || c.stage === "onboarding") s += 10;
+  for (const t of c.tags || []) s += INTENT_TAGS[t] || 0;
   return Math.min(100, s);
 }
 

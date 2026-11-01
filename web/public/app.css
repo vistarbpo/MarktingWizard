@@ -651,3 +651,8 @@ details > summary { cursor: pointer; }
   #pageActions { max-width: 100%; min-width: 0; }
 }
 .c-eta { padding: 0 20px 14px; font-size: var(--fs-sm); color: var(--text-2); } .c-eta.warn { color: var(--warn); }
+.c-plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; padding: 16px 20px; }
+.c-plan > div { display: flex; flex-direction: column; gap: 3px; } .c-plan b { font-size: 20px; } .c-plan .subtle { font-size: 12px; }
+.c-plan > div.warn b { color: var(--warn); }
+.c-exp { margin: 0 20px 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 4px; }
+.c-exp.warn { background: var(--warn-soft); }
