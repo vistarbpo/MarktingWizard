@@ -31,7 +31,7 @@ export const CITIES = {
   Buraidah: [26.33, 43.97], Hail: [27.52, 41.69], Taif: [21.27, 40.42], Jazan: [16.89, 42.57],
   Najran: [17.49, 44.13], "Al Ahsa": [25.38, 49.59], Other: null,
 };
-export const PLATFORMS = ["Salla", "Zid", "Shopify", "WooCommerce", "Other"];
+export { PLATFORMS } from "./platforms.js";
 
 export const daysSince = (iso, now = Date.now()) => (iso ? Math.max(0, Math.floor((now - Date.parse(iso)) / 864e5)) : 0);
 

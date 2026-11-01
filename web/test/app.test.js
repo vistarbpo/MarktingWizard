@@ -904,3 +904,34 @@ test("store CRM: phone-call steps become tasks; ICP focus list; allowable CAC", 
   const fin = await json(`/api/workspaces/${ws.id}/finance`);
   assert.ok("allowable_cac_sar" in (fin.snapshot || fin).unit);
 });
+
+test("platforms: detected from name or link, filterable, legacy values cleaned", async () => {
+  const { detectPlatform, PLATFORMS } = await import("../lib/platforms.js");
+  const { parseStores } = await import("../lib/crm.js");
+  assert.equal(detectPlatform("", "abaya-house.myshopify.com"), "Shopify");
+  assert.equal(detectPlatform("سلة"), "Salla");
+  assert.equal(detectPlatform("Shopify Plus"), "Shopify");
+  assert.equal(detectPlatform("Adobe Commerce"), "Magento");
+  assert.equal(detectPlatform("our own custom site"), "Custom");
+  assert.equal(detectPlatform("", "store.example.com"), "");
+  for (const p of ["Salla", "Zid", "Shopify", "WooCommerce", "Magento", "BigCommerce", "Wix", "Custom", "Other"]) assert.ok(PLATFORMS.includes(p));
+  const r = parseStores("name,link,platform\nA,a.myshopify.com,\nB,b.com,ووكومرس\nC,c.com,Tictail\nD,d.com,\n", { platform: "Zid" });
+  assert.deepEqual(r.rows.map((x) => x.platform), ["Shopify", "WooCommerce", "Other", "Zid"]);
+
+  const { CrmStore } = await import("../lib/crmstore.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "crm-plat-"));
+  fs.writeFileSync(path.join(d, "crm.json"), JSON.stringify({ seq: 1, contacts: [{ id: "1", workspace_id: "1", store_name: "X", platform: "Unknown", domain: "x.salla.sa", tags: [] }], campaigns: [] }));
+  assert.equal(new CrmStore(d).db.contacts[0].platform, "Salla");
+  fs.rmSync(d, { recursive: true, force: true });
+
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+  const c = await (await post(`${P}/contacts`, { store_name: "Plat test", domain: "plat-test.myshopify.com" })).json();
+  assert.equal(c.platform, "Shopify");
+  const meta = await json(`${P}/meta`);
+  assert.ok(meta.platforms.find((p) => p.id === "Shopify").connect);
+  const ov = await json(`${P}/overview`);
+  assert.ok(ov.platforms.some((p) => p.platform === "Shopify"));
+  assert.equal((await json(`${P}/contacts?f=${encodeURIComponent(JSON.stringify({ platform: ["Shopify"] }))}`)).total >= 1, true);
+  await call(`${P}/contacts/${c.id}`, { method: "DELETE" });
+});

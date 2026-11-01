@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { cleanFilter, matches, scoreContact } from "./crm.js";
+import { PLATFORMS, detectPlatform } from "./platforms.js";
 
 const EMPTY = () => ({ version: 1, seq: 0, contacts: [], campaigns: [], enrollments: [], messages: [], notes: [], imports: [], settings: {} });
 const MAX_MESSAGES = 400000;
@@ -21,8 +22,12 @@ export class CrmStore {
   // text. Swap the placeholder in Arabic steps of starter campaigns only; your own campaigns are untouched.
   #migrate() {
     let n = 0;
+    // Platform names from older imports ("Unknown", "salla", "شوبيفاي") → the standard list.
+    for (const c of this.db.contacts) if (!PLATFORMS.includes(c.platform)) { c.platform = detectPlatform(c.platform, c.domain) || "Other"; n++; }
     for (const c of this.db.campaigns) {
       if (c.created_by !== "starter") continue;
+      // The Salla starter says "your store on Salla": keep it to Salla stores only.
+      if (c.name === "Salla stores · cold outreach (AR/EN)" && !(c.filter?.platform || []).length) { c.filter = { ...(c.filter || {}), platform: ["Salla"] }; n++; }
       for (const st of c.steps || []) for (const k of ["subject", "body"]) {
         if (/[\u0600-\u06FF]/.test(st[k] || "") && st[k].includes("{{category}}")) { st[k] = st[k].replaceAll("{{category}}", "{{category_ar}}"); n++; }
       }

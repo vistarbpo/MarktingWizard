@@ -47,6 +47,8 @@ export const CATEGORY_AR = { "Fashion & abayas": "الأزياء والعباي�
   "Home & furniture": "المنزل والأثاث", "Food & sweets": "الأغذية والحلويات", "Coffee & dates": "القهوة والتمور", "Kids & toys": "الأطفال والألعاب", "Gifts & flowers": "الهدايا والورد",
   "Health & supplements": "الصحة والمكملات", "Sports": "الرياضة", "Jewelry & watches": "المجوهرات والساعات", "Books & stationery": "الكتب والقرطاسية", Other: "التجارة الإلكترونية" };
 
+import { detectPlatform } from "./platforms.js";
+
 // ---- CSV import -------------------------------------------------------------------------
 export function splitCsv(text) {
   const src = String(text || "").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
@@ -147,7 +149,7 @@ export function parseStores(text, { platform = "Salla", source = "import" } = {}
       category_raw: String(get(r, "category")).slice(0, 80), category: matchCategory(get(r, "category")),
       city: String(get(r, "city")).trim().slice(0, 60), products: Math.max(0, parseInt(String(get(r, "products")).replace(/\D/g, ""), 10) || 0),
       owner_name: String(get(r, "owner_name")).trim().slice(0, 100), instagram: String(get(r, "instagram")).trim().slice(0, 120),
-      platform: String(get(r, "platform")).trim() || platform, rating: parseFloat(get(r, "rating")) || null,
+      platform: detectPlatform(get(r, "platform"), domain) || (String(get(r, "platform")).trim() ? "Other" : platform), rating: parseFloat(get(r, "rating")) || null,
       wa_opt_in: truthy(get(r, "wa_opt_in")), source,
     };
     if (!c.email && !c.phone) noContact++;
@@ -217,7 +219,7 @@ export function renderTemplate(tpl, c, extra = {}) {
 export const STARTER_CAMPAIGNS = [
   {
     name: "Salla stores · cold outreach (AR/EN)", type: "outreach", stop_on_reply: true,
-    filter: { stage: ["new"], has_email: true, min_products: 30 },
+    filter: { platform: ["Salla"], stage: ["new"], has_email: true, min_products: 30 },
     steps: [
       { channel: "email", delay_days: 0, subject: "إعلانات مصممة لكل منتج في {{store_name}}",
         body: "السلام عليكم {{owner_name}}،\n\nشفت متجر {{store_name}} على سلة، وعندكم {{products}} منتج. أغلب إعلانات الكتالوج في سناب وميتا وتيك توك تطلع صورة منتج عادية على خلفية بيضاء.\n\nDPA AD يحوّل كتالوجكم تلقائياً إلى إعلانات صور وفيديو مصممة بالعربي، مع السعر والخصم محدّثين دائماً.\n\nأقدر أرسل لكم ٣ نماذج مجانية من منتجاتكم أنتم؟ ردّوا بـ \"نعم\" فقط.\n\nتحياتي،\n{{sender_name}}" },

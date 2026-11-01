@@ -5,6 +5,7 @@ import express from "express";
 import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, STEP_CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
 import { DEFAULT_SETTINGS } from "./outreach.js";
 import { zTest } from "./roas.js";
+import { PLATFORMS, PLATFORM_LIST, detectPlatform } from "./platforms.js";
 
 const page = (title, body) => `<!doctype html><html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{font-family:system-ui,Tahoma,sans-serif;background:#f6f6f4;color:#111;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}.c{background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:32px;max-width:440px;text-align:center}button{background:#1f5eff;color:#fff;border:0;border-radius:8px;padding:10px 20px;font-size:15px;cursor:pointer}p{color:#555;line-height:1.6}</style></head><body><div class="c">${body}</div></body></html>`;
@@ -78,7 +79,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
   app.get(`${P}/meta`, (req, res) => {
     if (!W(req, res)) return;
     const cfg = outreach.cfg;
-    res.json({ intent_tags: INTENT_TAGS, stages: STAGES, board: BOARD, types: CAMPAIGN_TYPES, channels: CHANNELS, categories: SALLA_CATEGORIES, onboarding: ONBOARDING_STEPS, intents: INTENTS, users: users(),
+    res.json({ platforms: PLATFORM_LIST.map(({ id, region, connect }) => ({ id, region, connect })), intent_tags: INTENT_TAGS, stages: STAGES, board: BOARD, types: CAMPAIGN_TYPES, channels: CHANNELS, categories: SALLA_CATEGORIES, onboarding: ONBOARDING_STEPS, intents: INTENTS, users: users(),
       settings: outreach.settings(req.params.ws),
       connections: { email: cfg.email.ready, email_from: cfg.email.from, imap: cfg.email.imap.ready, whatsapp: cfg.whatsapp.ready, whatsapp_webhook: !!cfg.whatsapp.verify, public_url: cfg.public_url } });
   });
@@ -97,7 +98,12 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
       const cs = all.filter((c) => c.category === category);
       return { category, stores: n, contacted: cs.filter((c) => c.last_contacted_at).length, replied: cs.filter((c) => c.last_reply_at).length, customers: cs.filter((c) => ["onboarding", "active"].includes(c.stage)).length };
     });
+    const plats = Object.entries(counts(all, "platform")).sort((a, b) => b[1] - a[1]).map(([platform, n]) => {
+      const cs = all.filter((c) => (c.platform || "—") === platform);
+      return { platform, stores: n, contacted: cs.filter((c) => c.last_contacted_at).length, replied: cs.filter((c) => c.last_reply_at).length, customers: cs.filter((c) => ["onboarding", "active"].includes(c.stage)).length };
+    });
     res.json({
+      platforms: plats,
       total: all.length, by_stage: counts(all, "stage"), categories: cats,
       reachable: { email: all.filter((c) => c.email && !c.email_opt_out && !c.bounced && c.stage !== "do_not_contact").length, whatsapp: all.filter((c) => c.phone && c.wa_opt_in && !c.wa_opt_out).length, phone: all.filter((c) => c.phone).length },
       week: { sent: outW.length, replies: inW.length, reply_rate: outW.length ? Math.round((new Set(inW.map((m) => m.contact_id)).size / new Set(outW.map((m) => m.contact_id)).size) * 1000) / 10 : null, unsubscribed: all.filter((c) => c.email_opt_out).length, bounced: all.filter((c) => c.bounced).length },
@@ -136,7 +142,8 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
   const cleanContact = (b, partial) => {
     const o = {};
     const s = (k, max = 160) => { if (b[k] !== undefined) o[k] = String(b[k] ?? "").trim().slice(0, max); };
-    ["store_name", "owner_name", "city", "instagram", "platform"].forEach((k) => s(k));
+    ["store_name", "owner_name", "city", "instagram"].forEach((k) => s(k));
+    if (b.platform !== undefined) o.platform = PLATFORMS.includes(b.platform) ? b.platform : detectPlatform(b.platform, b.domain) || "Other";
     if (b.domain !== undefined) o.domain = normDomain(b.domain);
     if (b.email !== undefined) o.email = normEmail(b.email);
     if (b.phone !== undefined) o.phone = normPhone(b.phone);
@@ -154,7 +161,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     const { o, err } = cleanContact(req.body || {}, false);
     if (err) return res.status(422).json({ detail: err });
     if (crm.find(req.params.ws, o)) return res.status(422).json({ detail: "This store is already in the CRM (same link, email or phone)." });
-    res.status(201).json(crm.add(req.params.ws, { platform: "Salla", category: "Other", source: "manual", ...o }));
+    res.status(201).json(crm.add(req.params.ws, { category: "Other", source: "manual", ...o, platform: o.platform || detectPlatform("", o.domain) || "Other" }));
   });
   app.get(`${P}/contacts/:id`, (req, res) => {
     if (!W(req, res)) return;
@@ -237,15 +244,15 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
   const big = express.text({ type: ["text/*", "application/csv"], limit: "40mb" });
   app.post(`${P}/import/preview`, big, (req, res) => {
     if (!W(req, res)) return;
-    const r = parseStores(req.body, { platform: String(req.query.platform || "Salla") });
+    const r = parseStores(req.body, { platform: PLATFORMS.includes(req.query.platform) ? req.query.platform : "Other" });
     if (r.error) return res.status(422).json({ detail: r.error });
     const dupes = r.rows.filter((x) => crm.find(req.params.ws, x)).length;
     res.json({ total: r.total, columns: r.columns, no_contact: r.no_contact, duplicates: dupes, with_email: r.rows.filter((x) => x.email).length, with_phone: r.rows.filter((x) => x.phone).length,
-      categories: counts(r.rows, "category"), sample: r.rows.slice(0, 8) });
+      categories: counts(r.rows, "category"), platforms: counts(r.rows, "platform"), sample: r.rows.slice(0, 8) });
   });
   app.post(`${P}/import`, big, (req, res) => {
     if (!W(req, res)) return;
-    const r = parseStores(req.body, { platform: String(req.query.platform || "Salla"), source: String(req.query.source || "import").slice(0, 60) });
+    const r = parseStores(req.body, { platform: PLATFORMS.includes(req.query.platform) ? req.query.platform : "Other", source: String(req.query.source || "import").slice(0, 60) });
     if (r.error) return res.status(422).json({ detail: r.error });
     const tags = String(req.query.tags || "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 5);
     const owner_ids = String(req.query.owners || "").split(",").filter((id) => store.db.users.some((u) => u.id === id));

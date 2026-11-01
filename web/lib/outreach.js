@@ -192,7 +192,7 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
     if (!c) {
       const wsId = store.listWorkspaces()[0]?.id;
       if (!wsId) return null;
-      c = crm.add(wsId, { store_name: name || email || "+" + phone, email, phone, platform: "Unknown", category: "Other", source: "inbound", stage: "engaged", tags: ["inbound"] });
+      c = crm.add(wsId, { store_name: name || email || "+" + phone, email, phone, platform: "Other", category: "Other", source: "inbound", stage: "engaged", tags: ["inbound"] });
     }
     const wsId = c.workspace_id;
     const msg = crm.addMessage({ workspace_id: wsId, contact_id: c.id, channel, direction: "in", subject, body: String(body).slice(0, 8000), status: "received", provider_id, handled: false });

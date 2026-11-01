@@ -4,7 +4,7 @@
 
 const SALES = { meta: null, deals: [], summary: null, tab: "board", openId: null };
 const STAGE_COLOR = { lead: "var(--text-3)", contacted: "#8a7cf0", demo: "var(--accent)", beta: "var(--warn)", trial: "#e0703a", paying: "var(--good)", lost: "var(--bad)" };
-const PLATFORM_COLOR = { Salla: "#004956", Zid: "#7b2cbf", Shopify: "#5e8e3e", WooCommerce: "#7f54b3", Other: "#6b6b66" };
+const PLATFORM_COLOR = { Salla: "#004956", Zid: "#7b2cbf", Shopify: "#5e8e3e", WooCommerce: "#7f54b3", Magento: "#d9531e", BigCommerce: "#34313f", Wix: "#1f5eff", ExpandCart: "#0a7fa8", YouCan: "#d9338a", Custom: "#3d3d3a", Other: "#6b6b66" };
 const HUES = ["#0f766e", "#7c3aed", "#b45309", "#be123c", "#1d4ed8", "#4d7c0f", "#a21caf", "#0e7490"];
 const LABEL_SIDE = { Makkah: "below", Khobar: "right", Jeddah: "left", Dammam: "above", Riyadh: "below", Buraidah: "above", Hail: "above", Taif: "below", "Al Ahsa": "below" };
 const usd = (n) => "$" + Math.round(n).toLocaleString("en-US");

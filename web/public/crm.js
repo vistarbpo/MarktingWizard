@@ -82,6 +82,11 @@ function crmOverview(o) {
     ${o.categories.map((c) => `<tr><td><b>${esc(c.category)}</b></td><td class="num">${nf(c.stores)}</td><td class="num">${nf(c.contacted)}</td><td class="num">${nf(c.replied)}</td><td class="num">${c.contacted ? Math.round((c.replied / c.contacted) * 1000) / 10 + "%" : "–"}</td><td class="num">${nf(c.customers)}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-ghost" data-caction="see-cat" data-cat="${esc(c.category)}">Stores</button>${crmEdit() ? `<button class="btn btn-sm" data-caction="camp-cat" data-cat="${esc(c.category)}">Campaign</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div></div>
+  <div class="card" style="margin-top:20px"><div class="card-head"><div><h2>By platform</h2><p class="subtle" style="font-size:13px">Where each store's shop runs, and how DPA AD connects to its catalog.</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Platform</th><th>Region</th><th>Stores</th><th>Contacted</th><th>Replied</th><th>Customers</th><th>How DPA AD connects</th><th></th></tr></thead><tbody>
+    ${(o.platforms || []).map((p) => { const info = CRM.meta.platforms.find((x) => x.id === p.platform) || {}; return `<tr><td><b>${esc(p.platform)}</b></td><td class="subtle">${esc(info.region || "")}</td><td class="num">${nf(p.stores)}</td><td class="num">${nf(p.contacted)}</td><td class="num">${nf(p.replied)}</td><td class="num">${nf(p.customers)}</td><td class="subtle" style="font-size:12px">${esc(info.connect || "")}</td>
+      <td style="text-align:right"><button class="btn btn-sm btn-ghost" data-caction="see-plat" data-plat="${esc(p.platform)}">Stores</button></td></tr>`; }).join("")}
+    </tbody></table></div></div>
   ${o.owners.length ? `<div class="card" style="margin-top:20px"><div class="card-head"><h2>Owners</h2></div><div class="card-body row gap-8" style="padding:14px 18px;flex-wrap:wrap">${o.owners.map((x) => `<span class="badge">${esc(x.name)} · ${nf(x.stores)}</span>`).join("")}</div></div>` : ""}`;
 }
 
@@ -110,7 +115,7 @@ function crmPlanner(o) {
 
 /* ------------------------------------------------ Filters (shared by Stores and campaign segments) */
 function crmFilterHtml(p, f = {}) {
-  const facets = CRM.list?.facets || { category: {}, city: {}, stage: {}, tags: {} };
+  const facets = CRM.list?.facets || { category: {}, city: {}, stage: {}, tags: {}, platform: {} };
   const one = (v) => (Array.isArray(v) ? v[0] || "" : v || "");
   const sel = (key, label, opts) => `<select class="input input-sm" data-f="${key}" aria-label="${label}"><option value="">${label}: all</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${one(f[key]) === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
   const cats = [...new Set([...CRM.meta.categories, ...Object.keys(facets.category)])];
@@ -119,6 +124,7 @@ function crmFilterHtml(p, f = {}) {
     <input class="input input-sm" data-f="q" placeholder="Search name, link, email, phone" value="${esc(f.q || "")}" style="min-width:200px">
     ${sel("category", "Category", cats.map((c) => [c, facets.category[c] ? `${c} (${facets.category[c]})` : c]))}
     ${sel("city", "City", cities)}
+    ${sel("platform", "Platform", CRM.meta.platforms.filter((p) => facets.platform?.[p.id] || ["Salla", "Zid", "Shopify"].includes(p.id)).map((p) => [p.id, `${p.id}${facets.platform?.[p.id] ? ` (${facets.platform[p.id]})` : ""}`]))}
     ${sel("stage", "Stage", CRM.meta.stages.map((s) => [s.id, `${s.name}${facets.stage[s.id] ? ` (${facets.stage[s.id]})` : ""}`]))}
     ${Object.keys(facets.tags).length ? sel("tags", "Tag", Object.entries(facets.tags).map(([t, n]) => [t, `${t} (${n})`])) : ""}
     ${sel("owner_id", "Owner", [["none", "Unassigned"], ...CRM.meta.users.map((u) => [u.id, u.name])])}
@@ -134,7 +140,7 @@ function crmReadFilter(p) {
   document.querySelectorAll(`#${p} [data-f]`).forEach((el) => {
     const k = el.dataset.f;
     if (el.type === "checkbox") { if (el.checked) f[k] = true; }
-    else if (el.value !== "") f[k] = ["category", "city", "stage", "tags"].includes(k) ? [el.value] : el.type === "number" ? Number(el.value) : el.value;
+    else if (el.value !== "") f[k] = ["category", "city", "stage", "tags", "platform"].includes(k) ? [el.value] : el.type === "number" ? Number(el.value) : el.value;
   });
   return f;
 }
@@ -156,10 +162,10 @@ async function crmStores(body) {
   ${edit && nSel ? `<div class="card c-bulk"><b>${nf(nSel)} selected</b>${!CRM.allMatching && CRM.sel.size === L.rows.length && L.total > L.rows.length ? `<button class="btn btn-sm btn-ghost" data-caction="sel-all">Select all ${nf(L.total)} matching</button>` : ""}
     <select class="input input-sm" id="cBulkAct"><option value="">Action…</option><option value="stage">Move to stage</option><option value="owner">Assign owner (round-robin)</option><option value="tag">Add tag</option><option value="untag">Remove tag</option><option value="enroll">Add to campaign</option><option value="delete">Delete</option></select>
     <span id="cBulkVal"></span><button class="btn btn-sm btn-primary" data-caction="bulk-go">Apply</button><button class="btn btn-sm btn-ghost" data-caction="sel-none">Clear</button></div>` : ""}
-  <div class="card"><div class="table-wrap"><table class="c-table"><thead><tr>${edit ? `<th style="width:32px"><input type="checkbox" id="cSelPage" aria-label="Select page" ${L.rows.length && L.rows.every((r) => CRM.sel.has(r.id)) ? "checked" : ""}></th>` : ""}<th>Store</th><th>Category</th><th>City</th><th>Products</th><th>Fit</th><th>Stage</th><th>Owner</th><th>Reach</th><th>Last contact</th></tr></thead><tbody>
+  <div class="card"><div class="table-wrap"><table class="c-table"><thead><tr>${edit ? `<th style="width:32px"><input type="checkbox" id="cSelPage" aria-label="Select page" ${L.rows.length && L.rows.every((r) => CRM.sel.has(r.id)) ? "checked" : ""}></th>` : ""}<th>Store</th><th>Category · platform</th><th>City</th><th>Products</th><th>Fit</th><th>Stage</th><th>Owner</th><th>Reach</th><th>Last contact</th></tr></thead><tbody>
   ${L.rows.map((c) => `<tr class="clickable" data-copen="${c.id}">${edit ? `<td><input type="checkbox" data-csel="${c.id}" ${CRM.allMatching || CRM.sel.has(c.id) ? "checked" : ""} aria-label="Select ${esc(c.store_name)}"></td>` : ""}
     <td><b dir="auto">${esc(c.store_name)}</b><div class="subtle">${esc(c.domain || "")}${c.sample ? ' <span class="badge">SAMPLE</span>' : ""}</div></td>
-    <td>${esc(c.category)}</td><td>${esc(c.city || "–")}</td><td class="num">${nf(c.products)}</td>
+    <td>${esc(c.category)}<div class="subtle">${esc(c.platform || "")}</div></td><td>${esc(c.city || "–")}</td><td class="num">${nf(c.products)}</td>
     <td><span class="c-score" style="--v:${c.score}%">${c.score}</span></td><td>${stageBadge(c.stage)}</td><td>${esc(c.owner_name || "–")}</td>
     <td class="subtle" style="white-space:nowrap">${c.email ? (c.email_opt_out ? "<s>email</s>" : c.bounced ? "bounced" : "email") : ""}${c.phone ? ` · ${c.wa_opt_in ? "WA ✓" : "phone"}` : ""}</td>
     <td class="subtle">${c.last_contacted_at ? fmtDate(c.last_contacted_at) : "never"}</td></tr>`).join("") || `<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">No stores match.</td></tr>`}
@@ -392,6 +398,7 @@ async function crmOpen(id) {
     <span>Link</span><span>${c.domain ? `<a href="https://${esc(c.domain)}" target="_blank" rel="noopener">${esc(c.domain)}</a>` : "–"}</span>
     <span>Email</span><span>${esc(c.email || "–")}${c.email_opt_out ? ' <span class="badge bad">unsubscribed</span>' : ""}${c.bounced ? ' <span class="badge bad">bounced</span>' : ""}</span>
     <span>Phone</span><span>${c.phone ? "+" + esc(c.phone) : "–"} ${c.phone ? (edit ? `<label class="chip" style="height:auto"><input type="checkbox" id="cdWa" ${c.wa_opt_in ? "checked" : ""}> WhatsApp opt-in</label>` : c.wa_opt_in ? "· opted in" : "") : ""}</span>
+    <span>Platform</span><span>${edit ? `<select class="input input-sm" id="cdPlat" style="width:auto">${CRM.meta.platforms.map((p) => `<option ${p.id === c.platform ? "selected" : ""}>${esc(p.id)}</option>`).join("")}</select>` : esc(c.platform || "–")} <span class="subtle" style="font-size:12px">${esc(CRM.meta.platforms.find((p) => p.id === c.platform)?.connect || "")}</span></span>
     <span>Owner name</span><span dir="auto">${esc(c.owner_name || "–")}</span><span>Instagram</span><span>${esc(c.instagram || "–")}</span>
     <span>Tags</span><span>${edit ? `<input class="input input-sm" id="cdTags" value="${esc((c.tags || []).join(", "))}" title="Intent tags raise the fit score: ${Object.keys(CRM.meta.intent_tags || {}).join(", ")}"><div class="subtle" style="font-size:11px;margin-top:2px">Intent tags: ${Object.keys(CRM.meta.intent_tags || {}).join(", ")}</div>` : esc((c.tags || []).join(", ") || "–")}</span>
     <span>Source</span><span>${esc(c.source || "–")} · added ${fmtDate(c.created_at)}</span>
@@ -417,7 +424,7 @@ function crmImportDialog() {
   d.innerHTML = `<form method="dialog" style="width:min(640px,94vw)"><div style="padding:20px 24px 0"><h2>Import stores</h2><p class="subtle" style="font-size:13px">CSV from Excel or Google Sheets, up to ~40 MB (≈100k stores). Arabic or English headers. Known stores are merged, never duplicated.</p></div>
     <div class="card-body stack" style="padding:16px 24px">
       <input type="file" id="ciFile" accept=".csv,text/csv,.txt" class="input" style="padding-top:8px">
-      <div class="grid-2"><div class="field"><label for="ciPlat">Platform</label><select class="input" id="ciPlat"><option>Salla</option><option>Zid</option><option>Shopify</option><option>Other</option></select></div>
+      <div class="grid-2"><div class="field"><label for="ciPlat">Platform</label><select class="input" id="ciPlat">${CRM.meta.platforms.map((p) => `<option>${esc(p.id)}</option>`).join("")}</select><span class="hint">Used when the file has no platform column and the link doesn't show it (e.g. myshopify.com, salla.sa are detected).</span></div>
         <div class="field"><label for="ciTags">Tag this batch</label><input class="input" id="ciTags" placeholder="e.g. salla-30k, oct-2026"></div></div>
       ${CRM.meta.users.length ? `<div class="field"><label>Assign owners (round-robin)</label><div class="row gap-8" style="flex-wrap:wrap">${CRM.meta.users.map((u) => `<label class="chip"><input type="checkbox" name="ciOwn" value="${u.id}"> ${esc(u.name)}</label>`).join("")}</div></div>` : ""}
       <div id="ciPrev" class="muted" style="font-size:13px">Pick a file to see a preview.</div>
@@ -433,6 +440,7 @@ function crmImportDialog() {
       const p = await api(`${crmP()}/import/preview?platform=${encodeURIComponent($("#ciPlat").value)}`, { method: "POST", body: text, headers: { "Content-Type": "text/csv" } });
       $("#ciPrev").innerHTML = `<p><b>${nf(p.total)}</b> stores · ${nf(p.with_email)} with email · ${nf(p.with_phone)} with phone · ${nf(p.duplicates)} already in the CRM · ${nf(p.no_contact)} with no email or phone</p>
         <p class="subtle">Columns found: ${Object.entries(p.columns).map(([k, v]) => `${esc(k)} ← "${esc(v)}"`).join(", ")}</p>
+        <p class="subtle">Platforms: ${Object.entries(p.platforms || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${nf(v)}`).join(" · ")}</p>
         <p class="subtle">Categories: ${Object.entries(p.categories).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${nf(v)}`).join(" · ")}</p>
         <div class="table-wrap"><table><tbody>${p.sample.map((r) => `<tr><td dir="auto">${esc(r.store_name)}</td><td>${esc(r.category)}</td><td>${esc(r.email)}</td><td>${esc(r.phone)}</td><td>${nf(r.products)}</td></tr>`).join("")}</tbody></table></div>`;
       $("#ciGo").disabled = false;
@@ -501,6 +509,7 @@ document.addEventListener("click", async (e) => {
       case "import": return crmImportDialog();
       case "sample": { const r = await api(`${crmP()}/sample`, { method: "POST" }); toast(`Added ${r.added} sample stores`); CRM.tab = "stores"; return crmRerender(); }
       case "see-cat": CRM.f = { category: [b.dataset.cat] }; CRM.page = 0; CRM.tab = "stores"; return crmRerender();
+      case "see-plat": CRM.f = { platform: [b.dataset.plat] }; CRM.page = 0; CRM.tab = "stores"; return crmRerender();
       case "see-stage": CRM.f = { stage: [b.dataset.stage] }; CRM.page = 0; CRM.tab = "stores"; return crmRerender();
       case "camp-cat": return crmNewCampaign({ name: `${b.dataset.cat} · outreach`, type: "outreach", filter: { category: [b.dataset.cat], stage: ["new"], has_email: true } });
       case "seg-camp": return crmNewCampaign({ name: "Segment campaign", type: "outreach", filter: CRM.f });
@@ -519,10 +528,11 @@ document.addEventListener("click", async (e) => {
         const d = $("#dialog");
         d.innerHTML = `<form method="dialog" style="width:min(520px,92vw)"><div style="padding:20px 24px 0"><h2>Add a store</h2></div><div class="card-body stack" style="padding:16px 24px">
           ${[["store_name", "Store name"], ["domain", "Store link"], ["email", "Email"], ["phone", "Phone / WhatsApp"], ["city", "City"], ["products", "Products"], ["owner_name", "Owner name"]].map(([k, l]) => `<div class="field"><label for="as-${k}">${l}</label><input class="input" id="as-${k}" ${k === "store_name" ? "required" : ""} dir="auto"></div>`).join("")}
+          <div class="field"><label for="as-platform">Platform</label><select class="input" id="as-platform"><option value="">Detect from link</option>${CRM.meta.platforms.map((p) => `<option>${esc(p.id)}</option>`).join("")}</select></div>
           <div class="field"><label for="as-category">Category</label><select class="input" id="as-category">${CRM.meta.categories.map((x) => `<option>${esc(x)}</option>`).join("")}</select></div></div>
           <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn btn-primary" value="ok">Add</button></div></form>`;
         d.showModal();
-        d.onclose = async () => { if (d.returnValue !== "ok") return; const body = Object.fromEntries(["store_name", "domain", "email", "phone", "city", "products", "owner_name", "category"].map((k) => [k, $("#as-" + k).value]));
+        d.onclose = async () => { if (d.returnValue !== "ok") return; const body = Object.fromEntries(["store_name", "domain", "email", "phone", "city", "products", "owner_name", "category", "platform"].map((k) => [k, $("#as-" + k).value]).filter(([k, v]) => k !== "platform" || v));
           try { const c = await api(`${crmP()}/contacts`, { method: "POST", body: JSON.stringify(body) }); toast("Store added"); await crmRerender(); crmOpen(c.id); } catch (err) { toast(err.message, true); } };
         return;
       }
@@ -592,7 +602,7 @@ document.addEventListener("click", async (e) => {
       case "close": return crmClose();
       case "save-store": {
         const onb = Object.fromEntries([...document.querySelectorAll("[data-onb]")].map((x) => [x.dataset.onb, x.checked]));
-        await api(`${crmP()}/contacts/${CRM.openId}`, { method: "PUT", body: JSON.stringify({ stage: $("#cdStage").value, owner_id: $("#cdOwner").value || null, tags: $("#cdTags")?.value ?? undefined, wa_opt_in: $("#cdWa") ? $("#cdWa").checked : undefined, ...(Object.keys(onb).length ? { onboarding: onb } : {}) }) });
+        await api(`${crmP()}/contacts/${CRM.openId}`, { method: "PUT", body: JSON.stringify({ stage: $("#cdStage").value, owner_id: $("#cdOwner").value || null, platform: $("#cdPlat")?.value, tags: $("#cdTags")?.value ?? undefined, wa_opt_in: $("#cdWa") ? $("#cdWa").checked : undefined, ...(Object.keys(onb).length ? { onboarding: onb } : {}) }) });
         toast("Saved"); await crmOpen(CRM.openId); return crmRerender();
       }
       case "send-one": case "log-reply": case "note": {
