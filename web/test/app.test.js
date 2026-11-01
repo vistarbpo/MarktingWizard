@@ -780,7 +780,7 @@ test("store CRM: import 30k-style CSV, segments, sequences in Saudi hours, repli
   assert.equal(guessIntent("لاحقاً إن شاء الله"), "not_now");
 
   // HTTP: starter campaigns, preview, launch in test mode, inbox, unsubscribe page, sample stores, permissions.
-  assert.equal((await (await post(`${P}/campaigns/starter`)).json()).added, 3);
+  assert.equal((await (await post(`${P}/campaigns/starter`)).json()).added, 4);
   const camps = await json(`${P}/campaigns`);
   const cold = camps.find((x) => x.type === "outreach");
   const prev = await json(`${P}/campaigns/${cold.id}/preview`);
