@@ -664,3 +664,4 @@ details > summary { cursor: pointer; }
 .p-table .input { width: 110px; }
 .p-sep th { background: var(--surface-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
 .p-total td, .p-total th { border-top: 1px solid var(--border-strong); }
+.p-warn { color: var(--warn); }

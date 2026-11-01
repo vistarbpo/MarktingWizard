@@ -20,6 +20,8 @@ export const PLAN_FIELDS = {
   creatives: "Designed images per product",
   refresh_pct: "Share of images re-rendered each month (%)",
   videos: "Catalog videos per month",
+  render_limit: "Image renders included per month (0 = no limit)",
+  overage_per_1k: "Price per extra 1,000 renders (USD; 0 = hard stop at the limit)",
   ai: "AI cost per store per month (USD)",
   support_hours: "Human support hours per month",
   onboarding_hours: "Onboarding hours (one time)",
@@ -37,6 +39,9 @@ export const DEFAULT_PRICING = {
     support_hours: { Starter: 0.25, Growth: 0.5, Scale: 2, Enterprise: 6 }[p.name] ?? 0.5,
     onboarding_hours: { Starter: 0.5, Growth: 1, Scale: 4, Enterprise: 12 }[p.name] ?? 1,
     stores: { Starter: 60, Growth: 25, Scale: 6, Enterprise: 1 }[p.name] ?? 1,
+    // Big catalogs re-render a lot: Scale and Enterprise include a monthly allowance, extra renders are billed.
+    render_limit: { Scale: 15000, Enterprise: 50000 }[p.name] ?? 0,
+    overage_per_1k: { Scale: 10, Enterprise: 8 }[p.name] ?? 0,
   })),
 };
 
@@ -45,7 +50,7 @@ export function cleanPricing(b = {}, cur = DEFAULT_PRICING) {
   const costs = { ...cur.costs };
   for (const k of Object.keys(COST_FIELDS)) if (b.costs?.[k] !== undefined) costs[k] = num(b.costs[k], 0, k.endsWith("pct") || k === "target_margin" ? 95 : 1e7, cur.costs[k]);
   const plans = (b.plans || cur.plans).slice(0, 8).map((p, i) => {
-    const base = cur.plans[i] || cur.plans.at(-1);
+    const base = { ...(DEFAULT_PRICING.plans[i] || DEFAULT_PRICING.plans.at(-1)), ...(cur.plans[i] || {}) }; // new fields fall back to the defaults
     const o = { name: String(p.name ?? base.name).trim().slice(0, 40) || base.name };
     for (const k of Object.keys(PLAN_FIELDS)) o[k] = num(p[k] ?? base[k], 0, k === "refresh_pct" ? 100 : 1e8, base[k]);
     return o;
@@ -61,7 +66,11 @@ export function pricingModel(pr, churnPct = 3) {
   const fixedPerStore = c.fixed_monthly / totalStores;
   const r2 = (x) => Math.round(x * 100) / 100;
   const plans = pr.plans.map((p) => {
-    const images = p.products * p.creatives * (p.refresh_pct / 100);
+    const wanted = p.products * p.creatives * (p.refresh_pct / 100);
+    const limited = p.render_limit > 0 && wanted > p.render_limit;
+    const extra = limited && p.overage_per_1k > 0 ? wanted - p.render_limit : 0;
+    const images = limited && !p.overage_per_1k ? p.render_limit : wanted; // hard stop, or render all and bill the extra
+    const overage = (extra / 1000) * p.overage_per_1k;
     const firstRender = p.products * p.creatives * c.image_cost; // one-time, spread over the store's lifetime
     const parts = {
       images: images * c.image_cost,
@@ -73,12 +82,14 @@ export function pricingModel(pr, churnPct = 3) {
       fixed_share: fixedPerStore,
     };
     const direct = Object.values(parts).reduce((a, x) => a + x, 0);
-    const at = (price) => { const cost = direct + price * fee; return { price, cost: r2(cost), margin: price ? Math.round(((price - cost) / price) * 1000) / 10 : null, profit: r2(price - cost) }; };
-    const minPrice = 1 - fee - target > 0 ? direct / (1 - fee - target) : null;
+    // Revenue = plan price + billed overage; fees apply to both.
+    const at = (price) => { const rev = price + overage, cost = direct + rev * fee; return { price, revenue: r2(rev), cost: r2(cost), margin: rev ? Math.round(((rev - cost) / rev) * 1000) / 10 : null, profit: r2(rev - cost) }; };
+    const minPrice = 1 - fee - target > 0 ? Math.max(0, (direct - overage * (1 - fee - target)) / (1 - fee - target)) : null;
     const breakEven = 1 - fee > 0 ? direct / (1 - fee) : null;
     const monthly = at(p.price), yearly = at(p.annual_price);
     return {
-      name: p.name, images_per_month: Math.round(images), parts: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, r2(v)])),
+      name: p.name, images_per_month: Math.round(images), renders_wanted: Math.round(wanted), over_limit: limited, extra_renders: Math.round(extra),
+      held_back: limited && !p.overage_per_1k ? Math.round(wanted - p.render_limit) : 0, overage: r2(overage), parts: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, r2(v)])),
       fees: r2(p.price * fee), direct: r2(direct), monthly, yearly,
       min_price: minPrice && Math.ceil(minPrice), break_even: breakEven && Math.ceil(breakEven),
       ok: monthly.margin != null && monthly.margin >= c.target_margin, yearly_ok: yearly.margin != null && yearly.margin >= c.target_margin,

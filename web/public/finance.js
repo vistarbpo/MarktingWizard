@@ -263,19 +263,22 @@ async function finPricing() {
   <div class="table-wrap"><table class="p-table"><thead><tr><th></th>${P.plans.map((p, i) => `<th><input class="input input-sm" data-pp="${i}:name" value="${esc(p.name)}"></th>`).join("")}</tr></thead><tbody>
     ${Object.entries(PF).map(([k, l]) => row(esc(l), P.plans.map((p, i) => `<td>${inp(`data-pp="${i}:${k}"`, p[k])}</td>`))).join("")}
     <tr class="p-sep"><th colspan="${P.plans.length + 1}">Cost of one store per month</th></tr>
+    ${row("Renders the store needs per month", plans.map((x) => `<td class="num">${x.renders_wanted.toLocaleString("en-US")}</td>`))}
+    ${row("Render limit", plans.map((x, i) => `<td class="num ${x.over_limit ? "p-warn" : "subtle"}">${P.plans[i].render_limit ? `${P.plans[i].render_limit.toLocaleString("en-US")}${x.extra_renders ? `<div class="s-small">${x.extra_renders.toLocaleString("en-US")} extra, billed</div>` : x.held_back ? `<div class="s-small">${x.held_back.toLocaleString("en-US")} not rendered (hard stop)</div>` : `<div class="s-small">within limit</div>`}` : "no limit"}</td>`))}
     ${row("Images rendered per month", plans.map((x) => `<td class="num">${x.images_per_month.toLocaleString("en-US")}</td>`))}
     ${[["images", "Image renders"], ["videos", "Video renders"], ["storage", "Storage + CDN"], ["ai", "AI"], ["support", "Support"], ["onboarding", "Onboarding + first render (spread over lifetime)"], ["fixed_share", "Share of fixed costs"]]
       .map(([k, l]) => row(l, plans.map((x) => `<td class="num subtle">${usd(x.parts[k])}</td>`))).join("")}
     ${row("Payment + app-store fees", plans.map((x) => `<td class="num subtle">${usd(x.fees)}</td>`))}
     ${row("<b>Total cost</b>", plans.map((x) => `<td class="num"><b>${usd(x.monthly.cost)}</b><div class="subtle s-small">SAR ${x.sar.cost.toLocaleString("en-US")}</div></td>`), "p-total")}
     <tr class="p-sep"><th colspan="${P.plans.length + 1}">Result</th></tr>
+    ${plans.some((x) => x.overage) ? row("Overage billed per month", plans.map((x) => `<td class="num">${x.overage ? usd(x.overage) : "–"}${x.overage ? `<div class="subtle s-small">revenue ${usd(x.monthly.revenue)}</div>` : ""}</td>`)) : ""}
     ${row("Gross margin, monthly price", plans.map((x) => `<td class="num"><span class="badge ${mtone(x.monthly.margin)}">${x.monthly.margin ?? "–"}%</span></td>`))}
     ${row("Gross margin, yearly price", plans.map((x) => `<td class="num"><span class="badge ${mtone(x.yearly.margin)}">${x.yearly.margin ?? "–"}%</span></td>`))}
     ${row(`<b>Lowest price for ${P.costs.target_margin}% margin</b>`, plans.map((x) => `<td class="num"><b>${usd(x.min_price)}</b>${x.sar.min_price ? `<div class="subtle s-small">SAR ${x.sar.min_price.toLocaleString("en-US")}</div>` : ""}</td>`), "p-total")}
     ${row("Break-even price", plans.map((x) => `<td class="num subtle">${usd(x.break_even)}</td>`))}
     ${row("Profit per store over its lifetime", plans.map((x) => `<td class="num">${usd(x.lifetime_profit)}</td>`))}
   </tbody></table></div></div>
-  <p class="subtle s-small" style="margin-top:12px">Prices in Sales, the CRM scripts and the forecast stay at the current plans until you decide; then they change in one place. Video and AI costs scale with usage, so check the Scale and Enterprise columns against real catalogs.</p>`;
+  <p class="subtle s-small" style="margin-top:12px">Margins and the lowest price include billed overage for a typical store; a store that stays under its limit pays only the plan price. Prices in Sales, the CRM scripts and the forecast stay at the current plans until you decide; then they change in one place. Video and AI costs scale with usage, so check the Scale and Enterprise columns against real catalogs.</p>`;
 }
 
 /* ------------------------------------------------ events */

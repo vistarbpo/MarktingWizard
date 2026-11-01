@@ -956,3 +956,17 @@ test("pricing calculator: cost per store, margin and the lowest price for the ta
   assert.ok(upd.model.plans[0].monthly.cost > g.model.plans[0].monthly.cost);
   assert.equal((await json(F, { method: "PUT", body: JSON.stringify({ reset: true }) })).inputs.example, true);
 });
+
+test("pricing: render limits with billed overage or a hard stop", async () => {
+  const { pricingModel, cleanPricing, DEFAULT_PRICING } = await import("../lib/pricing.js");
+  const base = { costs: { image_cost: 0.004, video_cost: 0, storage_per_1k: 0, support_hour: 0, payment_pct: 0, appstore_pct: 0, fixed_monthly: 0, target_margin: 70 } };
+  const plan = { name: "S", price: 1000, annual_price: 1000, products: 20000, creatives: 3, refresh_pct: 50, videos: 0, ai: 0, support_hours: 0, onboarding_hours: 0, stores: 1 };
+  const billed = pricingModel(cleanPricing({ ...base, plans: [{ ...plan, render_limit: 15000, overage_per_1k: 10 }] }, DEFAULT_PRICING), 100 / 33).plans[0];
+  assert.equal(billed.renders_wanted, 30000); assert.equal(billed.extra_renders, 15000); assert.equal(billed.overage, 150);
+  assert.equal(billed.images_per_month, 30000); assert.equal(billed.monthly.revenue, 1150);
+  const capped = pricingModel(cleanPricing({ ...base, plans: [{ ...plan, render_limit: 15000, overage_per_1k: 0 }] }, DEFAULT_PRICING), 3).plans[0];
+  assert.equal(capped.images_per_month, 15000); assert.equal(capped.held_back, 15000); assert.equal(capped.parts.images, 60);
+  // Older saved pricing without the new fields picks up the defaults.
+  const old = cleanPricing({ plans: DEFAULT_PRICING.plans.map(({ render_limit, overage_per_1k, ...p }) => p) }, { ...DEFAULT_PRICING, plans: DEFAULT_PRICING.plans.map(({ render_limit, overage_per_1k, ...p }) => p) });
+  assert.equal(old.plans[2].render_limit, 15000); assert.equal(old.plans[0].render_limit, 0);
+});

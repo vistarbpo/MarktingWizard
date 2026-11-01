@@ -48,6 +48,7 @@ Annual billing = 2 months free (~17% off). Prices are in USD.
 | Channels | 1 (Meta) | 3 | all | all + custom feeds |
 | Image templates | 5 | unlimited | unlimited | unlimited + custom design |
 | Video renders / mo | 25 | 250 | 1,500 | custom pool |
+| Image renders / mo | unlimited | unlimited | 15,000 included, then $10 per 1,000 | 50,000 included, then $8 per 1,000 (draft) |
 | Catalogs / stores | 1 | 2 | 10 (multi-market) | unlimited |
 | Creative A/B testing | – | ✓ | ✓ | ✓ |
 | Auto-localisation (language/currency) | – | – | ✓ | ✓ |
