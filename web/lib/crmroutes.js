@@ -251,7 +251,9 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     const en = crm.enrollments(camp.id), ms = crm.db.messages.filter((m) => m.campaign_id === camp.id);
     const contacted = new Set(ms.filter((m) => ["sent", "test"].includes(m.status)).map((m) => m.contact_id));
     const replied = en.filter((e) => e.status === "replied").length;
-    return { enrolled: en.length, active: en.filter((e) => e.status === "active").length, done: en.filter((e) => e.status === "done").length, replied,
+    const left = en.filter((e) => e.status === "active").reduce((a, e) => a + Math.max(0, camp.steps.length - e.step), 0);
+    const st = outreach.settings(camp.workspace_id), perDay = Math.max(1, Math.min(camp.daily_limit, st.email_daily_cap + st.wa_daily_cap));
+    return { left, per_day: perDay, eta_days: left ? Math.ceil(left / perDay) + Math.max(0, ...camp.steps.map((s) => s.delay_days || 0)) : 0, enrolled: en.length, active: en.filter((e) => e.status === "active").length, done: en.filter((e) => e.status === "done").length, replied,
       sent: ms.filter((m) => m.status === "sent").length, test: ms.filter((m) => m.status === "test").length, skipped: ms.filter((m) => m.status === "skipped").length, failed: ms.filter((m) => m.status === "failed").length,
       reply_rate: contacted.size ? Math.round((replied / contacted.size) * 1000) / 10 : null,
       by_step: camp.steps.map((_, i) => ms.filter((m) => m.step === i && ["sent", "test"].includes(m.status)).length) };

@@ -79,7 +79,7 @@ function ccTiles(d) {
   const r = d.revenue, s = d.support, t = d.team;
   const tile = (label, val, sub, route, tone = "") => `<button type="button" class="card s-kpi cc-tile ${tone}" data-go="${route}"><span class="eyebrow">${label}</span><b class="num">${val}</b><span class="subtle">${sub}</span></button>`;
   return `<div class="cc-tiles cc-span-12">
-    ${tile("Runway", d.finance.runway_months == null ? (d.finance.month_costs_sar ? "∞" : "–") : d.finance.runway_months + " mo", d.finance.cash_as_of ? `SAR ${Math.round(d.finance.cash_sar).toLocaleString("en-US")} cash · burn ${Math.round(d.finance.net_burn_sar).toLocaleString("en-US")}/mo` : "add your bank balance in Finance", "finance", d.finance.runway_months != null && d.finance.runway_months < 6 ? "warn" : "")}
+    ${d.finance.hidden ? "" : tile("Runway", d.finance.runway_months == null ? (d.finance.month_costs_sar ? "∞" : "–") : d.finance.runway_months + " mo", d.finance.cash_as_of ? `SAR ${Math.round(d.finance.cash_sar).toLocaleString("en-US")} cash · burn ${Math.round(d.finance.net_burn_sar).toLocaleString("en-US")}/mo` : "add your bank balance in Finance", "finance", d.finance.runway_months != null && d.finance.runway_months < 6 ? "warn" : "")}
     ${tile("Open deals", r.open_deals, `${cMoney(r.open_value)}/mo if all close`, "pipeline")}
     ${tile("Operations", d.ops.open_tasks, `open tasks · ${d.ops.ai_owned_pct == null ? "–" : d.ops.ai_owned_pct + "%"} AI-owned${d.ops.open_incidents ? ` · ${d.ops.open_incidents} incident${d.ops.open_incidents === 1 ? "" : "s"}` : ""}`, "ops", d.ops.open_incidents || d.ops.overdue ? "warn" : "")}
     ${tile("ROAS lift", d.roas.lift == null ? "–" : `${d.roas.lift > 0 ? "+" : ""}${Math.round(d.roas.lift * 100)}%`, d.roas.stores ? `designed ${d.roas.designed ?? "–"}x vs plain ${d.roas.plain ?? "–"}x · ${esc(d.roas.verdict)}` : "import store ad results to prove it", "results", d.roas.lift != null && d.roas.lift < 0 ? "warn" : "")}
@@ -120,7 +120,7 @@ function ccTeam(d) {
         <span><b class="num">${t.agents}</b> <span class="muted">AI agents</span></span>
         <span><b class="num">${t.humans}</b> <span class="muted">people</span></span>
         <span class="subtle s-small">${t.open_roles} hiring · ${t.planned_roles} planned</span>
-        <span class="subtle s-small num">SAR ${t.payroll_sar.toLocaleString("en-US")}/mo planned payroll</span>
+        ${t.hidden ? "" : `<span class="subtle s-small num">SAR ${t.payroll_sar.toLocaleString("en-US")}/mo planned payroll</span>`}
       </div></div>
   </section>`;
 }

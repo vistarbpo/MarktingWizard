@@ -640,3 +640,14 @@ details > summary { cursor: pointer; }
 .c-tl b.bad { color: var(--bad); }
 @media (max-width: 1100px) { .c-editor { grid-template-columns: 1fr; } .c-preview { position: static; max-height: none; } }
 @media (max-width: 700px) { .c-filters > * { flex: 1 1 140px; max-width: none !important; width: auto !important; } .c-fun { grid-template-columns: 90px 1fr 56px; } }
+
+/* ---- phone fixes from the sanity sweep */
+.split > * { min-width: 0; }
+@media (max-width: 900px) {
+  .split, .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  .s-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .s-tabs::-webkit-scrollbar { display: none; }
+  .s-tabs button { flex: none; white-space: nowrap; }
+  #pageActions { max-width: 100%; min-width: 0; }
+}
+.c-eta { padding: 0 20px 14px; font-size: var(--fs-sm); color: var(--text-2); } .c-eta.warn { color: var(--warn); }

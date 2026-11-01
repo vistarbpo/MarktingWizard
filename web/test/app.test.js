@@ -826,3 +826,15 @@ test("store CRM: old starter campaigns switch to the Arabic category placeholder
   assert.match(fs.readFileSync(path.join(d, "crm.json"), "utf8"), /category_ar/);
   fs.rmSync(d, { recursive: true, force: true });
 });
+
+test("command center hides modules a role can't see", async () => {
+  const [ws] = await json("/api/workspaces");
+  await post("/api/admin/users", { name: "Member M", email: "member-cc@dpa.ad", password: "member-pass-1", role_id: "member" });
+  const r = await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "member-cc@dpa.ad", password: "member-pass-1" }) });
+  const c = r.headers.get("set-cookie").split(";")[0];
+  const d = await (await fetch(base + `/api/workspaces/${ws.id}/command`, { headers: { cookie: c } })).json();
+  assert.equal(d.finance.hidden, true); assert.equal(d.finance.cash_sar, 0);
+  assert.ok(!d.needs.some((n) => n.module === "Finance"));
+  const own = await json(`/api/workspaces/${ws.id}/command`);
+  assert.equal(own.finance.hidden, undefined);
+});

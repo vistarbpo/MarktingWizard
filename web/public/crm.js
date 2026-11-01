@@ -176,6 +176,7 @@ function crmCampaigns(list) {
         ${c.status === "paused" ? `<button class="btn btn-sm btn-primary" data-caction="resume" data-id="${c.id}">Resume</button>` : ""}
         <button class="btn btn-sm" data-caction="edit-camp" data-id="${c.id}">Edit</button>` : ""}</div></div>
       <div class="c-stats">${[["Enrolled", s.enrolled], ["Active", s.active], ["Sent", s.sent], ["Test (not sent)", s.test], ["Replied", s.replied], ["Reply rate", s.reply_rate == null ? "–" : s.reply_rate + "%"], ["Skipped", s.skipped], ["Failed", s.failed]].map(([l, v]) => `<div><span class="eyebrow">${l}</span><b class="num">${typeof v === "number" ? nf(v) : v}</b></div>`).join("")}</div>
+      ${s.left ? `<p class="c-eta ${s.eta_days > 60 ? "warn" : ""}">${nf(s.left)} messages still to send at up to ${nf(s.per_day)}/day: about <b>${nf(s.eta_days)} days</b> to finish.${s.eta_days > 60 ? " Raise the daily limit (and the channel caps) as the mailbox warms up, or split the list by category." : ""}</p>` : ""}
       ${s.by_step.some(Boolean) ? `<div class="c-steps-bar">${s.by_step.map((n, i) => `<span>Step ${i + 1}: <b class="num">${nf(n)}</b></span>`).join("")}</div>` : ""}</div>`;
   }).join("")}</div>`;
 }
