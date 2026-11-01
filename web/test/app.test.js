@@ -935,3 +935,24 @@ test("platforms: detected from name or link, filterable, legacy values cleaned",
   assert.equal((await json(`${P}/contacts?f=${encodeURIComponent(JSON.stringify({ platform: ["Shopify"] }))}`)).total >= 1, true);
   await call(`${P}/contacts/${c.id}`, { method: "DELETE" });
 });
+
+test("pricing calculator: cost per store, margin and the lowest price for the target", async () => {
+  const { pricingModel, cleanPricing, DEFAULT_PRICING } = await import("../lib/pricing.js");
+  const p = cleanPricing({ costs: { image_cost: 0.01, video_cost: 0, storage_per_1k: 0, support_hour: 20, payment_pct: 3, appstore_pct: 0, fixed_monthly: 0, target_margin: 70 },
+    plans: [{ name: "T", price: 100, annual_price: 80, products: 1000, creatives: 2, refresh_pct: 50, videos: 0, ai: 5, support_hours: 0.5, onboarding_hours: 0, stores: 1 }] }, DEFAULT_PRICING);
+  const m = pricingModel(p, 5).plans[0];
+  // images 1000×2×50% = 1000 → $10; AI $5; support $10; first render 2000×0.01=$20 over 20 months = $1 → $26 direct
+  assert.equal(m.images_per_month, 1000); assert.equal(m.direct, 26);
+  assert.equal(m.monthly.cost, 29); assert.equal(m.monthly.margin, 71); assert.equal(m.ok, true);
+  assert.equal(m.min_price, 97); // 26 ÷ (1 − 0.03 − 0.70) = 96.3
+  assert.equal(m.yearly.margin, 64.5); assert.equal(m.yearly_ok, false);
+
+  const [ws] = await json("/api/workspaces");
+  const F = `/api/workspaces/${ws.id}/finance/pricing`;
+  const g = await json(F);
+  assert.equal(g.inputs.example, true); assert.equal(g.model.plans.length, 4);
+  const upd = await json(F, { method: "PUT", body: JSON.stringify({ ...g.inputs, costs: { ...g.inputs.costs, image_cost: 0.02 } }) });
+  assert.equal(upd.inputs.example, false); assert.equal(upd.inputs.costs.image_cost, 0.02);
+  assert.ok(upd.model.plans[0].monthly.cost > g.model.plans[0].monthly.cost);
+  assert.equal((await json(F, { method: "PUT", body: JSON.stringify({ reset: true }) })).inputs.example, true);
+});

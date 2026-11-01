@@ -13,13 +13,14 @@ ROUTES.finance = { title: "Finance", crumb: "Finance", render: renderFinance };
 async function finLoad() {
   if (!FIN.meta) FIN.meta = await api("/api/finance/meta");
   FIN.d = await api(`/api/workspaces/${S.ws.id}/finance`);
+  FIN.pricing = null; // reloads with the current churn and workspace
 }
 
 async function renderFinance(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   await finLoad();
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Finance views">
-    ${[["overview", "Overview"], ["income", "Income"], ["expenses", "Expenses"], ["reports", "Reports & VAT"]].map(([k, l]) => `<button role="tab" data-ftab="${k}" aria-selected="${FIN.tab === k}">${l}</button>`).join("")}</div>
+    ${[["overview", "Overview"], ["income", "Income"], ["expenses", "Expenses"], ["reports", "Reports & VAT"], ["pricing", "Pricing"]].map(([k, l]) => `<button role="tab" data-ftab="${k}" aria-selected="${FIN.tab === k}">${l}</button>`).join("")}</div>
     <button class="btn" data-faction="add-income">Add income</button><button class="btn btn-primary" data-faction="add-expense">Add expense</button>`;
   view.innerHTML = `<section class="s-kpis" id="fKpis"></section><div id="fBody" style="margin-top:20px"></div>`;
   finRerender();
@@ -38,7 +39,7 @@ function finRerender() {
     tile("MRR", sarFmt(s.revenue.mrr_sar), s.revenue.source === "billed" ? `billed · ${s.revenue.recurring_count} subscription${s.revenue.recurring_count === 1 ? "" : "s"}${s.revenue.one_off_month_sar ? ` · +${sarShort(s.revenue.one_off_month_sar)} one-off this month` : ""}` : s.revenue.source === "estimated" ? `estimated from ${s.revenue.paying} paying stores in Sales · log income to make it real` : "log income to see revenue", s.revenue.source === "estimated" ? "warn" : ""),
     tile("Gross margin", s.gross_margin == null ? "–" : s.gross_margin + "%", "after AI, APIs and hosting · early SaaS 50–70%, mature 80–85%"),
   ].join("");
-  ({ overview: finOverview, income: finIncome, expenses: finExpenses, reports: finReports })[FIN.tab]();
+  ({ overview: finOverview, income: finIncome, expenses: finExpenses, reports: finReports, pricing: finPricing })[FIN.tab]();
 }
 
 /* ------------------------------------------------ Overview */
@@ -243,6 +244,40 @@ function finShowReport(text) {
   box.innerHTML = `<div class="doc s-draft-body">${md(text)}</div><div class="row gap-8"><button class="btn btn-sm" data-faction="copy-report">Copy</button><span class="subtle s-small">Draft for you to review. Nothing is sent or filed.</span></div>`;
 }
 
+/* ------------------------------------------------ Pricing calculator */
+async function finPricing() {
+  if (!FIN.pricing) { $("#fBody").innerHTML = `<p class="muted">Loading…</p>`; FIN.pricing = await api(`/api/workspaces/${S.ws.id}/finance/pricing`); }
+  if (FIN.tab !== "pricing") return;
+  const { inputs: P, model: M, cost_fields: CF, plan_fields: PF } = FIN.pricing;
+  const usd = (x) => (x == null ? "–" : "$" + Number(x).toLocaleString("en-US", { maximumFractionDigits: x < 10 ? 2 : 0 }));
+  const inp = (attr, v, step = "any") => `<input class="input input-sm num" type="number" step="${step}" min="0" ${attr} value="${v}">`;
+  const mtone = (m) => (m == null ? "" : m >= P.costs.target_margin ? "good" : m >= 50 ? "warn" : "bad");
+  const row = (label, cells, cls = "") => `<tr class="${cls}"><th scope="row">${label}</th>${cells.join("")}</tr>`;
+  const plans = M.plans;
+  $("#fBody").innerHTML = `
+  ${P.example ? `<div class="card c-banner" style="margin-bottom:16px"><b>Example numbers.</b> Replace every cost below with your real figures: render cost per image and video, AI, storage, support time, payment and app-store fees. Results update when you leave a field.</div>` : ""}
+  <div class="card"><div class="card-head"><div><h2>Costs that apply to every plan</h2><p class="subtle" style="font-size:13px">Store lifetime ${M.lifetime_months} months at ${M.churn_pct}% monthly churn (set on Overview) · fees ${M.fee_pct}% of price · fixed costs ${usd(M.fixed_per_store)} per store</p></div>
+    <button class="btn btn-sm btn-ghost" data-faction="pricing-reset">Reset to examples</button></div>
+    <div class="p-costs">${Object.entries(CF).map(([k, l]) => `<label class="field"><span class="s-small">${esc(l)}</span>${inp(`data-pc="${k}"`, P.costs[k])}</label>`).join("")}</div></div>
+  <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>Per plan</h2><p class="subtle" style="font-size:13px">Cost of one typical store per month, and the price that reaches your ${P.costs.target_margin}% target margin.</p></div></div>
+  <div class="table-wrap"><table class="p-table"><thead><tr><th></th>${P.plans.map((p, i) => `<th><input class="input input-sm" data-pp="${i}:name" value="${esc(p.name)}"></th>`).join("")}</tr></thead><tbody>
+    ${Object.entries(PF).map(([k, l]) => row(esc(l), P.plans.map((p, i) => `<td>${inp(`data-pp="${i}:${k}"`, p[k])}</td>`))).join("")}
+    <tr class="p-sep"><th colspan="${P.plans.length + 1}">Cost of one store per month</th></tr>
+    ${row("Images rendered per month", plans.map((x) => `<td class="num">${x.images_per_month.toLocaleString("en-US")}</td>`))}
+    ${[["images", "Image renders"], ["videos", "Video renders"], ["storage", "Storage + CDN"], ["ai", "AI"], ["support", "Support"], ["onboarding", "Onboarding + first render (spread over lifetime)"], ["fixed_share", "Share of fixed costs"]]
+      .map(([k, l]) => row(l, plans.map((x) => `<td class="num subtle">${usd(x.parts[k])}</td>`))).join("")}
+    ${row("Payment + app-store fees", plans.map((x) => `<td class="num subtle">${usd(x.fees)}</td>`))}
+    ${row("<b>Total cost</b>", plans.map((x) => `<td class="num"><b>${usd(x.monthly.cost)}</b><div class="subtle s-small">SAR ${x.sar.cost.toLocaleString("en-US")}</div></td>`), "p-total")}
+    <tr class="p-sep"><th colspan="${P.plans.length + 1}">Result</th></tr>
+    ${row("Gross margin, monthly price", plans.map((x) => `<td class="num"><span class="badge ${mtone(x.monthly.margin)}">${x.monthly.margin ?? "–"}%</span></td>`))}
+    ${row("Gross margin, yearly price", plans.map((x) => `<td class="num"><span class="badge ${mtone(x.yearly.margin)}">${x.yearly.margin ?? "–"}%</span></td>`))}
+    ${row(`<b>Lowest price for ${P.costs.target_margin}% margin</b>`, plans.map((x) => `<td class="num"><b>${usd(x.min_price)}</b>${x.sar.min_price ? `<div class="subtle s-small">SAR ${x.sar.min_price.toLocaleString("en-US")}</div>` : ""}</td>`), "p-total")}
+    ${row("Break-even price", plans.map((x) => `<td class="num subtle">${usd(x.break_even)}</td>`))}
+    ${row("Profit per store over its lifetime", plans.map((x) => `<td class="num">${usd(x.lifetime_profit)}</td>`))}
+  </tbody></table></div></div>
+  <p class="subtle s-small" style="margin-top:12px">Prices in Sales, the CRM scripts and the forecast stay at the current plans until you decide; then they change in one place. Video and AI costs scale with usage, so check the Scale and Enterprise columns against real catalogs.</p>`;
+}
+
 /* ------------------------------------------------ events */
 document.addEventListener("click", async (e) => {
   const t = e.target;
@@ -259,6 +294,7 @@ document.addEventListener("click", async (e) => {
     if (t.id === "fi-all") { document.querySelectorAll("[data-fi]").forEach((c) => (c.checked = t.checked)); return; }
     const a = t.closest("[data-faction]"); if (!a) return;
     const act = a.dataset.faction;
+    if (act === "pricing-reset") { if (!confirm("Replace your cost numbers with the examples?")) return; FIN.pricing = await api(`/api/workspaces/${S.ws.id}/finance/pricing`, { method: "PUT", body: JSON.stringify({ reset: true }) }); finPricing(); return; }
     if (act === "add-income") { if (FIN.tab !== "income") { FIN.tab = "income"; document.querySelectorAll("[data-ftab][role=tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.ftab === "income")); finRerender(); } const f = $("#fInc"); f.hidden = !f.hidden; if (!f.hidden) $("#fi-src").focus(); return; }
     if (act === "add-expense") { if (FIN.tab !== "expenses") { FIN.tab = "expenses"; document.querySelectorAll("[data-ftab][role=tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.ftab === "expenses")); finRerender(); } const f = $("#fAdd"); f.hidden = !f.hidden; if (!f.hidden) $("#fe-vendor").focus(); return; }
     if (act === "budgets") { const f = $("#fBudgets"); f.hidden = !f.hidden; return; }
@@ -281,6 +317,14 @@ document.addEventListener("click", async (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const pin = e.target.closest?.("[data-pc], [data-pp]");
+  if (pin && S.route === "finance" && FIN.pricing) {
+    const P = structuredClone(FIN.pricing.inputs);
+    if (pin.dataset.pc) P.costs[pin.dataset.pc] = Number(pin.value);
+    else { const [i, k] = pin.dataset.pp.split(":"); P.plans[i][k] = k === "name" ? pin.value : Number(pin.value); }
+    try { FIN.pricing = await api(`/api/workspaces/${S.ws.id}/finance/pricing`, { method: "PUT", body: JSON.stringify(P) }); finPricing(); } catch (err) { toast(err.message, true); }
+    return;
+  }
   try {
     const c = e.target.closest?.("[data-fcat]");
     if (c) { await api(`/api/workspaces/${S.ws.id}/finance/expenses/${c.dataset.fcat}`, { method: "PUT", body: JSON.stringify({ category: c.value }) }); await finLoad(); finRerender(); return toast("Category updated"); }

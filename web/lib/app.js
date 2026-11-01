@@ -11,6 +11,7 @@ import { commandSnapshot } from "./command.js";
 import { LEVELS, MODULES, MODULE_IDS, STARTER_TEAMS, checkPassword, describe, hashPassword, levelOk, moduleFor } from "./access.js";
 import { CHANNELS as AD_CHANNELS, CREATIVE_TYPES, caseStudyPrompt, classifyAd, parseAdsCsv, roasSummary } from "./roas.js";
 import { CrmStore } from "./crmstore.js";
+import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel } from "./pricing.js";
 import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
@@ -602,6 +603,16 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     i ? res.json(i) : res.status(404).json({ detail: "Income not found" });
   });
   app.delete("/api/workspaces/:ws/finance/income/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("finance_income", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Income not found" }); });
+  // ---- pricing calculator: cost per store per plan, margin, lowest price for the target margin
+  const pricingOf = (w) => cleanPricing(w.finance?.pricing || {}, DEFAULT_PRICING);
+  const pricingOut = (w) => { const p = pricingOf(w); return { inputs: p, model: pricingModel(p, w.finance?.churn_pct ?? 3), cost_fields: COST_FIELDS, plan_fields: PLAN_FIELDS }; };
+  app.get("/api/workspaces/:ws/finance/pricing", (req, res) => { const w = ws(req, res); if (w) res.json(pricingOut(w)); });
+  app.put("/api/workspaces/:ws/finance/pricing", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    const next = req.body?.reset ? cleanPricing({}, DEFAULT_PRICING) : cleanPricing({ ...req.body, example: false }, pricingOf(w));
+    store.setFinanceSettings(w.id, { pricing: next });
+    res.json(pricingOut(store.getWorkspace(w.id)));
+  });
   app.put("/api/workspaces/:ws/finance/settings", (req, res) => {
     const w = ws(req, res); if (!w) return;
     const b = req.body || {}, f = {};

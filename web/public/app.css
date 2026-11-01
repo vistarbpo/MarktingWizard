@@ -657,3 +657,10 @@ details > summary { cursor: pointer; }
 .c-exp { margin: 0 20px 14px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 4px; }
 .c-exp.warn { background: var(--warn-soft); }
 .c-call { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; }
+.p-costs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; padding: 16px 20px; }
+.p-costs .field .input { max-width: 160px; }
+.p-table th[scope=row] { text-transform: none; letter-spacing: 0; font-size: var(--fs-sm); font-weight: 400; color: var(--text-2); min-width: 220px; white-space: normal; }
+.p-table td, .p-table thead th { min-width: 120px; }
+.p-table .input { width: 110px; }
+.p-sep th { background: var(--surface-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+.p-total td, .p-total th { border-top: 1px solid var(--border-strong); }
