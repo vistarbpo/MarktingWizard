@@ -748,3 +748,61 @@ details > summary { cursor: pointer; }
 .wf-table td { vertical-align: top; }
 .wf-lvl { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer; }
 .wf-lvl.on { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ---- Ask DPA AD */
+.ak-fab { position: fixed; right: 20px; bottom: 20px; z-index: 45; display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font: 600 var(--fs-sm) var(--font); box-shadow: 0 8px 24px rgba(31, 94, 255, .35); cursor: pointer; }
+.ak-fab span { font-size: 16px; } .ak-fab.on { opacity: 0; pointer-events: none; }
+.ak-panel { position: fixed; right: 20px; bottom: 20px; z-index: 46; width: min(440px, calc(100vw - 24px)); height: min(680px, calc(100vh - 40px)); background: var(--bg); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.22); display: flex; flex-direction: column; overflow: hidden; }
+.ak-panel[hidden] { display: none; }
+.ak-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.ak-head > div:first-child { display: flex; flex-direction: column; }
+.ak-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ak-msg { padding: 10px 12px; border-radius: 14px; font-size: var(--fs-sm); line-height: 1.6; max-width: 92%; overflow-wrap: anywhere; }
+.ak-msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.ak-msg.ai { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.ak-msg.ai.doc table { font-size: 12px; } .ak-msg.ai.doc p { margin: 0 0 6px; } .ak-msg.ai.doc ul { margin: 0 0 6px; padding-left: 18px; }
+.ak-msg.err { background: var(--bad-soft); color: var(--bad); }
+.ak-steps { display: flex; flex-wrap: wrap; gap: 4px; } .ak-steps span { font-size: 11px; color: var(--text-3); background: var(--surface-2); border-radius: 999px; padding: 2px 8px; } .ak-steps span.bad { color: var(--bad); }
+.ak-confirm { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-sm); }
+.ak-empty { padding: 8px 2px; } .ak-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; } .ak-sugg .chip { height: auto; padding: 6px 10px; text-align: left; }
+.ak-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.ak-form textarea { flex: 1; min-height: 44px; max-height: 120px; resize: none; }
+.ak-dots { display: inline-flex; gap: 4px; } .ak-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: akb 1s infinite; } .ak-dots i:nth-child(2) { animation-delay: .15s; } .ak-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes akb { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@media (max-width: 700px) { .ak-fab { right: 12px; bottom: 12px; height: 40px; padding: 0 14px; } .ak-panel { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; } }
+
+/* ---- AI Workforce office floor */
+.of-plan { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; padding: 16px 20px 20px; }
+.of-room { position: relative; border: 2px solid color-mix(in srgb, var(--c) 35%, var(--border)); border-radius: 16px; overflow: hidden;
+  background: color-mix(in srgb, var(--c) 4%, var(--surface)); }
+.of-plate { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: color-mix(in srgb, var(--c) 12%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--c) 25%, var(--border)); font-size: var(--fs-sm); }
+.of-plate b { color: var(--c); } .of-plate span { color: var(--text-3); font-size: 12px; }
+.of-floor { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 18px 10px; padding: 34px 12px 16px; min-height: 150px;
+  background-image: linear-gradient(color-mix(in srgb, var(--c) 7%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--c) 7%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
+.of-desk { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: default; text-align: center; min-width: 0; }
+.of-desk.agent { cursor: pointer; }
+.of-desk.agent:hover .of-table, .of-desk.agent:focus-visible .of-table { outline: 2px solid var(--c, var(--accent)); outline-offset: 2px; }
+.of-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 600 12px var(--font); z-index: 2; margin-bottom: -10px; box-shadow: 0 2px 6px rgba(0,0,0,.15); position: relative; }
+.of-av.bot { background: var(--surface); border: 2px solid var(--c); color: var(--text); font-size: 16px; border-radius: 10px; }
+.of-av em { position: absolute; top: -10px; right: -8px; font: italic 700 12px var(--font); color: var(--text-3); animation: ofz 2s infinite; }
+.of-table { width: 78px; height: 34px; border-radius: 8px; background: color-mix(in srgb, var(--c, #888) 18%, var(--surface-2)); border: 1px solid var(--border); display: flex; justify-content: center; align-items: flex-start; padding-top: 5px; }
+.of-screen { width: 30px; height: 14px; border-radius: 3px; background: #2a2f3a; display: block; }
+.of-name { font-size: 12px; font-weight: 600; margin-top: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-role { font-size: 10px; color: var(--text-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-desk.human .of-screen { background: #3b4150; }
+.st-busy .of-screen { background: #7ee2a8; box-shadow: 0 0 10px #4ade80; animation: ofglow 1.2s infinite alternate; }
+.st-today .of-screen { background: #93b4ff; }
+.st-idle .of-screen { background: #2a2f3a; }
+.st-off { opacity: .45; } .st-off .of-screen { background: #1b1e25; }
+.st-error .of-screen { background: #f87171; animation: ofglow .8s infinite alternate; }
+.st-busy .of-av.bot { animation: ofbob 1.4s ease-in-out infinite; }
+.of-bubble { position: absolute; top: -28px; left: 50%; transform: translateX(-50%); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px; font-size: 10px; color: var(--text-2); box-shadow: var(--shadow); z-index: 3; }
+.of-bubble::after { content: ""; position: absolute; bottom: -5px; left: 50%; width: 8px; height: 8px; background: var(--surface); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); transform: translateX(-50%) rotate(45deg); }
+.of-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text-2); }
+.of-legend .lg { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.lg.busy { background: #4ade80; } .lg.today { background: #93b4ff; } .lg.idle { background: #2a2f3a; } .lg.off { background: #c7c7c7; } .lg.error { background: #f87171; }
+@keyframes ofglow { from { filter: brightness(.85); } to { filter: brightness(1.25); } }
+@keyframes ofbob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes ofz { 0% { opacity: 0; transform: translate(0, 0); } 50% { opacity: 1; } 100% { opacity: 0; transform: translate(6px, -8px); } }
+@media (prefers-reduced-motion: reduce) { .st-busy .of-screen, .st-error .of-screen, .st-busy .of-av.bot, .of-av em { animation: none; } }
+@media (max-width: 700px) { .of-plan { grid-template-columns: 1fr; padding: 12px; } .of-floor { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

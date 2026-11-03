@@ -17,6 +17,7 @@ import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { mountCreative } from "./creativeroutes.js";
 import { Workforce, agentFor, withAgent } from "./agents.js";
 import { mountWorkforce, workforceSummary } from "./agentroutes.js";
+import { claudeAssistantClient, createAssistant } from "./assistant.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -28,7 +29,7 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {} }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -169,7 +170,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
         return res.status(403).json({ detail: `Your role (${store.db.roles.find((r) => r.id === user.role_id)?.name || user.role_id}) can't ${need === "view" ? "see" : "change"} ${name}. Ask an Owner or Admin.` });
       }
       if (req.method !== "GET") res.on("finish", () => {
-        if (res.statusCode < 400 && !req.path.startsWith("/api/me")) store.logAudit({ user_id: user.id, user_name: user.name, method: req.method, path: req.path.slice(0, 200), module: mod || "", summary: describe(req.method, req.path) });
+        if (res.statusCode < 400 && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/assistant")) store.logAudit({ user_id: user.id, user_name: user.name, method: req.method, path: req.path.slice(0, 200), module: mod || "", summary: (req.headers["x-mwiz-via"] === "assistant" ? "(via Ask DPA AD) " : "") + describe(req.method, req.path) });
       });
     }
     next();
@@ -178,6 +179,26 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountCrm(app, { store, crm, outreach, provider, workforce });
   mountCreative(app, { store, provider, workforce });
   mountWorkforce(app, { store, workforce });
+
+  // ---- Ask DPA AD: the assistant on every page
+  let aiClient = assistantClient;
+  const assistant = createAssistant({ store, workforce, model: baseProvider.model && baseProvider.name === "claude" ? baseProvider.model : "claude-opus-5-5",
+    client: async (p) => { if (!aiClient) aiClient = await claudeAssistantClient(); return aiClient(p); } });
+  const assistantReady = () => !!assistantClient || baseProvider.name === "claude";
+  app.get("/api/assistant/status", (req, res) => res.json({ ready: assistantReady() }));
+  app.post("/api/assistant", async (req, res) => {
+    const b = req.body || {};
+    if (!assistantReady()) return res.status(503).json({ detail: "Ask DPA AD needs ANTHROPIC_API_KEY on the server (hPanel → Node.js → Environment variables)." });
+    if (!String(b.message || "").trim()) return res.status(422).json({ detail: "Ask something." });
+    if (!store.getWorkspace(b.ws)) return res.status(404).json({ detail: "Workspace not found" });
+    try { res.json(await assistant.chat(req, { thread_id: b.thread_id, message: b.message, ws: b.ws, page: String(b.page || "").slice(0, 80) })); }
+    catch (e) { res.status(502).json({ detail: e?.message || "The assistant failed. Try again." }); }
+  });
+  app.post("/api/assistant/confirm", async (req, res) => {
+    const b = req.body || {};
+    try { const r = await assistant.confirm(req, { thread_id: b.thread_id, action_id: b.action_id, approve: !!b.approve }); r.error ? res.status(409).json({ detail: r.error }) : res.json(r); }
+    catch (e) { res.status(502).json({ detail: e?.message || "The assistant failed. Try again." }); }
+  });
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },

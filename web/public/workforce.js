@@ -2,7 +2,40 @@
    (earned from its track record), monthly budget, cost, quality and a log of everything it did.
    Uses app.js globals (S, $, api, esc, toast, fmtDate, ROUTES, levelFor). */
 
-const WF = { d: null, openId: null, team: "" };
+const WF = { d: null, openId: null, team: "", view: "office", timer: null };
+const WF_TEAM_COLOR = { Leadership: "#7c3aed", Marketing: "#c026d3", Sales: "#1f5eff", "Customer Success": "#0f9d58", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", People: "#d97706" };
+const WF_ICON = { coordinator: "✦", support_agent: "💬", crm_triage: "📥", crm_replier: "✉️", crm_sequence_writer: "🧭", sales_assistant: "🤝", creative_strategist: "🗓️", creative_copywriter: "✍️", creative_publisher: "🚀", marketing_strategist: "🎯", finance_cfo: "📊", ops_planner: "🗂️", product_analyst: "🧪", recruiter: "🧑‍💼", roas_analyst: "📈" };
+// What an agent is doing right now, from its last run.
+function wfState(a) {
+  if (a.config.paused || a.config.level === 0) return { id: "off", label: "Paused" };
+  const last = a.stats.last_run ? Date.now() - Date.parse(a.stats.last_run) : Infinity;
+  if (a.stats.last_ok === false && last < 864e5) return { id: "error", label: "Needs a look" };
+  if (last < 10 * 60e3) return { id: "busy", label: "Working now" };
+  if (last < 864e5) return { id: "today", label: `Active today · ${a.stats.runs_today} run${a.stats.runs_today === 1 ? "" : "s"}` };
+  return { id: "idle", label: a.stats.last_run ? "Idle" : "Waiting for first job" };
+}
+function wfOffice(d) {
+  const teams = ["Leadership", ...new Set(d.agents.map((a) => a.team).filter((t) => t !== "Leadership"))];
+  const initials = (n) => n.split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const rooms = teams.map((tm) => {
+    const ag = d.agents.filter((a) => a.team === tm);
+    const people = d.people.filter((p) => ag.some((a) => a.config.owner_id === p.id));
+    const color = WF_TEAM_COLOR[tm] || "var(--accent)";
+    const desks = [
+      ...people.map((p) => `<div class="of-desk human" title="${esc(p.name)} · ${esc(p.role)}"><div class="of-av" style="background:${color}">${esc(initials(p.name))}</div><div class="of-table"><i class="of-screen"></i></div><span class="of-name">${esc(p.name.split(" ")[0])}</span><span class="of-role">${esc(p.role)}</span></div>`),
+      ...ag.map((a) => { const st = wfState(a), note = a.stats.last_note;
+        return `<button class="of-desk agent st-${st.id}" data-wfopen="${a.id}" title="${esc(a.name)}: ${esc(st.label)}">
+          ${st.id === "busy" || (note && Date.now() - Date.parse(note.at) < 864e5 && note.note) ? `<span class="of-bubble" dir="auto">${esc(st.id === "busy" ? "…" : (note.note || note.outcome).slice(0, 38))}</span>` : ""}
+          <div class="of-av bot" style="--c:${color}">${WF_ICON[a.id] || "✦"}${st.id === "off" ? `<em>z</em>` : ""}</div>
+          <div class="of-table"><i class="of-screen"></i></div>
+          <span class="of-name">${esc(a.name.replace(/^AI |^Ask DPA AD \(|\)$/g, ""))}</span><span class="of-role">L${a.config.paused ? 0 : a.config.level} · ${esc(st.label)}</span></button>`; }),
+    ];
+    return `<section class="of-room" style="--c:${color}"><div class="of-plate"><b>${esc(tm)}</b><span>${people.length} 👤 · ${ag.length} ✦</span></div><div class="of-floor">${desks.join("")}</div></section>`;
+  });
+  return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>The office</h2><p class="subtle s-small">Every desk is an AI agent (✦) or a person who owns agents in that team. Glowing screens are working right now. Click a desk to open it.</p></div>
+    <div class="of-legend"><span><i class="lg busy"></i>Working now</span><span><i class="lg today"></i>Active today</span><span><i class="lg idle"></i>Idle</span><span><i class="lg off"></i>Paused</span><span><i class="lg error"></i>Needs a look</span></div></div>
+    <div class="of-plan">${rooms.join("")}</div></div>`;
+}
 const wfEdit = () => levelFor("workforce") === "edit";
 const wfUsd = (n) => "$" + (n >= 100 ? Math.round(n).toLocaleString("en-US") : Number(n || 0).toFixed(2));
 const WF_TONE = ["", "", "accent", "good"];
@@ -14,6 +47,9 @@ async function renderWorkforce(view) {
   WF.d = await api("/api/workforce");
   $("#pageActions").innerHTML = "";
   wfRerender();
+  // Live office: refresh every 30 seconds while this page is open.
+  clearInterval(WF.timer);
+  WF.timer = setInterval(async () => { if (S.route !== "workforce") return clearInterval(WF.timer); if (WF.openId || document.hidden) return; try { WF.d = await api("/api/workforce"); const y = scrollY; wfRerender(); scrollTo(0, y); } catch {} }, 30e3);
 }
 
 function wfRerender() {
@@ -35,7 +71,9 @@ function wfRerender() {
     <div class="card c-banner" style="margin-top:16px"><b>How agents earn autonomy:</b> ${d.levels.map((l) => `<span class="badge ${WF_TONE[l.id] || ""}">${l.id} · ${esc(l.name)}</span>`).join(" ")}
       <span class="subtle s-small"> An agent can move up after 50 reviewed items with 95%+ used unchanged and no errors. It drops a level automatically after 3 rejections or errors in its last 20 items.</span></div>
     ${needRows.length ? `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Needs attention</h2><span class="badge ${hard.length ? "warn" : ""}">${hard.length || "–"}</span></div><ul class="cc-list" style="padding:8px 20px 16px">${needRows.join("")}</ul></div>` : ""}
-    <div class="card" style="margin-top:16px"><div class="card-head"><h2>Org chart</h2><span class="subtle s-small">People own the agents in their area; agents do the repeatable work.</span></div>
+    <div class="row gap-8" style="margin-top:16px"><div class="s-tabs"><button data-wfview="office" aria-selected="${WF.view === "office"}">Office</button><button data-wfview="org" aria-selected="${WF.view === "org"}">Org chart</button></div></div>
+    ${WF.view === "office" ? wfOffice(d) : ""}
+    <div class="card" style="margin-top:16px${WF.view === "org" ? "" : ";display:none"}"><div class="card-head"><h2>Org chart</h2><span class="subtle s-small">People own the agents in their area; agents do the repeatable work.</span></div>
       <div class="wf-org">${teams.map((tm) => { const ag = d.agents.filter((a) => a.team === tm); const owners = [...new Set(ag.map((a) => d.people.find((p) => p.id === a.config.owner_id)?.name).filter(Boolean))];
         return `<div class="wf-team"><b>${esc(tm)}</b><div class="wf-people">${owners.map((o) => `<span class="badge">👤 ${esc(o)}</span>`).join(" ") || `<span class="subtle s-small">no person assigned</span>`}</div>
           <div class="wf-agents">${ag.map((a) => `<button class="wf-chip lv${a.config.paused ? 0 : a.config.level}" data-wfopen="${a.id}" title="${esc(a.job)}"><i></i>${esc(a.name.replace(/^AI /, ""))}<small>L${a.config.paused ? 0 : a.config.level}</small></button>`).join("")}</div></div>`; }).join("")}</div></div>
@@ -85,6 +123,8 @@ async function wfSet(id, body, msg) {
 document.addEventListener("click", async (e) => {
   if (S.route !== "workforce" && !e.target.closest("#wfDrawer")) return;
   if (e.target.closest("#wfScrim")) return wfClose();
+  const vw = e.target.closest("[data-wfview]");
+  if (vw) { WF.view = vw.dataset.wfview; return wfRerender(); }
   const tm = e.target.closest("[data-wfteam]");
   if (tm) { WF.team = tm.dataset.wfteam; return wfRerender(); }
   const op = e.target.closest("[data-wfopen]");

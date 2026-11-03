@@ -15,6 +15,9 @@ export const LEVELS = [
 // The agents. `max` is the highest level the dashboard supports for that job today.
 // `levels` says what each level actually changes for this agent.
 export const AGENTS = [
+  { id: "coordinator", name: "Ask DPA AD (Coordinator)", team: "Leadership", module: "command", route: "command", max: 2, level: 1, budget: 60,
+    job: "The assistant on every page: answers questions from the dashboard's data and makes changes for the signed-in person.",
+    levels: { 1: "Asks before every change.", 2: "Makes low-risk changes (notes, tasks, content ideas) without asking; bulk store changes, deals and campaigns still need a yes." } },
   { id: "support_agent", name: "AI Support agent", team: "Customer Success", module: "support", route: "support", max: 3, level: 2, budget: 60,
     job: "Answers store questions in the website chat from the help center; hands over to a person when unsure.",
     levels: { 1: "Drafts answers; a person sends every reply.", 2: "Answers checked questions live; escalates anything unsure.", 3: "Same as 2 (escalation rules always apply)." } },
@@ -156,6 +159,8 @@ export class Workforce {
     return {
       runs_month: mRuns.length, errors_month: mRuns.filter((r) => !r.ok).length, cost_month: Math.round(spent * 100) / 100,
       tokens_month: mRuns.reduce((a, r) => a + (r.in || 0) + (r.out || 0), 0), last_run: runs.at(-1)?.at || null,
+      runs_today: runs.filter((r) => r.at.slice(0, 10) === now.toISOString().slice(0, 10)).length, last_ok: runs.at(-1) ? runs.at(-1).ok : null,
+      last_note: (() => { const e = this.store.db.agent_events.filter((x) => x.agent_id === id).at(-1); return e ? { at: e.at, outcome: e.outcome, note: e.note } : null; })(),
       outcomes: Object.fromEntries(["accepted", "edited", "rejected", "escalated", "auto", "error"].map((o) => [o, last50.filter((e) => e.outcome === o).length])),
       judged: judged.length, quality, can_promote: canPromote,
       promote_hint: c.level >= d.max ? "Already at the highest level this job supports." : judged.length < 50 ? `Needs ${50 - judged.length} more reviewed items before it can move up.` : quality < 95 ? `Needs 95% used unchanged (now ${quality}%).` : errors50 ? "Needs zero errors in its last 50 items." : "Ready to move up a level.",

@@ -28,8 +28,17 @@ Every AI agent in the dashboard is managed like an employee (`web/lib/agents.js`
   - The Command Center shows agents that are ready to move up, close to budget, failing, or were moved down.
   - Who sees it: Owner and Admin can change agents; Team lead, Team member and Creative can only view.
 
-### "Ask DPA AD" assistant: next
-One chat or command bar across the dashboard that acts within the signed-in person's permissions (Claude with tools over the dashboard's own API). Anything that changes data asks for confirmation first. Every action is logged to the activity log and attributed to a "Coordinator" agent in AI Workforce.
+### "Ask DPA AD" assistant: built (Nov 2026)
+The ✦ button on every page, or Ctrl/⌘+K (`web/lib/assistant.js`, `public/assistant.js`).
+- Claude (Opus 5.5, adaptive thinking) works through **17 tools** that call the dashboard's own API with the signed-in person's session. It sees and changes only what their role allows, and changes appear in the activity log under their name, marked "(via Ask DPA AD)".
+  - **Read:** overview, find stores, one store, outreach numbers, campaigns, pipeline, finance, content, AI Workforce, Knowledge.
+  - **Change:** bulk-update stores (stage, tag, owner, focus list), store note, draft campaign (never launches), add deal, content idea, ops task, Knowledge note.
+- Every change shows a **Confirm** card first. At Coordinator level 2, low-risk changes (notes, tasks, content ideas) run directly; bulk store changes, deals and campaigns always ask.
+- It can't send messages, launch campaigns, delete anything, or change roles, budgets or agent levels.
+- Runs, cost and confirm/decline outcomes are charged to the **Ask DPA AD (Coordinator)** agent in AI Workforce.
+
+### Office view: built
+AI Workforce opens on an office floor plan. Each team is a room, and each desk is an AI agent or a person who owns agents in that team. Screens glow while an agent is working; you can also see active today, idle, paused (z) and needs a look. A speech bubble shows the agent's last action, and the view refreshes every 30 seconds.
 
 ## 2. Modules that replace the most jobs
 

@@ -1178,3 +1178,63 @@ test("page scripts don't redeclare each other's top-level names (they share one 
   }
   assert.deepEqual(dupes, []);
 });
+
+test("Ask DPA AD: tools over the API with the person's permissions, confirm before changes, logged and costed", async () => {
+  const seen = [];
+  let script = [];
+  const fakeClient = async (p) => { seen.push(p); const next = script.shift(); return typeof next === "function" ? next(p) : next; };
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-ak-"));
+  const st2 = new Store(d2), app2 = createApp({ store: st2, provider, password: "pw-ak", assistantClient: fakeClient }), srv = app2.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-ak" });
+  const j = (c, p, b) => fetch(b2 + p, { method: b ? "POST" : "GET", headers: { "Content-Type": "application/json", cookie: c }, body: b && JSON.stringify(b) }).then(async (r) => ({ status: r.status, ...(await r.json()) }));
+  const [w] = (await fetch(b2 + "/api/workspaces", { headers: { cookie: ck } }).then((r) => r.json()));
+  await j(ck, `/api/workspaces/${w.id}/crm/sample`, {});
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "claude-opus-5-5", usage: { input_tokens: 1000, output_tokens: 100 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "claude-opus-5-5", usage: { input_tokens: 1200, output_tokens: 80 }, content: [{ type: "text", text }] });
+  // 1. A question answered from real data.
+  script = [use("t1", "find_stores", { category: ["Perfumes & oud"], limit: 3 }), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); return say(`There are ${r.total} perfume stores.`); }];
+  const a1 = await j(ck, "/api/assistant", { message: "How many perfume stores?", ws: w.id, page: "Store CRM" });
+  assert.match(a1.reply, /There are \d+ perfume stores/); assert.deepEqual(a1.steps.map((s) => s.tool), ["find_stores"]);
+  assert.ok(seen[0].tools.some((t) => t.name === "update_stores")); assert.match(seen[0].system, /Never guess or invent numbers/);
+  assert.match(seen[0].messages[0].content[0].text, /\[Looking at: Store CRM\]/);
+  // 2. A change waits for confirmation, then runs as the person (audit log says via the assistant).
+  script = [use("t2", "update_stores", { action: "tag", value: "perfume-push", filter: { category: ["Perfumes & oud"] } })];
+  const a2 = await j(ck, "/api/assistant", { thread_id: a1.thread_id, message: "Tag them perfume-push", ws: w.id });
+  assert.ok(a2.pending); assert.match(a2.pending.summary, /Add tag "perfume-push" on \d+ stores \(category: Perfumes & oud\)/);
+  let tagged = await j(ck, `/api/workspaces/${w.id}/crm/contacts?f=${encodeURIComponent(JSON.stringify({ tags: ["perfume-push"] }))}`);
+  assert.equal(tagged.total, 0); // nothing yet
+  script = [(p) => { assert.equal(p.messages.at(-1).content[0].tool_use_id, "t2"); return say("Done: tagged them."); }];
+  const a3 = await j(ck, "/api/assistant/confirm", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+  assert.equal(a3.reply, "Done: tagged them.");
+  tagged = await j(ck, `/api/workspaces/${w.id}/crm/contacts?f=${encodeURIComponent(JSON.stringify({ tags: ["perfume-push"] }))}`);
+  assert.ok(tagged.total > 0);
+  const adm = await j(ck, "/api/admin");
+  assert.ok(adm.audit.some((a) => /via Ask DPA AD/.test(a.summary) && a.module === "crm"));
+  // 3. Declining changes nothing; a new message while a change waits also counts as "no".
+  script = [use("t3", "add_task", { title: "Call Lamsa" })];
+  const a4 = await j(ck, "/api/assistant", { thread_id: a1.thread_id, message: "Add a task to call Lamsa", ws: w.id });
+  script = [say("OK, I didn't add it.")];
+  await j(ck, "/api/assistant/confirm", { thread_id: a1.thread_id, action_id: a4.pending.id, approve: false });
+  const ops = await j(ck, `/api/workspaces/${w.id}/ops`);
+  assert.ok(!(ops.tasks || []).some((t) => t.title === "Call Lamsa"));
+  script = [use("t4", "add_task", { title: "Call Reem" })];
+  await j(ck, "/api/assistant", { thread_id: a1.thread_id, message: "Add a task to call Reem", ws: w.id });
+  script = [(p) => { const c = p.messages.at(-1).content; assert.match(c[0].content, /moved on without confirming/); assert.equal(c.at(-1).type, "text"); return say("Sure."); }];
+  await j(ck, "/api/assistant", { thread_id: a1.thread_id, message: "never mind, how's finance?", ws: w.id });
+  // 4. Costs are charged to the Coordinator agent.
+  const co = await j(ck, "/api/workforce/agents/coordinator");
+  assert.ok(co.runs.length >= 6); assert.ok(co.stats.cost_month > 0); assert.ok(co.events.some((e) => e.outcome === "accepted") && co.events.some((e) => e.outcome === "rejected"));
+  // 5. A Viewer gets no change tools, and can't sneak one through.
+  await j(ck, "/api/admin/users", { name: "Vic Viewer", email: "vic@dpa.ad", password: "viewer-pass-9", role_id: "viewer" });
+  const vc = await login({ email: "vic@dpa.ad", password: "viewer-pass-9" });
+  script = [use("v1", "update_stores", { action: "tag", value: "x", filter: {} }), (p) => { assert.match(p.messages.at(-1).content[0].content, /isn't available/); return say("You can't change stores with your role."); }];
+  const v = await j(vc, "/api/assistant", { message: "tag everything x", ws: w.id });
+  assert.equal(v.pending, undefined); assert.match(v.reply, /can't/);
+  assert.ok(!seen.at(-1).tools.some((t) => t.name === "update_stores" || t.name === "finance_snapshot"));
+  // Someone else can't confirm another person's pending change.
+  assert.equal((await j(vc, "/api/assistant/confirm", { thread_id: a1.thread_id, action_id: "x", approve: true })).status, 409);
+  srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
+});
