@@ -138,7 +138,7 @@ export function renderMarkdown(text) {
     if (code) { if (/^\s*```/.test(line)) { out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); code = null; } else code.push(line); continue; }
     if (/^\s*```/.test(line)) { flushP(); flushL(); code = []; continue; }
     const h = /^(#{1,4})\s+(.+)$/.exec(line);
-    if (h) { flushP(); flushL(); const n = Math.min(4, h[1].length + 1); out.push(`<h${n}>${inline(h[2].trim())}</h${n}>`); continue; }
+    if (h) { flushP(); flushL(); const n = Math.max(2, h[1].length); /* the page title is the only h1 */ out.push(`<h${n}>${inline(h[2].trim())}</h${n}>`); continue; }
     const ul = /^\s*[-*•]\s+(.+)$/.exec(line), ol = /^\s*\d+[.)]\s+(.+)$/.exec(line);
     if (ul || ol) { flushP(); const tag = ul ? "ul" : "ol"; if (list && list.tag !== tag) flushL(); list ||= { tag, items: [] }; list.items.push((ul || ol)[1]); continue; }
     if (!line.trim()) { flushP(); flushL(); continue; }

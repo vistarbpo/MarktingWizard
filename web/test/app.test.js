@@ -5874,3 +5874,425 @@ test("legal: Ask DPA AD tools (list respects restricted, reminder after a confir
     assert.ok(!fs.existsSync(path.join(k.dir, "legal", f)));
   } finally { k.done(); }
 });
+
+// ---------------------------------------------------------------- Help center
+async function hcKit({ clock = null, assistantClient = null, env = { PUBLIC_URL: "https://wizard.dpa.ad" } } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-hc-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const seen = [];
+  const prov = { name: "test", model: "test", async generate(a) { seen.push(a.prompt); return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-hc", assistantClient, env, helpOptions: { clock: () => (t == null ? Date.now() : t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-hc" });
+  const as = async (c, p, m = "GET", body, headers = {}) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const X = `/api/workspaces/${w.id}/helpcenter`;
+  const user = async (role, tag = role) => { const email = `hc-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Hc ${tag}`, email, password: `hc-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `hc-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  const pub = async (p, opts = {}) => { const r = await fetch(b2 + p, { redirect: "manual", ...opts }); return { status: r.status, text: await r.text(), headers: r.headers }; };
+  const vote = (slug, helpful, ip = "203.0.113.5", lang) => fetch(`${b2}/help/a/${slug}/vote`, { method: "POST", redirect: "manual", headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Forwarded-For": ip }, body: new URLSearchParams({ helpful, ...(lang ? { lang } : {}) }) });
+  // A published article: written by `author` (e.g. a Team member), reviewed and published by the Owner.
+  const published = async (f, author) => {
+    const a = (await as(author.ck, `${X}/articles`, "POST", f)).body;
+    await as(author.ck, `${X}/articles/${a.id}/status`, "POST", { status: "in_review" });
+    return (await j(`${X}/articles/${a.id}/status`, { status: "published" })).body;
+  };
+  return { app: app2, st, w, X, W: `/api/workspaces/${w.id}`, j, as, ck, user, pub, vote, published, b2, seen,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+const HC_A = { title_ar: "ربط متجر سلة", title_en: "Connect your Salla store", category: "connecting-salla", body_ar: "## الخطوات\n- افتح الإعدادات\n- اضغط ربط", body_en: "## Steps\n- Open settings\n- Press connect" };
+
+test("help center articles: create with validation and a slug, edit, draft → in review → published → archived, published text locked, reviewer ≠ author, delete rules, permissions per role", async () => {
+  const k = await hcKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    assert.equal((await k.j(`${k.X}/articles`, { category: "getting-started" })).status, 422, "a title is required");
+    assert.equal((await k.j(`${k.X}/articles`, { title_en: "X", category: "nope" })).status, 422);
+    const mem = await k.user("member", "m1");
+    const a = (await k.as(mem.ck, `${k.X}/articles`, "POST", HC_A)).body;
+    assert.equal(a.status, "draft"); assert.equal(a.slug, "connect-your-salla-store"); assert.equal(a.author_id, mem.id); assert.equal(a.visibility, "public");
+    assert.equal((await k.j(`${k.X}/articles`, { title_en: "Other", slug: "connect-your-salla-store" })).status, 422, "slug is unique");
+    const b = (await k.j(`${k.X}/articles`, { title_en: "Connect your Salla store", body_en: "x" })).body;
+    assert.equal(b.slug, "connect-your-salla-store-2");
+    const ar = (await k.j(`${k.X}/articles`, { title_ar: "مقالة عربية فقط", body_ar: "نص" })).body;
+    assert.match(ar.slug, /^getting-started-\d+$/);
+    assert.equal((await k.j(`${k.X}/articles/${a.id}`, { related_ids: ["999"] }, "PUT")).status, 422);
+    const ed = (await k.as(mem.ck, `${k.X}/articles/${a.id}`, "PUT", { body_en: "## Steps\n- Open **settings**\n- Press connect", related_ids: [b.id] })).body;
+    assert.deepEqual(ed.related_ids, [b.id]); assert.match(ed.log.at(-1).text, /Edited: body en, related ids/);
+    const empty = (await k.j(`${k.X}/articles`, { title_en: "Only a title" })).body;
+    assert.equal((await k.j(`${k.X}/articles/${empty.id}/status`, { status: "in_review" })).status, 422, "needs a body in one language");
+    assert.equal((await k.j(`${k.X}/articles/${a.id}/status`, { status: "published" })).status, 409, "draft can't jump to published");
+    assert.equal((await k.as(mem.ck, `${k.X}/articles/${a.id}/status`, "POST", { status: "in_review" })).body.status, "in_review");
+    // The author can't publish their own article; another person (here a Team lead) can.
+    const self = await k.as(mem.ck, `${k.X}/articles/${a.id}/status`, "POST", { status: "published" });
+    assert.equal(self.status, 403); assert.match(self.body.detail, /different person than the author/);
+    const lead = await k.user("manager", "tl");
+    const p = (await k.as(lead.ck, `${k.X}/articles/${a.id}/status`, "POST", { status: "published" })).body;
+    assert.equal(p.status, "published"); assert.equal(p.reviewer_id, lead.id); assert.equal(p.last_reviewed, "2026-11-03"); assert.equal(p.live, true); assert.equal(p.live_url, "https://wizard.dpa.ad/help/a/connect-your-salla-store");
+    const locked = await k.as(mem.ck, `${k.X}/articles/${a.id}`, "PUT", { body_en: "changed" });
+    assert.equal(locked.status, 409); assert.match(locked.body.detail, /locked/);
+    assert.equal((await k.as(mem.ck, `${k.X}/articles/${a.id}`, "PUT", { related_ids: [] })).status, 200, "non-text fields still edit");
+    assert.equal((await k.j(`${k.X}/articles/${a.id}`, undefined, "DELETE")).status, 409, "archive before delete");
+    // [ADD] left blocks publishing; the Owner may self-publish unless switched off.
+    const own = (await k.j(`${k.X}/articles`, { title_en: "Owner's own", body_en: "Text [ADD step]" })).body;
+    await k.j(`${k.X}/articles/${own.id}/status`, { status: "in_review" });
+    assert.match((await k.j(`${k.X}/articles/${own.id}/status`, { status: "published" })).body.detail, /\[ADD\]/);
+    await k.j(`${k.X}/articles/${own.id}/status`, { status: "draft" });
+    await k.j(`${k.X}/articles/${own.id}`, { body_en: "Text" }, "PUT");
+    await k.j(`${k.X}/articles/${own.id}/status`, { status: "in_review" });
+    await k.j(`${k.X}/settings`, { owner_self_publish: false }, "PUT");
+    assert.equal((await k.j(`${k.X}/articles/${own.id}/status`, { status: "published" })).status, 403, "setting off: the Owner needs another reviewer too");
+    await k.j(`${k.X}/settings`, { owner_self_publish: true }, "PUT");
+    assert.equal((await k.j(`${k.X}/articles/${own.id}/status`, { status: "published" })).body.status, "published");
+    assert.equal((await k.j(`${k.X}/articles/${a.id}/status`, { status: "archived" })).body.status, "archived");
+    assert.equal((await k.j(`${k.X}/articles/${a.id}`, undefined, "DELETE")).status, 200);
+    // Roles: Creative edits, Finance has no access, Viewer reads only.
+    const cr = await k.user("creative", "cr"), fin = await k.user("finance", "fi"), vw = await k.user("viewer", "vw");
+    assert.equal((await k.as(cr.ck, `${k.X}/articles`, "POST", { title_en: "By creative", body_en: "x" })).status, 201);
+    assert.equal((await k.as(fin.ck, `${k.X}/articles`)).status, 403);
+    assert.equal((await k.as(vw.ck, `${k.X}/articles`)).status, 200);
+    assert.equal((await k.as(vw.ck, `${k.X}/articles`, "POST", { title_en: "No" })).status, 403);
+    const list = (await k.j(`${k.X}/articles?status=published`)).body;
+    assert.deepEqual(list.articles.map((x) => x.title_en), ["Owner's own"]);
+  } finally { k.done(); }
+});
+
+test("help center public site: Arabic by default and ?lang=en, categories, only published public articles (drafts, in review, customers-only and archived 404), security headers and no scripts, chosen workspace", async () => {
+  const k = await hcKit();
+  try {
+    const mem = await k.user("member", "m2");
+    const live = await k.published(HC_A, mem);
+    const draft = (await k.as(mem.ck, `${k.X}/articles`, "POST", { title_en: "Secret draft", body_en: "internal only", category: "connecting-salla" })).body;
+    const cust = await k.published({ title_en: "Customers only", body_en: "for customers", category: "billing", visibility: "customers" }, mem);
+    assert.equal(cust.live, false);
+    const home = await k.pub("/help");
+    assert.equal(home.status, 200);
+    assert.match(home.text, /<html lang="ar" dir="rtl">/); assert.match(home.text, /ربط متجر سلة/); assert.doesNotMatch(home.text, /الاشتراك والفواتير/, "a category with only a customers-only article is hidden");
+    assert.doesNotMatch(home.text, /<script/i);
+    const csp = home.headers.get("content-security-policy");
+    assert.match(csp, /default-src 'none'/); assert.doesNotMatch(csp, /script-src/); assert.match(csp, /style-src 'nonce-[A-Za-z0-9+/=]+'/);
+    const nonce = /nonce-([A-Za-z0-9+/=]+)/.exec(csp)[1];
+    assert.ok(home.text.includes(`<style nonce="${nonce}">`));
+    assert.equal(home.headers.get("x-content-type-options"), "nosniff"); assert.equal(home.headers.get("x-frame-options"), "DENY");
+    const en = await k.pub("/help?lang=en");
+    assert.match(en.text, /<html lang="en" dir="ltr">/); assert.match(en.text, /Connecting Salla/);
+    const art = await k.pub(`/help/a/${live.slug}`);
+    assert.equal(art.status, 200); assert.match(art.text, /<h2>الخطوات<\/h2>/); assert.match(art.text, /<li>افتح الإعدادات<\/li>/);
+    assert.match((await k.pub(`/help/a/${live.slug}?lang=en`)).text, /<h2>Steps<\/h2>/);
+    assert.equal((await k.pub("/help/connecting-salla?lang=en")).status, 200);
+    assert.match((await k.pub("/help/connecting-salla?lang=en")).text, /Connect your Salla store/);
+    assert.equal((await k.pub("/help/no-such-topic")).status, 404);
+    assert.equal((await k.pub("/help/billing")).status, 404, "no live article in that category");
+    assert.equal((await k.pub(`/help/a/${draft.slug}`)).status, 404, "draft");
+    assert.doesNotMatch((await k.pub(`/help/a/${draft.slug}`)).text, /internal only/);
+    assert.equal((await k.pub(`/help/a/${cust.slug}`)).status, 404, "customers-only is not public yet");
+    await k.as(mem.ck, `${k.X}/articles/${draft.id}/status`, "POST", { status: "in_review" });
+    assert.equal((await k.pub(`/help/a/${draft.slug}`)).status, 404, "in review");
+    await k.j(`${k.X}/articles/${live.id}/status`, { status: "archived" });
+    assert.equal((await k.pub(`/help/a/${live.slug}`)).status, 404, "archived");
+    // An article only in English shows in Arabic with a note; "Still need help?" goes to the website chat when it is on, else the contact email.
+    const enOnly = await k.published({ title_en: "English only", body_en: "Hello", category: "troubleshooting" }, mem);
+    const page = (await k.pub(`/help/a/${enOnly.slug}`)).text;
+    assert.match(page, /متوفرة بالإنجليزي فقط/); assert.doesNotMatch(page, /تحتاج مساعدة أكثر/);
+    await k.j(`${k.X}/settings`, { contact_email: "help@dpa.ad" }, "PUT");
+    assert.match((await k.pub(`/help/a/${enOnly.slug}`)).text, /href="mailto:help@dpa.ad"/);
+    const sup = (await k.j(`${k.W}/support/settings`, { widget_enabled: true }, "PUT")).body;
+    assert.ok((await k.pub(`/help/a/${enOnly.slug}`)).text.includes(`href="/support/${sup.widget_key}"`));
+    assert.equal((await k.j(`${k.X}/settings`, { contact_email: "not an email" }, "PUT")).status, 422);
+    // The public site serves the chosen workspace (default: the first one).
+    const w2 = (await k.j("/api/workspaces", { company_name: "Second Co" })).body;
+    await k.j(`/api/workspaces/${w2.id}/helpcenter/articles`, { title_en: "Second workspace article", body_en: "x", slug: "second-ws" });
+    assert.equal((await k.pub("/help/a/second-ws")).status, 404);
+    const lead = await k.user("manager", "tl2");
+    assert.equal((await k.as(lead.ck, `/api/workspaces/${w2.id}/helpcenter/settings`, "PUT", { public_site: true })).status, 403, "only Owner/Admin choose the site");
+    assert.equal((await k.j(`/api/workspaces/${w2.id}/helpcenter/settings`, { public_site: true }, "PUT")).body.site_workspace_id, w2.id);
+    assert.equal((await k.pub(`/help/a/${enOnly.slug}`)).status, 404, "first workspace no longer served");
+    assert.equal(k.st.db.help_site.workspace_id, w2.id);
+    assert.ok(k.st.deleteWorkspace(w2.id));
+    assert.equal(k.st.db.help_site.workspace_id, null);
+    assert.equal((await k.pub(`/help/a/${enOnly.slug}`)).status, 200, "back to the first workspace");
+  } finally { k.done(); }
+});
+
+test("help center search: published only, Arabic normalisation (tashkeel, alef, ya, ta marbuta, ال), English case, every word must match; markdown is sanitised", async () => {
+  const { normalize, renderMarkdown, searchArticles } = await import("../lib/helpcenter.js");
+  assert.equal(normalize("إِعْلَانَاتُ الفيـــديو"), "اعلانات الفيديو");
+  assert.equal(normalize("الفاتورة مستوى"), "الفاتوره مستوي");
+  assert.equal(normalize("آخر أسئلة"), "اخر اسيله");
+  const k = await hcKit();
+  try {
+    const mem = await k.user("member", "m3");
+    await k.published({ title_ar: "إِعْلانات الفيديو من الكتالوج", title_en: "Video ads from your catalog", body_ar: "اختر قالب الفيديو", body_en: "Pick a video template", category: "video-ads" }, mem);
+    await k.published({ title_ar: "الفاتورة الضريبية", title_en: "Tax invoice", body_ar: "تجد الفاتورة في حسابك", body_en: "Find the invoice in your account", category: "billing" }, mem);
+    await k.as(mem.ck, `${k.X}/articles`, "POST", { title_en: "Video draft secret", body_en: "video", category: "video-ads" });
+    const s = async (q, lang) => (await k.pub(`/help/search?q=${encodeURIComponent(q)}${lang ? "&lang=en" : ""}`)).text;
+    assert.match(await s("اعلانات"), /إِعْلانات الفيديو/);
+    assert.match(await s("فاتوره"), /الفاتورة الضريبية/, "ta marbuta");
+    assert.match(await s("الكتالوج"), /إِعْلانات الفيديو/);
+    assert.match(await s("كتالوج"), /إِعْلانات الفيديو/, "without ال");
+    assert.match(await s("VIDEO Template", true), /Video ads from your catalog/);
+    assert.doesNotMatch(await s("video", true), /Video draft secret/, "drafts are never searched");
+    assert.match(await s("video invoice", true), /Nothing found/, "every word must match");
+    const page = await k.pub(`/help/search?q=${encodeURIComponent("<script>alert(1)</script>")}`);
+    assert.doesNotMatch(page.text, /<script>alert/); assert.match(page.text, /&lt;script&gt;/);
+    assert.equal(page.headers.get("cache-control"), "no-store");
+    assert.equal(searchArticles([{ title_ar: "", title_en: "Billing", body_ar: "", body_en: "" }], "  ").length, 0);
+  } finally { k.done(); }
+  const html = renderMarkdown([
+    "# Title", "<script>alert(1)</script>", "[bad](javascript:alert(1)) and [ok](https://dpa.ad/x?a=1&b=2) and [here](/help/billing)",
+    '<img src=x onerror="alert(1)">', "![evil](http://evil.example/x.png) ![data](data:image/png;base64,AAA) ![ok](/media/abc_12.png) ![ok2](https://cdn.example/p.jpg)",
+    '[x" onmouseover="alert(1)](https://dpa.ad)', "**bold** and *it* and `code <b>`", "", "- one", "- two", "1. first", "```", "<b>raw</b>", "```"].join("\n"));
+  assert.doesNotMatch(html, /<script/i); assert.doesNotMatch(html, /javascript:/i); assert.doesNotMatch(html, /<img[^>]*onerror/i); assert.doesNotMatch(html, /onmouseover="/);
+  assert.doesNotMatch(html, /evil\.example/); assert.doesNotMatch(html, /src="data:/);
+  assert.match(html, /<h2>Title<\/h2>/); assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /<a href="https:\/\/dpa.ad\/x\?a=1&amp;b=2" rel="noopener noreferrer" target="_blank">ok<\/a>/); assert.match(html, /<a href="\/help\/billing">here<\/a>/);
+  assert.match(html, /<img src="\/media\/abc_12.png" alt="ok" loading="lazy">/); assert.match(html, /<img src="https:\/\/cdn.example\/p.jpg"/);
+  assert.match(html, /<strong>bold<\/strong> and <em>it<\/em> and <code>code &lt;b&gt;<\/code>/);
+  assert.match(html, /<ul><li>one<\/li><li>two<\/li><\/ul>\n<ol><li>first<\/li><\/ol>/);
+  assert.match(html, /<pre><code>&lt;b&gt;raw&lt;\/b&gt;<\/code><\/pre>/);
+});
+
+test("help center sitemap and helpful votes: published articles in both languages, counters only (no personal data), one vote per address per article per day, 20 per 10 minutes", async () => {
+  const k = await hcKit();
+  try {
+    const mem = await k.user("member", "m4");
+    const a = await k.published(HC_A, mem);
+    const en = await k.published({ title_en: "English article", body_en: "Text", category: "troubleshooting" }, mem);
+    const dr = (await k.as(mem.ck, `${k.X}/articles`, "POST", { title_en: "Draft", body_en: "x", slug: "draft-one" })).body;
+    const sm = await k.pub("/help/sitemap.xml");
+    assert.equal(sm.status, 200); assert.match(sm.headers.get("content-type"), /application\/xml/);
+    assert.ok(sm.text.includes(`<loc>https://wizard.dpa.ad/help/a/${a.slug}</loc>`)); assert.ok(sm.text.includes(`<loc>https://wizard.dpa.ad/help/a/${a.slug}?lang=en</loc>`));
+    assert.ok(sm.text.includes(`<loc>https://wizard.dpa.ad/help/a/${en.slug}?lang=en</loc>`)); assert.ok(!sm.text.includes(`<loc>https://wizard.dpa.ad/help/a/${en.slug}</loc>`), "no Arabic URL for an English-only article");
+    assert.ok(sm.text.includes("<loc>https://wizard.dpa.ad/help/connecting-salla</loc>")); assert.ok(!sm.text.includes(dr.slug));
+    const r = await k.vote(a.slug, "no", "198.51.100.1", "en");
+    assert.equal(r.status, 303); assert.equal(r.headers.get("location"), `/help/a/${a.slug}?lang=en&voted=1#feedback`);
+    assert.match((await k.pub(r.headers.get("location"))).text, /Thanks for your feedback/);
+    await k.vote(a.slug, "no", "198.51.100.1");
+    await k.vote(a.slug, "yes", "198.51.100.2");
+    await k.vote(en.slug, "yes", "198.51.100.1");
+    assert.equal((await k.vote(dr.slug, "yes", "198.51.100.3")).status, 404, "no votes on drafts");
+    assert.equal((await k.vote(a.slug, "maybe", "198.51.100.4")).status, 303);
+    const got = (await k.j(`${k.X}/articles/${a.id}`)).body.votes;
+    assert.deepEqual(got, { yes: 1, no: 1, yes_30: 1, no_30: 1 });
+    const rows = k.st.db.help_votes.filter((v) => v.article_id === a.id);
+    assert.equal(rows.length, 1); assert.deepEqual(Object.keys(rows[0]).sort(), ["article_id", "day", "id", "no", "workspace_id", "yes"]);
+    for (let i = 0; i < 25; i++) await k.vote(i % 2 ? a.slug : en.slug, "yes", "198.51.100.9");
+    const total = k.st.db.help_votes.reduce((s, v) => s + v.yes + v.no, 0);
+    assert.equal(total, 5, "one per article per address per day (2 more), the rest ignored");
+  } finally { k.done(); }
+});
+
+test("help center AI Help writer: drafts from a support article and from resolved tickets with the demo AI (source words, [ADD], no invented numbers); invented numbers refused; checked JSON kept; outcomes", async () => {
+  const k = await hcKit();
+  try {
+    const sa = (await k.j(`${k.W}/support/articles`, { question: "How do I export ads to Snapchat?", answer: "Open the ad, press Export, choose Snapchat. Sizes: 1080x1920.", language: "en", category: "templates" })).body;
+    let r = await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sa.id });
+    assert.equal(r.status, 201); assert.equal(r.body.by_ai, false); assert.match(r.body.note, /plain draft/);
+    let a = r.body.article;
+    assert.equal(a.status, "draft"); assert.equal(a.title_en, "How do I export ads to Snapchat?"); assert.match(a.body_en, /press Export, choose Snapchat/); assert.match(a.body_ar, /\[ADD/);
+    assert.equal(a.support_article_id, sa.id); assert.equal(a.category, "ad-designs"); assert.equal(a.slug, "how-do-i-export-ads-to-snapchat");
+    const nums = (s) => s.match(/\d+/g) || [];
+    assert.ok([a.title_ar, a.title_en, a.body_ar, a.body_en].flatMap(nums).every((n) => ["1080", "1920"].includes(n)), "no invented numbers");
+    // Tickets: only resolved ones; emails and phone numbers are redacted from the sources.
+    const t1 = (await k.j(`${k.W}/support/tickets`, { message: "كيف أربط متجري في سلة؟ ايميلي sara@shop.sa", channel: "WhatsApp" })).body;
+    await k.j(`${k.W}/support/tickets/${t1.id}/messages`, { from: "you", text: "من الإعدادات اختر ربط سلة" });
+    assert.equal((await k.j(`${k.X}/ai/draft`, { source: "tickets", ticket_ids: [t1.id] })).status, 422, "open ticket refused");
+    await k.j(`${k.W}/support/tickets/${t1.id}`, { status: "resolved" }, "PUT");
+    r = await k.j(`${k.X}/ai/draft`, { source: "tickets", ticket_ids: [t1.id] });
+    a = r.body.article;
+    assert.equal(a.category, "connecting-salla"); assert.match(a.body_ar, /من الإعدادات اختر ربط سلة/); assert.match(a.body_ar, /\[email\]/); assert.doesNotMatch(a.body_ar, /sara@shop/);
+    assert.ok(k.seen.at(-1).includes("[email]") && !k.seen.at(-1).includes("sara@shop.sa"), "the AI never sees the email");
+    // An AI draft with numbers that aren't in the sources is replaced by the plain draft and escalated.
+    k.ai(() => JSON.stringify({ title_ar: "تصدير", body_ar: "يرفع المبيعات 40%", title_en: "Export", body_en: "Raises sales 40%" }));
+    r = await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sa.id });
+    assert.equal(r.body.by_ai, false); assert.match(r.body.note, /numbers that aren't in the sources \(40\)/);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "escalated"));
+    // A checked draft is kept; publishing it unchanged counts as accepted, deleting another as rejected.
+    k.ai(() => "```json\n" + JSON.stringify({ title_ar: "التصدير إلى سناب شات", body_ar: "افتح الإعلان واضغط تصدير. المقاس 1080x1920.", title_en: "Export to Snapchat", body_en: "Open the ad and press Export. Size 1080x1920." }) + "\n```");
+    r = await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sa.id });
+    assert.equal(r.body.by_ai, true); a = r.body.article;
+    assert.equal(a.title_en, "Export to Snapchat"); assert.equal(a.slug, "export-to-snapchat");
+    assert.equal(k.st.db.agent_runs.filter((x) => x.agent_id === "help_writer").length, 4, "every call attributed to the agent");
+    const mem = await k.user("member", "m5");
+    await k.j(`${k.X}/articles/${a.id}/status`, { status: "in_review" });
+    assert.equal((await k.as(mem.ck, `${k.X}/articles/${a.id}/status`, "POST", { status: "published" })).body.status, "published", "the requester is the author: someone else publishes");
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "accepted"));
+    const b = (await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sa.id })).body.article;
+    await k.j(`${k.X}/articles/${b.id}`, undefined, "DELETE");
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "rejected"));
+    // Billing drafts may use the PLANS prices; other prices are refused.
+    const sb = (await k.j(`${k.W}/support/articles`, { question: "What does Growth cost?", answer: "See the plans page.", language: "en", category: "billing" })).body;
+    k.ai(() => JSON.stringify({ title_ar: "الأسعار", body_ar: "باقة Growth من 449 دولار", title_en: "Prices", body_en: "Growth from USD 449 a month" }));
+    assert.equal((await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sb.id })).body.by_ai, true);
+    assert.match(k.seen.at(-1), /Growth: from USD 449\/month/);
+    k.ai(() => JSON.stringify({ title_ar: "الأسعار", body_ar: "باقة Growth من 399 دولار", title_en: "Prices", body_en: "Growth from USD 399" }));
+    assert.equal((await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sb.id })).body.by_ai, false);
+    // Switched off in AI Workforce: plain draft, no AI call.
+    k.st.db.agents.help_writer = { level: 0 };
+    const runs = k.st.db.agent_runs.length;
+    r = await k.j(`${k.X}/ai/draft`, { source: "support_article", support_article_id: sa.id });
+    assert.match(r.body.note, /switched off/); assert.equal(k.st.db.agent_runs.length, runs);
+    assert.equal((await k.j(`${k.X}/ai/draft`, { source: "nope" })).status, 422);
+  } finally { k.done(); }
+});
+
+test("help center translation: AI translation draft (checked: same numbers and links) applied or discarded with outcomes; demo leaves [ADD]; locked when published", async () => {
+  const k = await hcKit();
+  try {
+    const a = (await k.j(`${k.X}/articles`, { title_ar: "رفع ملف المنتجات", body_ar: "ارفع ملف CSV حتى 5000 منتج. [الدليل](https://dpa.ad/guide)", category: "catalogs-and-feeds" })).body;
+    assert.equal((await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "ar" })).status, 422, "needs the English version first");
+    let tr = (await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" })).body.translation;
+    assert.equal(tr.by_ai, false); assert.match(tr.title, /\[ADD English title\]/);
+    k.ai(() => JSON.stringify({ title: "Upload a product file", body: "Upload a CSV file of up to 9000 products. [Guide](https://dpa.ad/guide)" }));
+    tr = (await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" })).body.translation;
+    assert.equal(tr.by_ai, false); assert.match(tr.note, /numbers that aren't in the original \(9000\)/);
+    k.ai(() => JSON.stringify({ title: "Upload a product file", body: "Upload a CSV file of up to 5000 products. [Guide](https://evil.example)" }));
+    assert.match((await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" })).body.translation.note, /changed the links/);
+    k.ai(() => JSON.stringify({ title: "Upload a product file", body: "Upload a CSV file of up to 5000 products. [Guide](https://dpa.ad/guide)" }));
+    tr = (await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" })).body.translation;
+    assert.equal(tr.by_ai, true); assert.equal(tr.lang, "en");
+    const after = (await k.j(`${k.X}/articles/${a.id}/translation`, { action: "apply" })).body;
+    assert.equal(after.title_en, "Upload a product file"); assert.match(after.body_en, /5000 products/); assert.equal(after.translation, undefined);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "accepted" && /Translation to en/.test(e.note)));
+    await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" });
+    await k.j(`${k.X}/articles/${a.id}/translation`, { action: "apply", body: "Edited by a person: up to 5000 products." });
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "edited"));
+    await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" });
+    await k.j(`${k.X}/articles/${a.id}/translation`, { action: "discard" });
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "help_writer" && e.outcome === "rejected"));
+    const mem = await k.user("member", "m6");
+    await k.j(`${k.X}/articles/${a.id}/status`, { status: "in_review" });
+    assert.equal((await k.as(mem.ck, `${k.X}/articles/${a.id}/status`, "POST", { status: "published" })).body.status, "published");
+    assert.equal((await k.j(`${k.X}/articles/${a.id}/ai/translate`, { to: "en" })).status, 409);
+  } finally { k.done(); }
+});
+
+test("help center gaps and freshness: ticket topics with no published article, Command Center needs (180 days unreviewed, 3+ not helpful in 30 days, gaps with 5+ tickets) redacted without the module", async () => {
+  const k = await hcKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const DAY = 864e5, now = Date.parse("2026-11-03T09:00:00Z");
+    const ticket = async (message, category, status = "resolved", daysAgo = 3) => {
+      const t = (await k.j(`${k.W}/support/tickets`, { message })).body;
+      await k.j(`${k.W}/support/tickets/${t.id}`, { category, status }, "PUT");
+      k.st.db.support_tickets.find((x) => x.id === t.id).created_at = new Date(now - daysAgo * DAY).toISOString();
+      return t;
+    };
+    for (let i = 0; i < 5; i++) await ticket(`My Zid store won't connect ${i}`, "feed-import", i < 2 ? "resolved" : "new");
+    await ticket("Invoice question", "billing");
+    await ticket("Please add Pinterest", "feature-request");
+    await ticket("Old billing question", "billing", "resolved", 120);
+    const gaps = (await k.j(`${k.X}/gaps`)).body.gaps;
+    assert.deepEqual(gaps.map((g) => [g.category, g.tickets, g.resolved]), [["connecting-zid", 5, 2], ["billing", 1, 1]]);
+    assert.equal(gaps[0].examples.length, 3);
+    const needs = async (c = k.ck) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Help center");
+    let n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Help center gaps"]); assert.match(n[0].text, /1 support topic has 5\+ tickets in 90 days and no published article: Connecting Zid \(5\)/);
+    // A draft from the gap uses its resolved tickets; publishing an article on the topic closes the gap.
+    const d = (await k.j(`${k.X}/ai/draft`, { source: "gap", category: "connecting-zid" })).body.article;
+    assert.equal(d.source.ticket_ids.length, 2); assert.equal(d.category, "connecting-zid");
+    assert.equal((await k.j(`${k.X}/ai/draft`, { source: "gap", category: "video-ads" })).status, 422);
+    const mem = await k.user("member", "m7");
+    const zid = await k.published({ title_en: "Connect Zid", body_en: "Steps", category: "connecting-zid" }, mem);
+    assert.deepEqual((await k.j(`${k.X}/gaps`)).body.gaps.map((g) => g.category), ["billing"]);
+    assert.equal((await needs()).length, 0);
+    // Not reviewed for 180 days.
+    k.st.db.help_articles.find((x) => x.id === zid.id).last_reviewed = "2026-05-06";
+    n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Help articles to re-review"]); assert.match(n[0].text, /1 published help article hasn't been reviewed in 180 days: Connect Zid/);
+    assert.equal((await k.j(`${k.X}/articles?status=stale`)).body.articles.length, 1);
+    await k.as(mem.ck, `${k.X}/articles/${zid.id}/reviewed`, "POST", {});
+    assert.equal((await k.j(`${k.X}/articles/${zid.id}`)).body.last_reviewed, "2026-11-03");
+    assert.equal((await needs()).length, 0);
+    // Three "not helpful" in 30 days; older votes don't count.
+    for (const ip of ["192.0.2.1", "192.0.2.2"]) await k.vote(zid.slug, "no", ip);
+    k.st.db.help_votes.push({ id: "old", workspace_id: k.w.id, article_id: zid.id, day: "2026-09-01", yes: 0, no: 9 });
+    assert.equal((await needs()).length, 0);
+    await k.vote(zid.slug, "no", "192.0.2.3");
+    n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Help articles marked not helpful"]); assert.match(n[0].text, /marked "not helpful" 3\+ times in 30 days: Connect Zid/);
+    const fin = await k.user("finance", "f7");
+    assert.ok((await k.as(fin.ck, `${k.W}/command`)).body.needs.every((x) => x.module !== "Help center" && x.route !== "helpcenter"), "redacted without the module");
+  } finally { k.done(); }
+});
+
+test("help center and AI Support: the support chat may cite published help articles (link to /help/a/<slug>), never drafts or customers-only ones", async () => {
+  const k = await hcKit();
+  try {
+    const mem = await k.user("member", "m8");
+    const live = await k.published(HC_A, mem);
+    await k.as(mem.ck, `${k.X}/articles`, "POST", { title_en: "Unreleased feature draft", body_en: "secret", slug: "secret-draft" });
+    await k.published({ title_en: "Customer only page", body_en: "x", slug: "cust-only", visibility: "customers" }, mem);
+    const sup = (await k.j(`${k.W}/support/settings`, { widget_enabled: true }, "PUT")).body;
+    k.ai(() => 'META {"category":"getting-started","language":"en","escalate":false,"reason":""}\n\nSee https://wizard.dpa.ad/help/a/connect-your-salla-store');
+    const r = await fetch(`${k.b2}/api/public/support/${sup.widget_key}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: "How do I connect Salla?" }) });
+    assert.equal(r.status, 200);
+    const p = k.seen.at(-1);
+    assert.match(p, /<published_help_articles>/); assert.ok(p.includes(`https://wizard.dpa.ad/help/a/${live.slug}`));
+    assert.ok(!p.includes("secret-draft") && !p.includes("Unreleased feature") && !p.includes("cust-only"));
+    // The team's own AI draft reply sees the same list.
+    const t = (await k.j(`${k.W}/support/tickets`, { message: "Salla?" })).body;
+    await k.j(`${k.W}/support/tickets/${t.id}/ai-reply`, {});
+    assert.ok(k.seen.at(-1).includes(`/help/a/${live.slug}`)); assert.ok(!k.seen.at(-1).includes("secret-draft"));
+    const { replyPrompt } = await import("../lib/support.js");
+    assert.doesNotMatch(replyPrompt(k.w, [], { channel: "x", messages: [] }), /published_help_articles/, "nothing added without articles");
+  } finally { k.done(); }
+});
+
+test("help center: AI Help writer agent, module and role defaults, Ask DPA AD tools, sample articles removed with sample data, workspace delete", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  const ag = AGENTS.find((a) => a.id === "help_writer");
+  assert.equal(ag.name, "AI Help writer"); assert.equal(ag.team, "Customer Success"); assert.equal(ag.max, 1); assert.equal(ag.level, 1); assert.equal(ag.module, "helpcenter");
+  assert.equal(agentFor("POST", "/api/workspaces/1/helpcenter/ai/draft"), "help_writer");
+  assert.ok(MODULE_IDS.includes("helpcenter")); assert.equal(moduleFor("POST", "/api/workspaces/1/helpcenter/articles/4/status"), "helpcenter");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.helpcenter])), { owner: "edit", admin: "edit", manager: "edit", member: "edit", finance: "none", creative: "edit", viewer: "view" });
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-hcr-"));
+  fs.writeFileSync(path.join(dd, "db.json"), JSON.stringify({ roles: [{ id: "creative", name: "Creative", perms: { command: "view" } }] }));
+  assert.equal(new Store(dd).db.roles.find((r) => r.id === "creative").perms.helpcenter, "edit", "ensureRoles adds the module"); fs.rmSync(dd, { recursive: true, force: true });
+  const lt = TOOLS.find((t) => t.name === "list_help_articles"), dt = TOOLS.find((t) => t.name === "draft_help_article");
+  assert.equal(lt.module, "helpcenter"); assert.ok(!lt.write); assert.equal(dt.module, "helpcenter"); assert.equal(dt.write, true); assert.equal(dt.risk, "low"); assert.equal(typeof dt.preview, "function");
+
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await hcKit({ clock: "2026-11-03T09:00:00Z", assistantClient: fakeClient });
+  try {
+    const sa = (await k.j(`${k.W}/support/articles`, { question: "Where are my invoices?", answer: "In Billing.", language: "en", category: "billing" })).body;
+    script = [use("h1", "list_help_articles", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.totals.all, 0); assert.deepEqual(r.gaps, []); return say("No articles yet."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "Help articles?", ws: k.w.id })).body;
+    assert.match(a1.reply, /No articles yet/);
+    script = [use("h2", "draft_help_article", { source: "support_article", support_article_id: sa.id })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Draft one from the invoices answer", ws: k.w.id })).body;
+    assert.equal(a2.pending.summary, `Draft a help article (AI Help writer, saved as a draft for review) from support article #${sa.id}`);
+    assert.equal(k.st.db.help_articles.length, 0);
+    script = [say("Drafted.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const made = k.st.db.help_articles[0];
+    assert.equal(made.status, "draft"); assert.equal(made.title_en, "Where are my invoices?"); assert.match(made.log[0].by, /via Ask DPA AD/);
+
+    // Sample data: three published "Sample ·" articles in Arabic and English and one draft, removed with sample data.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.help_articles, 4);
+    const smp = k.st.db.help_articles.filter((y) => y.sample);
+    assert.ok(smp.every((y) => y.title_en.startsWith("Sample · ") && y.title_ar.startsWith("Sample · ") && y.body_ar && y.body_en));
+    assert.deepEqual(smp.map((y) => y.status).sort(), ["draft", "published", "published", "published"]);
+    assert.ok(smp.filter((y) => y.status === "published").every((y) => !/\[ADD/.test(y.body_ar + y.body_en) && y.last_reviewed === "2026-11-03"));
+    assert.equal((await k.pub("/help/a/sample-connect-salla")).status, 200);
+    assert.equal((await k.pub("/help/a/sample-video-ads")).status, 404);
+    await k.vote("sample-connect-salla", "yes", "192.0.2.50");
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.help_articles, 4); assert.equal(rm.help_votes, 1);
+    assert.ok(!k.st.db.help_articles.some((y) => y.sample)); assert.ok(k.st.db.help_articles.some((y) => y.id === made.id), "real article kept");
+    assert.equal((await k.pub("/help/a/sample-connect-salla")).status, 404);
+    // Deleting a workspace removes its help rows and keeps other workspaces'.
+    k.st.db.help_articles.push({ id: "zh", workspace_id: "other" });
+    k.st.db.help_votes.push({ id: "zv", workspace_id: k.w.id, article_id: made.id, day: "2026-11-03", yes: 1, no: 0 });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    assert.deepEqual(k.st.db.help_articles.map((y) => y.id), ["zh"]); assert.equal(k.st.db.help_votes.length, 0);
+  } finally { k.done(); }
+});
