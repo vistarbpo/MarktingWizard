@@ -886,7 +886,7 @@ details > summary { cursor: pointer; }
 .cm-dialog input[type=file] { min-width: 0; max-width: 100%; } .cm-dialog { overflow-x: hidden; }
 
 /* ---- Minimal sidebar with folding groups */
-.shell { grid-template-columns: 232px minmax(0, 1fr); }
+@media (min-width: 1025px) { .shell { grid-template-columns: 232px minmax(0, 1fr); } } /* phones and tablets keep the one-column shell (sidebar slides in) */
 .sidebar { gap: var(--s-4); padding: var(--s-4) var(--s-3); }
 .nav { gap: 1px; }
 .nav a, .nav-g { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text-2); font: 500 var(--fs-sm) var(--font); cursor: pointer; border: 0; background: none; width: 100%; text-align: left; }
@@ -1014,4 +1014,43 @@ details > summary { cursor: pointer; }
 @media (max-width: 640px) {
   .bl-acts { white-space: normal; }
   .bl-acts .btn { margin: 2px 0; }
+/* ---------------------------------------------------------------- Paid Ads */
+.pa-tabs { flex-wrap: wrap; width: fit-content; max-width: 100%; }
+.pa-banner { border-left: 4px solid var(--warn); }
+.pa-banner.live { border-left-color: var(--good); }
+.pa-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--s-3); align-items: end; }
+.pa-chans { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; grid-column: 1 / -1; }
+.pa-chans legend { font-size: var(--fs-sm); font-weight: 500; margin-bottom: 6px; }
+.pa-pace { display: flex; flex-direction: column; gap: 4px; }
+.pa-bar { position: relative; height: 12px; background: var(--surface-2); border-radius: 6px; }
+.pa-bar i { display: block; height: 100%; border-radius: 6px; max-width: 100%; }
+.pa-bar em { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); margin-left: -1px; }
+.pa-bar u { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid var(--text); background: var(--surface); text-decoration: none; }
+.pa-table td, .pa-table th { white-space: nowrap; }
+.pa-table td:first-child { white-space: normal; min-width: 160px; }
+.pa-name { display: block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pa-plan.open { border-color: var(--border-strong); }
+.pa-plan-title { text-align: left; font-size: var(--fs-md); }
+.pa-camp { border-top: 1px solid var(--border); padding-top: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
+.pa-camp h3 { margin: 0; }
+.pa-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--fs-sm); min-width: 0; }
+.pa-facts > span { min-width: 0; overflow-wrap: anywhere; }
+.pa-facts b { color: var(--text-2); font-weight: 500; margin-right: 4px; }
+.pa-sets, .pa-ads { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: var(--s-2); }
+.pa-set, .pa-ad, .pa-rule { border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pa-num { width: 72px; display: inline-block; }
+.pa-link, .pa-code { display: block; overflow-wrap: anywhere; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-xs); }
+.pa-pre { max-height: 320px; overflow: auto; background: var(--surface-2); padding: 10px; border-radius: var(--r-md); font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word; }
+.pa-sugs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: var(--s-3); }
+.pa-sug, .pa-acc { min-width: 0; }
+.pa-accs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: var(--s-4); }
+.pa-log { list-style: none; margin: 0; padding: 0 20px 12px; display: flex; flex-direction: column; }
+.pa-log li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--border); flex-wrap: wrap; min-width: 0; }
+.pa-log li:first-child { border-top: 0; }
+.pa-log .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pa-out { background: var(--surface-2); border-radius: var(--r-md); padding: 10px 12px; }
+@media (max-width: 640px) {
+  .pa-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pa-name { max-width: 200px; }
+  .pa-log { padding: 0 14px 10px; }
 }

@@ -22,6 +22,12 @@
 //      MOYASAR_SECRET_KEY (card payment links), MOYASAR_WEBHOOK_SECRET (shared secret on the /hooks/moyasar webhook)
 //      BILLING_USAGE_TOKEN (Bearer token for the product to POST renders to /hooks/billing/usage)
 //      ZATCA_ENV (sandbox | simulation | production), ZATCA_CSID, ZATCA_CSID_SECRET (after ZATCA onboarding; Live also needs signing)
+// Paid Ads (optional; Test mode by default, nothing changes on an ad platform until an approver switches to Live; campaigns are created PAUSED):
+//      Meta uses the same META_APP_ID / META_APP_SECRET (add the Marketing API product; ads_read, ads_management, business_management), META_ADS_REVIEWED=1 after App Review
+//      SNAP_CLIENT_ID, SNAP_CLIENT_SECRET (Snapchat Marketing API), SNAP_ADS_APPROVED=1 once Snap approves the app
+//      TIKTOK_ADS_APP_ID, TIKTOK_ADS_SECRET (TikTok Business API, a separate app from content posting), TIKTOK_ADS_APPROVED=1 after TikTok's review
+//      ADS_GOOGLE=1 to show Google Ads, with GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_LOGIN_CUSTOMER_ID (manager account), GOOGLE_ADS_VERSION, GOOGLE_ADS_BASIC_ACCESS=1
+//      ADS_LEAD_SECRET (signup / landing forms POST leads with their UTMs to /hooks/ads/lead/<secret>)
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./lib/app.js";
@@ -41,6 +47,7 @@ app.locals.studio.start(); // Creative Studio: publishes due posts every minute,
 app.locals.backups.start(); // Backups: checks every minute, runs nightly from 02:00 Riyadh (catches up after a restart)
 app.locals.status.start({ url: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/$/, "") + "/healthz" }); // status page uptime self-check every 5 minutes
 app.locals.billing.start(); // Billing: hourly run issues due invoices, ends trials, bills overage, sends dunning reminders
+app.locals.ads.start(); // Paid Ads: pulls insights every 6 hours for Live workspaces, then runs the guardrails and the Finance push
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>
   console.log(`Marketing Wizard listening on ${port} (provider ${provider.name}, login ${password ? "on" : "NOT SET"})`));

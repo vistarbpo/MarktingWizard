@@ -393,8 +393,8 @@ export class Store {
     const before = this.db.workspaces.length;
     this.db.workspaces = this.db.workspaces.filter((w) => w.id !== id);
     if (this.db.workspaces.length === before) return false;
-    // Billing, compliance and status collections are created at start-up by their modules: clear this workspace's rows too.
-    for (const [c, v] of Object.entries(this.db)) if (/^(billing|compliance|status)_/.test(c) && Array.isArray(v)) this.db[c] = v.filter((x) => x?.workspace_id !== id);
+    // Billing, compliance, status and Paid Ads collections are created at start-up by their modules: clear this workspace's rows too.
+    for (const [c, v] of Object.entries(this.db)) if (/^(billing|compliance|status|ads)_/.test(c) && Array.isArray(v)) this.db[c] = v.filter((x) => x?.workspace_id !== id);
     // Media files on disk go with their records.
     for (const m of this.db.creative_media.filter((x) => x.workspace_id === id)) if (/^[A-Za-z0-9_-]+\.[a-z0-9]+$/.test(m.file || "")) fs.rmSync(path.join(this.dir, "media", m.file), { force: true });
     const kpiIds = new Set(this.db.kpis.filter((k) => k.workspace_id === id).map((k) => k.id));

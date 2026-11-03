@@ -11,6 +11,7 @@ export const MODULES = [
   { id: "product", name: "Product" },
   { id: "crm", name: "Store CRM & outreach" },
   { id: "creative", name: "Creative Studio" },
+  { id: "ads", name: "Paid Ads" },
   { id: "workforce", name: "AI Workforce (agents, levels, budgets)" },
   { id: "support", name: "AI Support" },
   { id: "results", name: "ROAS results" },
@@ -31,9 +32,9 @@ export const DEFAULT_ROLES = [
   { id: "owner", name: "Owner", locked: true, description: "Everything, including people, roles and billing decisions.", perms: all("edit") },
   { id: "admin", name: "Admin", description: "Runs the dashboard day to day and manages people.", perms: all("edit") },
   { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none", compliance: "view", billing: "view" } },
-  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none", billing: "none" } },
-  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit", billing: "edit" } },
-  { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view" } },
+  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none", billing: "none", ads: "view" } },
+  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit", billing: "edit", ads: "view" } },
+  { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view", ads: "view" } },
   { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none", payroll: "none" } },
 ];
 
@@ -72,7 +73,7 @@ export function moduleFor(method, path) {
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
     deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team", people: "team", payroll: "payroll", billing: "billing", customers: "support",
-    sop: "sop", command: "command", crm: "crm", creative: "creative", "sample-data": "admin" })[seg] || "admin";
+    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", "sample-data": "admin" })[seg] || "admin";
 }
 
 // One short line for the activity log.
