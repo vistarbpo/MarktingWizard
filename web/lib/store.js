@@ -396,7 +396,8 @@ export class Store {
     // Billing, Customer Success, compliance, status, Paid Ads, Market intel, Goals & review (OKR), Meetings, Partners and Legal collections are created at start-up by their modules: clear this workspace's rows too.
     // Legal & documents: the files on disk (DATA_DIR/legal) go with their records.
     for (const d of (this.db.legal_documents || []).filter((x) => x.workspace_id === id)) for (const v of d.versions || []) if (/^[A-Za-z0-9_-]{24,40}\.[a-z]+$/.test(v.file || "")) fs.rmSync(path.join(this.dir, "legal", v.file), { force: true });
-    for (const [c, v] of Object.entries(this.db)) if (/^(billing|success|compliance|status|ads|intel|okr|meetings|partners|legal)_/.test(c) && Array.isArray(v)) this.db[c] = v.filter((x) => x?.workspace_id !== id);
+    for (const [c, v] of Object.entries(this.db)) if (/^(billing|success|compliance|status|ads|intel|okr|meetings|partners|legal|help)_/.test(c) && Array.isArray(v)) this.db[c] = v.filter((x) => x?.workspace_id !== id);
+    if (this.db.help_site?.workspace_id === id) this.db.help_site.workspace_id = null; // the public help site falls back to the first workspace
     // Media files on disk go with their records.
     for (const m of this.db.creative_media.filter((x) => x.workspace_id === id)) if (/^[A-Za-z0-9_-]+\.[a-z0-9]+$/.test(m.file || "")) fs.rmSync(path.join(this.dir, "media", m.file), { force: true });
     const kpiIds = new Set(this.db.kpis.filter((k) => k.workspace_id === id).map((k) => k.id));

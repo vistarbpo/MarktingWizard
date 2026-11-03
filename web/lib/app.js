@@ -43,6 +43,9 @@ import { createPartners, loadSamplePartners, partnersNeeds, removeSamplePartners
 import { mountPartners, mountPartnersPublic } from "./partnersroutes.js";
 import { createLegal, legalNeeds, loadSampleLegal, removeSampleLegal } from "./legal.js";
 import { mountLegal } from "./legalroutes.js";
+import { createHelp, helpForSupport, helpNeeds, loadSampleHelp, removeSampleHelp } from "./helpcenter.js";
+import { mountHelp, mountHelpPublic } from "./helpcenterroutes.js";
+import { publicBase } from "./media.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -55,9 +58,9 @@ const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
 // Command Center need labels → the module a person needs View on to see them.
-const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "AI Workforce": "workforce" };
+const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", "AI Workforce": "workforce" };
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -77,6 +80,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const okr = createOkr({ store, crm, provider, workforce, needs: (w) => commandData(w, () => true, null).needs, ...okrOptions });
   const meetings = createMeetings({ store, provider, workforce, ...meetingsOptions }); // Meetings → tasks: the AI Meeting secretary drafts action items from notes
   const partners = createPartners({ store, provider, workforce, ...partnersOptions });
+  const help = createHelp({ store, provider, workforce, ...helpOptions }); // Help center: public /help site; AI Help writer drafts only
   const legal = createLegal({ store, provider, workforce, ...legalOptions }); // Legal & documents: vault, renewals, templates; AI Legal assistant drafts only // Partners & referrals: links, attribution, commissions; AI Partnerships manager drafts only
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
@@ -101,7 +105,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -179,7 +183,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
       return res.json({ token: t.public_token, reply: null, handed_over: true });
     }
     try {
-      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id)), onText: () => {} });
+      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id), helpForSupport(store, w.id, publicBase(env))), onText: () => {} });
       const r = parseReply(raw);
       // Level 1 (drafts only): the AI's answer waits for a person instead of going to the customer.
       const live = workforce.level("support_agent") >= 2;
@@ -201,6 +205,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountAdsPublic(app, { store, crm, ads });
   mountSuccessPublic(app, { store, success }); // public survey answers at /s/:token
   mountPartnersPublic(app, { store, partners, env }); // referral links /r/:code and the partner portal /p/:token
+  mountHelpPublic(app, { store, help, env }); // the public help site /help (published articles only)
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -239,6 +244,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountMeetings(app, { store, crm, outreach, success, meetings });
   mountPartners(app, { store, crm, outreach, partners, env });
   mountLegal(app, { store, crm, legal, env });
+  mountHelp(app, { store, help, env });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1215,6 +1221,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (can("okr") && user) { d.okr = okrHome(store, crm, w, permsOf(user), okr.now()); d.needs = [...okrNeeds(store, w, { user, now: okr.now() }), ...d.needs]; } else d.okr = null;
     if (can("meetings") && user) d.needs = [...meetingsNeeds(store, w, { user, now: meetings.now() }), ...d.needs]; // overdue meeting action items, notes waiting for review
     if (can("legal")) d.needs = [...legalNeeds(store, w, { user, now: legal.now() }), ...d.needs]; // expiring within 30 days, expired, notice deadlines within 14 days, overdue obligations (restricted only for Owner/Admin)
+    if (can("helpcenter")) d.needs = [...helpNeeds(store, w, { now: help.now() }), ...d.needs]; // articles not reviewed in 180 days, 3+ "not helpful" in 30 days, ticket topics (5+) with no article
     if (can("partners")) d.needs = [...partnersNeeds(store, crm, w, { now: partners.now() }), ...d.needs]; // statements to approve, approved and unpaid, quiet signed partners
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
     billingCommandHook(d, billing, w, can("billing")); // billed MRR and overdue invoices, failed payments, trials ending
@@ -1241,10 +1248,11 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     counts.success_customers = loadSampleSuccess({ store, billing, success, crm }, w).customers; // sample Billing customers for Customer Success
     counts.meetings = loadSampleMeetings(store, crm, w.id).meetings; // two sample meetings with notes and a rule-based draft
     counts.partners = loadSamplePartners(store, crm, w.id, partners.now()).partners; // two sample partners with clicks and one draft statement
+    counts.help_articles = loadSampleHelp(store, w.id, help.now()).articles; // three published help articles (AR + EN) and one draft
     counts.legal_documents = loadSampleLegal(store, w, legal.now()).documents; // an NDA draft and a vendor contract expiring in 20 days
     res.status(201).json(counts);
   });
-  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleData(store, w.id) }); });
+  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleHelp(store, w.id), ...removeSampleData(store, w.id) }); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));
@@ -1337,7 +1345,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (!t) return res.status(404).json({ detail: "Conversation not found" });
     res.setHeader("Content-Type", "application/json");
     try {
-      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), t), onText: () => {} });
+      const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), t, helpForSupport(store, w.id, publicBase(env))), onText: () => {} });
       const r = parseReply(raw);
       store.updateTicket(w.id, t.id, { category: r.category, language: r.language, ...(r.escalate ? { status: "needs_human", escalation_reason: r.reason } : {}) });
       res.json(r);

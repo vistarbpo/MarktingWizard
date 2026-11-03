@@ -6,6 +6,7 @@ import { channelInfo } from "./creative.js";
 import { MEDIA_COLL, mediaPath, mediaView } from "./media.js";
 import { CHANNEL_PROVIDER, PROVIDERS, PUBLISHERS, captionFor, listComments, metricsFacebook, metricsInstagram, metricsTikTok, metricsYouTube, refreshTokens, replyComment, seal, sendMessage, socialConfig, unseal } from "./social.js";
 import { SYSTEM_SUPPORT, parseReply, replyPrompt } from "./support.js";
+import { helpForSupport } from "./helpcenter.js";
 
 export const ACCOUNTS = "social_accounts";
 export const LOG = "creative_publish_log";
@@ -185,7 +186,7 @@ export function createPublisher({ store, provider, cfg = socialConfig(), fetchIm
   // ---- comments and DMs into AI Support. AI drafts; a person sends (nothing is posted automatically).
   async function draftFor(w, t) {
     try {
-      const r = parseReply(await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id)), onText: () => {} }));
+      const r = parseReply(await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id), helpForSupport(store, w.id, String(cfg.public_url || "https://wizard.dpa.ad").replace(/\/$/, ""))), onText: () => {} }));
       store.updateTicket(w.id, t.id, { category: r.category, language: r.language, ai_draft: r.checked && r.reply ? { text: r.reply, at: new Date().toISOString() } : null,
         ...(r.escalate ? { status: "needs_human", escalation_reason: r.reason } : {}) });
     } catch (e) { store.updateTicket(w.id, t.id, { status: "needs_human", escalation_reason: "AI could not draft: " + (e?.message || "error") }); }
