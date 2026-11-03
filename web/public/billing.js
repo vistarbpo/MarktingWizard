@@ -139,6 +139,7 @@ async function blOpen(id) {
   <div class="card card-pad stack"><div class="row between"><h3>Health score</h3>${blBadge(h.label, `${h.score} / 100 · ${h.label.replace("_", " ")}`)}</div>
     <ul class="bl-factors">${h.factors.map((f) => `<li><span class="s-small"><b>${esc(f.name)}</b> · ${esc(f.why)}</span><span class="num s-small">${f.points}/${f.max}</span><span class="meter"><span style="width:${Math.round((f.points / f.max) * 100)}%"></span></span></li>`).join("")}</ul>
     <p class="subtle s-small">Rule-based: payment 30, usage 25, tickets 15, onboarding 15, recent activity 15. 75+ healthy, 50–74 watch, under 50 at risk.</p></div>
+  <div id="blSucc"></div>
   ${ed ? `<div class="card card-pad stack"><h3>Subscription</h3>
     <div class="row gap-8" style="flex-wrap:wrap"><select class="input input-sm" id="blPlan" style="width:auto" aria-label="New plan">${BL.meta.plans.map((p) => `<option ${p.name === c.plan ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
       <input class="input input-sm" id="blCustom" type="number" min="4000" step="1" placeholder="Enterprise $/mo" value="${c.custom_price_usd || ""}" style="width:150px" aria-label="Enterprise custom price (USD per month)">
@@ -169,6 +170,7 @@ async function blOpen(id) {
     ${ed ? `<div class="row between"><button class="btn btn-ghost btn-danger btn-sm" type="button" data-bl="delete-customer" data-id="${esc(c.id)}">Remove customer</button><button class="btn btn-primary btn-sm" type="submit">Save details</button></div>` : ""}
   </form>`;
   el.hidden = false; $("#blScrim").hidden = false;
+  if (typeof sxBillingHook === "function") sxBillingHook(c.id); // Customer success: trend, open alerts, last NPS
 }
 
 /* ------------------------------------------------ Invoices */

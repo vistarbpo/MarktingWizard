@@ -180,6 +180,12 @@ export function mountCrm(app, { store, crm, outreach, provider, workforce = null
     const c = crm.get(req.params.ws, req.params.id);
     if (!c) return res.status(404).json({ detail: "Store not found" });
     const { o } = cleanContact(req.body || {}, true);
+    // When each onboarding step was ticked (Customer Success shows stuck steps from it).
+    if (o.onboarding) {
+      const at = { ...(c.onboarding_at || {}) };
+      for (const s of ONBOARDING_STEPS) { if (o.onboarding[s.id] && !c.onboarding?.[s.id]) at[s.id] = new Date().toISOString(); if (!o.onboarding[s.id]) delete at[s.id]; }
+      o.onboarding_at = at;
+    }
     crm.update(req.params.ws, c.id, o);
     if (req.body?.stage && STAGE_IDS.includes(req.body.stage)) outreach.setStage(c, req.body.stage, by(req));
     if (o.onboarding && Object.values(o.onboarding).every(Boolean) && c.stage === "onboarding") outreach.setStage(c, "active", by(req));

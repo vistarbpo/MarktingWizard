@@ -146,14 +146,20 @@ export function findSubject({ store, crm }, subject) {
   const candidates = store.db.hr_candidates.filter((c) => m.emailIs(c.email) || m.phoneIs(c.phone));
   const deals = store.db.deals.filter((d) => m.emailIs(d.contact_email) || m.phoneIs(d.contact_phone));
   const dealMentions = store.db.deal_activities.filter((a) => m.mentions(a.text));
+  // Billing customers (matched on the billing contact) and their survey answers (Customer Success).
+  const billing = (store.db.billing_customers || []).filter((c) => m.emailIs(c.owner_email) || m.phoneIs(c.owner_phone));
+  const billIds = new Set(billing.map((c) => c.id));
+  const responses = (store.db.success_responses || []).filter((r) => billIds.has(r.customer_id));
   const ws = (id) => store.getWorkspace(id)?.brief?.company_name || id;
   return {
     crm_contacts: contacts.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || c.domain || "Store", messages: crm.messagesFor(c.id).length, notes: crm.notesFor(c.id).length, sample: !!c.sample })),
     support_tickets: tickets.map((t) => ({ id: t.id, workspace_id: t.workspace_id, workspace: ws(t.workspace_id), label: `${t.channel || "Ticket"} · ${t.created_at.slice(0, 10)}`, messages: t.messages.length })),
     hr_candidates: candidates.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.name || "Candidate" })),
     sales_deals: deals.map((d) => ({ id: d.id, workspace_id: d.workspace_id, workspace: ws(d.workspace_id), label: d.name || "Deal" })),
+    billing_customers: billing.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || "Customer" })),
+    survey_responses: responses.map((r) => ({ id: r.id, workspace_id: r.workspace_id, customer_id: r.customer_id, label: `${r.kind || "Survey"} · ${String(r.answered_at || r.created_at || "").slice(0, 10)}` })),
     mentions: { deal_activities: dealMentions.length },
-    total: contacts.length + tickets.length + candidates.length + deals.length,
+    total: contacts.length + tickets.length + candidates.length + deals.length + billing.length + responses.length,
   };
 }
 export function exportSubject({ store, crm }, subject) {
@@ -167,6 +173,8 @@ export function exportSubject({ store, crm }, subject) {
     support_tickets: f.support_tickets.map((x) => store.getTicket(x.workspace_id, x.id)),
     hr_candidates: f.hr_candidates.map((x) => ({ ...store.getHrCandidate(x.workspace_id, x.id), activities: store.listHrActivities("candidate", x.id) })),
     sales_deals: f.sales_deals.map((x) => { const d = store.getDeal(x.workspace_id, x.id); return { deal: d.name, contact_name: d.contact_name, contact_email: d.contact_email, contact_phone: d.contact_phone, city: d.city, notes: d.notes }; }),
+    billing_customers: f.billing_customers.map((x) => { const c = store.db.billing_customers.find((y) => y.id === x.id); const { events, ...rest } = c || {}; return { ...rest, invoices: (store.db.billing_invoices || []).filter((v) => v.customer_id === x.id).map((v) => ({ number: v.number, issue_date: v.issue_date, status: v.status, total: v.totals?.total, currency: v.currency })) }; }),
+    survey_responses: f.survey_responses.map((x) => { const r = store.db.success_responses.find((y) => y.id === x.id); return { kind: r.kind, score: r.score, comment: r.comment, answered_at: r.answered_at }; }),
   };
 }
 // Uses each module's own delete function. Deals are business records: only the contact fields are cleared.
@@ -174,13 +182,17 @@ export function deleteSubject({ store, crm }, subject) {
   const f = findSubject({ store, crm }, subject);
   if (!f) return null;
   const m = matcher(subject);
-  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, mentions_redacted: 0 };
+  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 0 };
   const byWs = {};
   for (const c of f.crm_contacts) { (byWs[c.workspace_id] ||= []).push(c.id); counts.crm_messages += c.messages; }
   for (const [ws, ids] of Object.entries(byWs)) counts.crm_contacts += crm.remove(ws, ids);
   for (const t of f.support_tickets) if (store.deleteTicket(t.workspace_id, t.id)) counts.support_tickets++;
   for (const c of f.hr_candidates) if (store.deleteHrCandidate(c.workspace_id, c.id)) counts.hr_candidates++;
   for (const d of f.sales_deals) { store.updateDeal(d.workspace_id, d.id, { contact_name: "", contact_email: "", contact_phone: "", by: "compliance" }); counts.deal_contacts_cleared++; }
+  // Billing customers: issued invoices are kept for tax record-keeping (ZATCA); only the billing contact fields are cleared.
+  for (const x of f.billing_customers) { const c = store.db.billing_customers.find((y) => y.id === x.id); if (c) { Object.assign(c, { owner_name: "", owner_email: "", owner_phone: "" }); counts.billing_contacts_cleared++; } }
+  const gone = new Set(f.survey_responses.map((x) => x.id));
+  if (gone.size) { store.db.success_responses = store.db.success_responses.filter((r) => !gone.has(r.id)); counts.survey_responses = gone.size; }
   // Free text that mentions the email or number (AI drafts, notes): replace the identifier.
   const redact = (t) => {
     let s = String(t || "");

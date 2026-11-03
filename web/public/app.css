@@ -1054,3 +1054,19 @@ details > summary { cursor: pointer; }
   .pa-name { max-width: 200px; }
   .pa-log { padding: 0 14px 10px; }
 }
+/* Customer success (success.js): sx- prefix */
+.sx-spark { display: block; overflow: visible; }
+.sx-table tr.clickable { cursor: pointer; }
+.sx-table tr.clickable:hover td { background: var(--surface-2); }
+.sx-table td:first-child, .sx-table td.sx-name { min-width: 150px; }
+.sx-alerts { display: grid; gap: var(--s-3); }
+.sx-alert.done { opacity: .85; }
+.sx-alert.open { border-left: 3px solid var(--warn); }
+.sx-store { margin: 2px 0 0; overflow-wrap: anywhere; }
+.sx-reason { margin: 0; overflow-wrap: anywhere; }
+.sx-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.sx-steps label { align-items: flex-start; }
+.sx-steps input { margin-top: 3px; flex: none; }
+.sx-pbs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--s-3); }
+.sx-md { overflow-wrap: anywhere; }
+.sx-md > :first-child { margin-top: 0; }

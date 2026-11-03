@@ -159,7 +159,7 @@ export function healthScore({ c, invoices = [], payments = [], tickets = [], onb
   else if (ov.limit) { const pct = Math.round((u.renders / ov.limit) * 100); use = pct >= 20 ? 25 : 15; why = `${u.renders.toLocaleString("en-US")} renders this month: ${pct}% of the ${ov.limit.toLocaleString("en-US")} included`; }
   else { use = 25; why = `${u.renders.toLocaleString("en-US")} renders this month`; }
   f.push({ id: "usage", name: "Usage vs plan", points: use, max: 25, why });
-  const openT = tickets.filter((t) => !["solved", "closed"].includes(t.status));
+  const openT = tickets.filter((t) => !["resolved", "solved", "closed"].includes(t.status)); // support uses "resolved"
   const tp = openT.length === 0 ? 15 : openT.length === 1 ? 10 : 0;
   f.push({ id: "tickets", name: "Open support tickets", points: tp, max: 15, why: openT.length ? `${openT.length} open ticket${openT.length === 1 ? "" : "s"}` : "No open tickets" });
   const done = onboarding ? ONBOARDING_STEPS.filter((s) => onboarding[s.id]).length : 0;
@@ -375,14 +375,17 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
     const now = clock(), today = riyadhDay(now);
     const isCredit = inv.kind === "credit_note";
     const n = isCredit ? s.next_credit_no : s.next_invoice_no;
-    inv.number = formatNumber(isCredit ? s.credit_prefix : s.invoice_prefix, n);
+    // Sample customers get SAMPLE- numbers outside the real sequence and never touch the ZATCA counter or hash chain.
+    const sample = !!c?.sample;
+    inv.number = sample ? `SAMPLE-${isCredit ? "CN-" : ""}${String(inv.id).padStart(6, "0")}` : formatNumber(isCredit ? s.credit_prefix : s.invoice_prefix, n);
+    if (sample) inv.sample = true;
     inv.issue_date = today; inv.issued_at = now.toISOString(); inv.supply_date ||= inv.period_start || today;
     inv.due_date = isCredit ? today : addDays(today, inv.due_days ?? s.terms_days);
     inv.status = "issued"; inv.issued_by = by;
     inv.seller = sellerOf(w); inv.buyer = buyerOf(c);
     const warnings = [];
     const f = isCredit ? { next_credit_no: n + 1 } : { next_invoice_no: n + 1 };
-    if (inv.vat_rate > 0) {
+    if (sample) { /* no counters, no ZATCA chain */ } else if (inv.vat_rate > 0) {
       // ZATCA: standard (B2B) when the buyer has a VAT number, simplified (B2C) otherwise.
       inv.zatca_type = c.vat_number ? "standard" : "simplified";
       if (inv.zatca_type === "standard" && !(c.billing_address?.street && c.billing_address?.city)) warnings.push("Standard (B2B) invoices need the buyer's full address for ZATCA clearance");

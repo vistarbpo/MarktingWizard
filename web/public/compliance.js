@@ -168,7 +168,7 @@ function cmpRequests() {
 function cmpFoundView(f) {
   const group = (label, list) => list.length ? `<div><b>${label}</b> ${list.map((x) => `<span class="badge">${esc(x.label)} · ${esc(x.workspace)}${x.messages !== undefined ? ` · ${x.messages} msgs` : ""}</span>`).join(" ")}</div>` : "";
   return `<div class="card card-pad s-small stack" style="width:100%;background:var(--surface-2)">${f.total ? "" : "<b>Nothing found for this email or phone.</b>"}
-    ${group("Store CRM", f.crm_contacts)}${group("Support tickets", f.support_tickets)}${group("HR candidates", f.hr_candidates)}${group("Sales deals (contact fields)", f.sales_deals)}
+    ${group("Store CRM", f.crm_contacts)}${group("Support tickets", f.support_tickets)}${group("HR candidates", f.hr_candidates)}${group("Sales deals (contact fields)", f.sales_deals)}${group("Billing customers (contact fields; invoices kept for tax records)", f.billing_customers || [])}${group("Survey answers", f.survey_responses || [])}
     ${f.mentions.deal_activities ? `<div class="subtle">Also mentioned in ${f.mentions.deal_activities} sales notes/drafts: deletion replaces the email/number there.</div>` : ""}
     <div class="subtle">Free-text that names the person without their email or number isn't found: check by hand. Backups keep copies until they rotate out.</div></div>`;
 }
