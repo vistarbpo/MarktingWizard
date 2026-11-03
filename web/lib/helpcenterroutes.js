@@ -8,14 +8,14 @@ import crypto from "node:crypto";
 import { levelOk } from "./access.js";
 import { publicBase } from "./media.js";
 import { AGENT_ID, CATEGORIES, COLL, CONTENT_KEYS, NEXT, STALE_DAYS, STATUSES, VISIBILITY, catName, cleanArticle, cleanSettings, contentHash, ensureHelp, freshness,
-  gapList, hasLang, isLive, logPush, people, plainText, recordVote, renderMarkdown, reviewBlock, searchArticles, settingsOf, siteWorkspace, slugFrom, sourceFacts, todayOf, uniqueSlug, voteCounts } from "./helpcenter.js";
+  excerpt, gapList, hasLang, isLive, logPush, people, plainText, recordVote, renderMarkdown, reviewBlock, searchArticles, settingsOf, siteWorkspace, slugFrom, sourceFacts, todayOf, uniqueSlug, voteCounts } from "./helpcenter.js";
 
 const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const T = {
-  ar: { help: "مركز المساعدة", search: "ابحث في المقالات", go: "بحث", home: "الرئيسية", articles: "مقالات", noArticles: "ما فيه مقالات منشورة بعد.", results: "نتائج البحث عن", none: "ما لقينا شي. جرّب كلمات ثانية.",
+  ar: { help: "مركز المساعدة", search: "ابحث في المقالات", go: "بحث", home: "الرئيسية", article: "مقالة", articles: "مقالات", noArticles: "ما فيه مقالات منشورة بعد.", results: "نتائج البحث عن", none: "ما لقينا شي. جرّب كلمات ثانية.",
     helpful: "هل أفادتك هذه المقالة؟", yes: "نعم", no: "لا", thanks: "شكراً على رأيك!", need: "تحتاج مساعدة أكثر؟", chat: "كلّمنا في المحادثة", mail: "راسلنا بالإيميل", updated: "آخر مراجعة", related: "مقالات ذات صلة",
     other: "English", onlyOther: "هذه المقالة متوفرة بالإنجليزي فقط حالياً.", notFound: "الصفحة غير موجودة", notFoundText: "ما لقينا هذه الصفحة. ارجع لمركز المساعدة أو ابحث.", categories: "الأقسام" },
-  en: { help: "Help center", search: "Search articles", go: "Search", home: "Home", articles: "articles", noArticles: "No published articles yet.", results: "Results for", none: "Nothing found. Try other words.",
+  en: { help: "Help center", search: "Search articles", go: "Search", home: "Home", article: "article", articles: "articles", noArticles: "No published articles yet.", results: "Results for", none: "Nothing found. Try other words.",
     helpful: "Was this article helpful?", yes: "Yes", no: "No", thanks: "Thanks for your feedback!", need: "Still need help?", chat: "Chat with us", mail: "Email us", updated: "Last reviewed", related: "Related articles",
     other: "العربية", onlyOther: "This article is only available in Arabic for now.", notFound: "Page not found", notFoundText: "We couldn't find this page. Go back to the help center or search.", categories: "Topics" },
 };
@@ -70,14 +70,14 @@ form.s{display:flex;gap:8px}form.s input{flex:1;min-width:0;font:inherit;padding
 .body h2{font-size:20px;margin:24px 0 8px}.body h3{font-size:17px;margin:20px 0 6px}.body h4{font-size:16px;margin:16px 0 4px}.body img{max-width:100%;height:auto;border-radius:10px}
 .body pre{background:var(--soft);padding:12px;border-radius:10px;overflow-x:auto;direction:ltr;text-align:left}.body code{background:var(--soft);padding:1px 5px;border-radius:6px;font-size:.92em}.body pre code{padding:0;background:none}
 .body ul,.body ol{padding-inline-start:22px}.note{background:var(--soft);border-radius:10px;padding:10px 12px;font-size:14px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-section+section{margin-top:16px}footer{color:var(--muted);font-size:13px;padding:24px 0;border-top:1px solid var(--border)}h2.t{font-size:18px;margin:0 0 10px}</style></head><body>
+main>*+*{margin-top:16px}.body>:first-child{margin-top:0}.body>:last-child{margin-bottom:0}footer{color:var(--muted);font-size:13px;padding:20px 16px 28px;border-top:1px solid var(--border)}h2.t{font-size:18px;margin:0 0 10px}</style></head><body>
 <header><div class="wrap"><div class="top"><a class="brand" href="${h(c.q("/help"))}">${h(company)} <span>· ${h(t.help)}</span></a><a class="lang" href="${h(switchHref)}" hreflang="${other}" lang="${other}">${h(t.other)}</a></div>
 <div class="hero"><form class="s" role="search" method="get" action="/help/search"><input type="search" name="q" placeholder="${h(t.search)}" aria-label="${h(t.search)}" maxlength="200" value="${h(c.query || "")}">${lang === "en" ? `<input type="hidden" name="lang" value="en">` : ""}<button type="submit">${h(t.go)}</button></form></div></div></header>
 <main class="wrap">${body}</main><footer class="wrap">© ${h(company)}${w?.brief?.website ? ` · <a href="${h(w.brief.website)}" rel="noopener">${h(String(w.brief.website).replace(/^https?:\/\//, ""))}</a>` : ""}</footer></body></html>`;
   }
   const notFound = (res, c) => send(res, page(c, { title: c.t.notFound, path: "/help", noindex: true, body: `<div class="card"><h1>${h(c.t.notFound)}</h1><p>${h(c.t.notFoundText)}</p><a class="btn" href="${h(c.q("/help"))}">${h(c.t.help)}</a></div>` }), 404, { nonce: c.nonce });
   const titleOf = (a, lang) => a[`title_${lang}`] || a[`title_${lang === "ar" ? "en" : "ar"}`];
-  const cardOf = (c, a) => { const l = hasLang(a, c.lang) ? c.lang : c.lang === "ar" ? "en" : "ar"; return `<li><a class="card" href="${h(c.q(`/help/a/${a.slug}`))}"><b dir="auto">${h(titleOf(a, c.lang))}</b><span class="muted" dir="auto">${h(plainText(a[`body_${l}`]).slice(0, 140))}</span></a></li>`; };
+  const cardOf = (c, a) => { const l = hasLang(a, c.lang) ? c.lang : c.lang === "ar" ? "en" : "ar"; return `<li><a class="card" href="${h(c.q(`/help/a/${a.slug}`))}"><b dir="auto">${h(titleOf(a, c.lang))}</b><span class="muted" dir="auto">${h(excerpt(a[`body_${l}`]))}</span></a></li>`; };
 
   app.get("/help/sitemap.xml", (req, res) => {
     const w = siteWorkspace(store); if (!w) return res.status(404).send("Not found");
@@ -92,7 +92,7 @@ section+section{margin-top:16px}footer{color:var(--muted);font-size:13px;padding
     const c = ctx(req); if (!c.w) return notFound(res, c);
     const arts = live(c.w);
     const cats = CATEGORIES.map((x) => ({ ...x, n: arts.filter((a) => a.category === x.id).length })).filter((x) => x.n);
-    const body = `<section><h1 class="t">${h(c.t.categories)}</h1>${cats.length ? `<div class="grid">${cats.map((x) => `<a class="card" href="${h(c.q(`/help/${x.id}`))}"><b>${h(x[c.lang])}</b><span class="muted">${x.n} ${h(c.t.articles)}</span></a>`).join("")}</div>` : `<p class="muted">${h(c.t.noArticles)}</p>`}</section>`;
+    const body = `<section><h1 class="t">${h(c.t.categories)}</h1>${cats.length ? `<div class="grid">${cats.map((x) => `<a class="card" href="${h(c.q(`/help/${x.id}`))}"><b>${h(x[c.lang])}</b><span class="muted">${x.n} ${h(x.n === 1 ? c.t.article : c.t.articles)}</span></a>`).join("")}</div>` : `<p class="muted">${h(c.t.noArticles)}</p>`}</section>`;
     send(res, page(c, { title: "", path: "/help", body, desc: c.lang === "ar" ? "إجابات وخطوات لاستخدام المنتج." : "Answers and steps for using the product." }), 200, { nonce: c.nonce });
   });
   app.get("/help/search", (req, res) => {

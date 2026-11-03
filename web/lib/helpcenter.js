@@ -148,7 +148,8 @@ export function renderMarkdown(text) {
   flushP(); flushL();
   return out.join("\n");
 }
-export const plainText = (md) => String(md || "").replace(/```[\s\S]*?```/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[#*_`>]/g, " ").replace(/\s+/g, " ").trim();
+export const plainText = (md) => String(md || "").replace(/```[\s\S]*?```/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^\s*(?:#+|>|[-*•]|\d+[.)])\s+/gm, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+export const excerpt = (md, n = 140) => { const t = plainText(md); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, "")}…` : t; };
 
 // ---- search: Arabic normalisation (tashkeel and tatweel removed; أ إ آ ٱ → ا; ى → ي; ة → ه; ؤ → و; ئ → ي) and English lower case
 export function normalize(s) {

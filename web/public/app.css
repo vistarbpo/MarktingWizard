@@ -1327,6 +1327,7 @@ textarea.lg-paste { width: 100%; min-height: 180px; height: auto; font-size: var
 .hc-new summary { cursor: pointer; }
 .hc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); align-items: start; }
 .hc-wide { grid-column: 1 / -1; }
+select.hc-multi { height: auto; min-height: 96px; padding: 6px; background-image: none; }
 textarea.hc-body { width: 100%; height: auto; min-height: 200px; font-size: var(--fs-sm); }
 .hc-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .hc-filters .input { flex: 1 1 160px; min-width: 0; width: auto; }

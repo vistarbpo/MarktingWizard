@@ -81,7 +81,7 @@ function hcForm(a) {
     <div class="field" lang="ar"><label for="hcf-bar">النص (عربي)</label><textarea class="input hc-body" id="hcf-bar" rows="10" dir="rtl">${esc(a?.body_ar || "")}</textarea></div>
     <div class="field"><label for="hcf-ben">Body (English)</label><textarea class="input hc-body" id="hcf-ben" rows="10" dir="ltr">${esc(a?.body_en || "")}</textarea></div>
     <p class="hint hc-wide" style="margin:0">Markdown: ## heading, - list, 1. steps, **bold**, *italic*, \`code\`, [link](https://…), ![image](/media/…). No HTML: it shows as text.</p>
-    ${a ? `<div class="field hc-wide"><label for="hcf-rel">Related articles</label><select class="input" id="hcf-rel" multiple size="4">${hcOpts((HC.list?.articles || []).filter((x) => x.id !== a.id).map((x) => [x.id, hcTitle(x)]), "")}</select><span class="hint">Ctrl/⌘-click to pick up to 6. Only published ones show on the site.</span></div>` : ""}
+    ${a ? `<div class="field hc-wide"><label for="hcf-rel">Related articles</label><select class="input hc-multi" id="hcf-rel" multiple size="4">${hcOpts((HC.list?.articles || []).filter((x) => x.id !== a.id).map((x) => [x.id, hcTitle(x)]), "")}</select><span class="hint">Ctrl/⌘-click to pick up to 6. Only published ones show on the site.</span></div>` : ""}
     <div class="row gap-8 hc-wide"><button class="btn btn-primary" type="submit">${a ? "Save" : "Add draft"}</button>${a ? `<button class="btn" type="button" data-hcact="cancel-edit">Cancel</button>` : ""}</div></form>`;
 }
 
