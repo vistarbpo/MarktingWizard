@@ -14,7 +14,7 @@ Fields: title and body in Arabic and English (either language may be empty; at l
 
 Categories (also their public URL `/help/<id>`): `getting-started`, `connecting-salla`, `connecting-zid`, `catalogs-and-feeds`, `ad-designs`, `video-ads`, `publishing` (Meta, Snap, TikTok, Google), `billing`, `account-and-team`, `privacy-and-security`, `troubleshooting`.
 
-Body: a small markdown subset rendered on the server by `renderMarkdown()`. Everything is HTML-escaped first, so no user HTML reaches a page. Supported: `#`–`####` headings (rendered as h2–h4; the title is the page's only h1), `-` lists, `1.` lists, `**bold**`, `*italic*`/`_italic_`, `` `code` ``, fenced code blocks, links `[text](https://…)` (or `/help/…`; external links get `rel="noopener noreferrer"`), images `![alt](/media/<file>)` (Creative Studio media) or `https://`. Anything else (`javascript:`, `data:`, `http:`, other paths) is shown as plain text.
+Body: a small markdown subset rendered on the server by `renderMarkdown()`. Everything is HTML-escaped first, so no user HTML reaches a page. Supported: `#`–`####` headings (rendered as h2–h4; the title is the page's only h1), `-` lists, `1.` lists, `**bold**`, `*italic*`/`_italic_`, `` `code` ``, fenced code blocks, links `[text](https://…)` (or `/help/…` and `/changelog/…`; external links get `rel="noopener noreferrer"`), images `![alt](/media/<file>)` (Creative Studio media) or `https://`. Anything else (`javascript:`, `data:`, `http:`, other paths) is shown as plain text.
 
 **Lifecycle:** draft → in review → published → archived. Allowed moves: draft → in review / archived; in review → draft / published / archived; published → draft / archived; archived → draft.
 
@@ -35,6 +35,7 @@ Body: a small markdown subset rendered on the server by `renderMarkdown()`. Ever
 - **"Still need help?"** links to the AI Support website chat (`/support/<key>`) when it is switched on (AI Support → Website chat), else to a `mailto:` of the contact email in Help center → Settings, else it is hidden.
 - **Security:** self-contained HTML (no app scripts, no tracking, no external fonts). `Content-Security-Policy: default-src 'none'; style-src 'nonce-…'; img-src 'self' https: data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'` (no scripts at all; the only style block carries a fresh nonce), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`. Pages are cached 60 seconds; search and "thanks" pages are not.
 - Brand: the workspace's company name and the Creative Studio brand kit's primary and accent colours; light and dark follow the device.
+- Every page links to the public Changelog ("ما الجديد / What's new", `docs/changelog.md`), which shares this shell (`web/lib/publicsite.js`) and this workspace.
 
 ## 4. AI Help writer (agent `help_writer`, Customer Success, max level 1)
 
