@@ -37,6 +37,8 @@ import { createIntel, intelNeeds } from "./intel.js";
 import { mountIntel } from "./intelroutes.js";
 import { createOkr, okrHome, okrNeeds } from "./okr.js";
 import { mountOkr } from "./okrroutes.js";
+import { createMeetings, loadSampleMeetings, meetingsNeeds, removeSampleMeetings } from "./meetings.js";
+import { mountMeetings } from "./meetingsroutes.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -49,9 +51,9 @@ const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
 // Command Center need labels → the module a person needs View on to see them.
-const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", "AI Workforce": "workforce" };
+const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", "AI Workforce": "workforce" };
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -69,6 +71,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const intel = createIntel({ store, ...intelOptions }); // Market intel: weekly checks of watched competitor pages (through products.js safeGet)
   // Goals & review: the weekly business review is drafted every Monday (Riyadh) with the Command Center needs of the day.
   const okr = createOkr({ store, crm, provider, workforce, needs: (w) => commandData(w, () => true, null).needs, ...okrOptions });
+  const meetings = createMeetings({ store, provider, workforce, ...meetingsOptions }); // Meetings → tasks: the AI Meeting secretary drafts action items from notes
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -92,7 +95,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -226,6 +229,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountSuccess(app, { store, success, billing, crm, provider, workforce });
   mountIntel(app, { store, crm, provider, workforce, intel });
   mountOkr(app, { store, crm, provider, workforce, okr, needModule: (label) => NEED_MODULE[label] || null });
+  mountMeetings(app, { store, crm, outreach, success, meetings });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1200,6 +1204,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (can("intel")) d.needs = [...intelNeeds(store, w), ...d.needs]; // competitor page changes not reviewed, weekly brief waiting for approval
     // Goals & review: this quarter's company objectives (metrics the person can't see are left out), stale check-ins, a review waiting.
     if (can("okr") && user) { d.okr = okrHome(store, crm, w, permsOf(user), okr.now()); d.needs = [...okrNeeds(store, w, { user, now: okr.now() }), ...d.needs]; } else d.okr = null;
+    if (can("meetings") && user) d.needs = [...meetingsNeeds(store, w, { user, now: meetings.now() }), ...d.needs]; // overdue meeting action items, notes waiting for review
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
     billingCommandHook(d, billing, w, can("billing")); // billed MRR and overdue invoices, failed payments, trials ending
     const ok = (label) => !MOD[label] || can(MOD[label]);
@@ -1223,9 +1228,10 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (hasSampleData(store, w.id)) return res.status(409).json({ detail: "Sample data is already loaded. Remove it first to reload." });
     const counts = loadSampleData(store, w.id);
     counts.success_customers = loadSampleSuccess({ store, billing, success, crm }, w).customers; // sample Billing customers for Customer Success
+    counts.meetings = loadSampleMeetings(store, crm, w.id).meetings; // two sample meetings with notes and a rule-based draft
     res.status(201).json(counts);
   });
-  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleData(store, w.id) }); });
+  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSampleData(store, w.id) }); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));

@@ -51,7 +51,12 @@ export function mountCompliance(app, { store, crm, provider, workforce, backups,
 
   // First visit: the data register, sub-processors and policy templates are filled with starters.
   function seed() {
-    if (db.compliance_seeded) return;
+    if (db.compliance_seeded) {
+      // Register rows for modules added after the first visit (each once, by key).
+      const late = REGISTER_STARTER.filter((r) => ["meetings_notes"].includes(r.key) && !db.compliance_register.some((x) => x.key === r.key));
+      if (late.length) { for (const r of late) db.compliance_register.push({ id: store.newId(), created_at: now(), starter: true, notes: "", ...r }); store.save(); }
+      return;
+    }
     for (const r of REGISTER_STARTER) db.compliance_register.push({ id: store.newId(), created_at: now(), starter: true, notes: "", ...r });
     const opsNames = new Set(db.ops_vendors.map((v) => v.name.toLowerCase()));
     for (const v of VENDOR_STARTER) db.compliance_vendors.push({ id: store.newId(), created_at: now(), starter: true, dpa: "unknown", transfer_outside_ksa: null, notes: "", in_tool_stack: opsNames.has(v.name.toLowerCase().split(" ")[0]), ...v });

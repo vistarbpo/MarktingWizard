@@ -42,6 +42,9 @@ export function nextAction(deal, now = Date.now()) {
   const big = plan.usd >= 1299;
   const ai = (text, task, urgent = false) => ({ owner: "ai", text, task, urgent });
   const you = (text, urgent = true) => ({ owner: "you", text, task: null, urgent });
+  // A next action agreed in a meeting (Meetings → review and create) comes first while the deal is open.
+  const ns = deal.next_step;
+  if (ns?.text && !ns.done && deal.stage !== "lost") return { ...you(`${ns.text}${ns.owner_name ? ` (${ns.owner_name})` : ""}${ns.due ? `, due ${ns.due}` : ""}`, !!ns.due && ns.due <= new Date(now + 3 * 3600e3).toISOString().slice(0, 10)), meeting_id: ns.meeting_id || null };
   switch (deal.stage) {
     case "lead": return ai("Write the WhatsApp opener with sample creatives from their catalog", "opener", quiet >= 3);
     case "contacted": return quiet >= 5

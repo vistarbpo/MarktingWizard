@@ -29,6 +29,7 @@ export const ALERT_TYPES = [
   { id: "negative_ticket", name: "Unhappy ticket", hint: "An open ticket asks for a refund, to cancel, or is a complaint" },
   { id: "cancel_scheduled", name: "Cancellation scheduled", hint: "The subscription cancels at the end of its period" },
   { id: "detractor", name: "Detractor answer", hint: "NPS 0–6 or CSAT 1–2 on a survey" },
+  { id: "meeting_action", name: "Meeting action item", hint: "An action item from a meeting with this customer (Meetings → review and create)" },
 ];
 export const ALERT_IDS = ALERT_TYPES.map((a) => a.id);
 export const ALERT_STATUS = ["open", "snoozed", "done"];
@@ -76,6 +77,7 @@ export const DEFAULT_PLAYBOOKS = {
   tickets: ["Read the open tickets and close the ones already solved", "Make sure each open ticket has a person and a date", "Tell the owner what happens next on each"],
   negative_ticket: ["Read the ticket and reply personally the same day", "Fix or escalate (refunds and price changes go to Finance)", "Follow up after the fix and ask if it's resolved"],
   cancel_scheduled: ["Ask why they are cancelling (call if possible)", "Check if a lower plan or a pause fits better", "Write the reason as the outcome, even if they leave"],
+  meeting_action: ["Read the meeting summary and the action item", "Do the item or hand it to the right person by its due date", "Tell the customer it's done and write the outcome"],
   detractor: ["Thank them and reply to the comment within 1 working day", "Find the cause (product, support, price, results)", "Agree a fix and follow up", "Ask again in the next survey"],
 };
 

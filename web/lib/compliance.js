@@ -68,6 +68,13 @@ export const REGISTER_STARTER = [
     subjects: "Prospect and customer contacts.", purpose: "Sales pipeline.",
     legal_basis: "[CONFIRM] Legitimate interest / pre-contract steps.", where: "db.json in DATA_DIR on Hostinger [CONFIRM].",
     retention: "[CONFIRM] 24 months after the deal is closed or lost.", source: "Entered by the team, CRM hand-off." },
+  { key: "meetings_notes", name: "Meeting notes and transcripts", module: "meetings",
+    data: "Meeting title, date, attendees (team users; outside people's names, emails and organisation), agenda, pasted notes or transcripts (may include anything said), AI drafts (summary, decisions, action items) and follow-up emails.",
+    subjects: "Team members, prospects, customers, partners, investors and job candidates who attend meetings.",
+    purpose: "Record what was agreed and turn it into owned tasks; follow up with the people met.",
+    legal_basis: "[CONFIRM] Legitimate interest (running the business) / pre-contract steps; tell outside attendees before recording or transcribing a call.",
+    where: "db.json in DATA_DIR on Hostinger [CONFIRM]; notes are sent to Anthropic to draft the action items. Investor and hiring meetings are visible only to Owner/Admin and their attendees.",
+    retention: "[CONFIRM] 24 months after the meeting, sooner for hiring meetings (with the candidate's record).", source: "Notes and transcripts pasted or uploaded by the team." },
   { key: "finance_records", name: "Finance records", module: "finance",
     data: "Expenses, income, vendors, bank-balance snapshots. May include names of payees and payroll amounts.",
     subjects: "Vendors, employees (payroll), customers (income).", purpose: "Bookkeeping, VAT and Zakat.",
@@ -150,6 +157,9 @@ export function findSubject({ store, crm }, subject) {
   const billing = (store.db.billing_customers || []).filter((c) => m.emailIs(c.owner_email) || m.phoneIs(c.owner_phone));
   const billIds = new Set(billing.map((c) => c.id));
   const responses = (store.db.success_responses || []).filter((r) => billIds.has(r.customer_id));
+  // Meetings: outside attendees matched by email; notes, summaries and follow-ups that mention the email or number.
+  const meetingText = (x) => [x.notes, x.agenda, x.draft?.summary, ...(x.draft?.items || []).map((i) => i.text), x.followup?.body].join("\n");
+  const meetings = (store.db.meetings_meetings || []).filter((x) => (x.attendees || []).some((a) => a.kind === "external" && m.emailIs(a.email)) || m.mentions(meetingText(x)));
   const ws = (id) => store.getWorkspace(id)?.brief?.company_name || id;
   return {
     crm_contacts: contacts.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || c.domain || "Store", messages: crm.messagesFor(c.id).length, notes: crm.notesFor(c.id).length, sample: !!c.sample })),
@@ -158,8 +168,9 @@ export function findSubject({ store, crm }, subject) {
     sales_deals: deals.map((d) => ({ id: d.id, workspace_id: d.workspace_id, workspace: ws(d.workspace_id), label: d.name || "Deal" })),
     billing_customers: billing.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || "Customer" })),
     survey_responses: responses.map((r) => ({ id: r.id, workspace_id: r.workspace_id, customer_id: r.customer_id, label: `${r.kind || "Survey"} · ${String(r.answered_at || r.created_at || "").slice(0, 10)}` })),
+    meetings: meetings.map((x) => ({ id: x.id, workspace_id: x.workspace_id, workspace: ws(x.workspace_id), label: `${x.title} · ${x.date}`, attendee: (x.attendees || []).some((a) => a.kind === "external" && m.emailIs(a.email)) })),
     mentions: { deal_activities: dealMentions.length },
-    total: contacts.length + tickets.length + candidates.length + deals.length + billing.length + responses.length,
+    total: contacts.length + tickets.length + candidates.length + deals.length + billing.length + responses.length + meetings.length,
   };
 }
 export function exportSubject({ store, crm }, subject) {
@@ -175,6 +186,9 @@ export function exportSubject({ store, crm }, subject) {
     sales_deals: f.sales_deals.map((x) => { const d = store.getDeal(x.workspace_id, x.id); return { deal: d.name, contact_name: d.contact_name, contact_email: d.contact_email, contact_phone: d.contact_phone, city: d.city, notes: d.notes }; }),
     billing_customers: f.billing_customers.map((x) => { const c = store.db.billing_customers.find((y) => y.id === x.id); const { events, ...rest } = c || {}; return { ...rest, invoices: (store.db.billing_invoices || []).filter((v) => v.customer_id === x.id).map((v) => ({ number: v.number, issue_date: v.issue_date, status: v.status, total: v.totals?.total, currency: v.currency })) }; }),
     survey_responses: f.survey_responses.map((x) => { const r = store.db.success_responses.find((y) => y.id === x.id); return { kind: r.kind, score: r.score, comment: r.comment, answered_at: r.answered_at }; }),
+    meetings: (f.meetings || []).map((x) => { const mt = store.db.meetings_meetings.find((y) => y.id === x.id); const mm = matcher(subject); return { title: mt.title, date: mt.date, time: mt.time, type: mt.type,
+      attendee: (mt.attendees || []).find((a) => a.kind === "external" && mm.emailIs(a.email)) || null,
+      notes_lines: String(mt.notes || "").split("\n").filter((l) => mm.mentions(l)), followup_sent: mt.followup?.sent ? { subject: mt.followup.subject, body: mt.followup.body, at: mt.followup.sent.at } : null }; }),
   };
 }
 // Uses each module's own delete function. Deals are business records: only the contact fields are cleared.
@@ -182,7 +196,7 @@ export function deleteSubject({ store, crm }, subject) {
   const f = findSubject({ store, crm }, subject);
   if (!f) return null;
   const m = matcher(subject);
-  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 0 };
+  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 0, meeting_attendees_redacted: 0 };
   const byWs = {};
   for (const c of f.crm_contacts) { (byWs[c.workspace_id] ||= []).push(c.id); counts.crm_messages += c.messages; }
   for (const [ws, ids] of Object.entries(byWs)) counts.crm_contacts += crm.remove(ws, ids);
@@ -201,6 +215,16 @@ export function deleteSubject({ store, crm }, subject) {
     return s;
   };
   for (const a of store.db.deal_activities) if (m.mentions(a.text)) { a.text = redact(a.text); counts.mentions_redacted++; }
+  // Meetings are business records: the outside attendee is replaced by "[removed]" and the email or number is redacted from the text.
+  for (const x of f.meetings || []) {
+    const mt = store.db.meetings_meetings.find((y) => y.id === x.id); if (!mt) continue;
+    for (const a of mt.attendees || []) if (a.kind === "external" && m.emailIs(a.email)) { Object.assign(a, { name: "[removed]", email: "", org: "" }); counts.meeting_attendees_redacted++; }
+    const before = JSON.stringify([mt.notes, mt.agenda, mt.draft, mt.followup]);
+    mt.notes = redact(mt.notes); mt.agenda = redact(mt.agenda);
+    if (mt.draft) { mt.draft.summary = redact(mt.draft.summary); for (const i of mt.draft.items || []) { i.text = redact(i.text); i.source = redact(i.source); } mt.draft.decisions = (mt.draft.decisions || []).map(redact); mt.draft.questions = (mt.draft.questions || []).map(redact); }
+    if (mt.followup) { mt.followup.body = redact(mt.followup.body); mt.followup.subject = redact(mt.followup.subject); }
+    if (JSON.stringify([mt.notes, mt.agenda, mt.draft, mt.followup]) !== before) counts.mentions_redacted++;
+  }
   store.save(); crm?.flush?.();
   return counts;
 }
