@@ -11,7 +11,7 @@ const cMoney = (n) => {
   return "$" + Math.round(n).toLocaleString("en-US");
 };
 const cNum = (v, unit) => unit === "$" ? cMoney(v) : unit === "%" ? `${+v.toFixed(1)}%` : `${+Number(v).toFixed(2)}${unit && !["$", "%"].includes(unit) ? " " + unit : ""}`;
-const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8", Creative: "#c026d3", "AI Workforce": "#7c3aed", "Paid Ads": "#e1306c", "Market intel": "#b45309" };
+const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8", Creative: "#c026d3", "AI Workforce": "#7c3aed", "Paid Ads": "#e1306c", "Market intel": "#b45309", "Goals & review": "#2563eb" };
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
@@ -23,6 +23,7 @@ async function renderCommand(view) {
     ${ccNeeds(d)}
     ${ccGrowth(d)}
     ${ccTiles(d)}
+    ${ccOkr(d)}
     ${ccSopFull(sopData)}
     ${ccWork(d)}
     ${ccTeam(d)}
@@ -128,6 +129,15 @@ function ccTiles(d) {
     ${tile("Product", `${d.product.now} · ${d.product.next}`, `Now · Next${d.product.last_release ? " · last " + esc(d.product.last_release) : ""}${d.product.feedback_unlinked ? ` · ${d.product.feedback_unlinked} requests to group` : ""}`, "product")}
     ${tile("Data completeness", d.data_completeness + "%", d.gaps[0] ? esc(d.gaps[0].question) : "everything filled in", "overview", d.data_completeness < 70 ? "warn" : "")}
   </div>`;
+}
+
+/* ---- This quarter's company objectives (Goals & review); metrics the role can't see are left out of progress */
+function ccOkr(d) {
+  const g = d.okr; if (!g) return "";
+  const rows = g.objectives.map((o) => `<button type="button" class="cc-okr-row okr-btnlink" data-go="okr" style="color:inherit"><span class="cc-clamp1" dir="auto">${esc(o.title)}${o.status === "draft" ? ' <span class="badge">draft</span>' : ""}${o.at_risk ? ` <span class="badge warn">${o.at_risk} not on track</span>` : ""}</span>
+    <span class="okr-bar" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, o.progress || 0))}%"></i></span><span class="num s-small">${o.progress == null ? "–" : o.progress + "%"}</span></button>`).join("");
+  return `<section class="card card-pad cc-span-12"><div class="row between"><span class="eyebrow">Company goals · ${esc(g.quarter)}</span><button type="button" class="btn btn-sm btn-ghost" data-go="okr">Open Goals & review</button></div>
+    ${g.objectives.length ? rows + (g.more ? `<p class="subtle s-small">${g.more} more</p>` : "") : `<p class="muted s-small" style="margin-top:8px">No company objectives for this quarter yet. Set 2–5 key results each, linked to the dashboard's live metrics.</p>`}</section>`;
 }
 
 /* ---- AI vs people: who did the work this week */
