@@ -80,6 +80,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - Starter $199, Growth $449, Scale $1,299, Enterprise from $4,000, by SKU count; yearly billing at 2 months free.
   - Draft render limits: Scale 15,000/month then $10 per extra 1,000; Enterprise 50,000/month then $8 per extra 1,000.
   - Prices live in `PLANS` in `web/lib/sales.js` and in `docs/dpa-ad-pricing.md`; when they're final, change both and the CRM call script in `crm.js`.
+- **Next module planned:** Creative Studio (`docs/creative-studio-plan.md`): content calendar, email designer, WhatsApp creatives, reels, scheduler and publishing. Waiting on founder decisions in section 7 of that doc.
 - **Sales system:** `docs/dpa-ad-sales-system.md`, DPA AD's own funnel targets (editable in Store CRM → Settings). External masterclass notes were only a reference.
 - **Still to do:**
   1. Nightly backups of `DATA_DIR` and a download-backup button.
