@@ -4564,3 +4564,381 @@ test("okr: AI Chief of staff agent, roles and module defaults, Ask DPA AD tools,
     assert.deepEqual(k.st.db.okr_objectives.map((o) => o.id), ["zo"]);
   } finally { k.done(); }
 });
+
+// ---- Meetings → tasks
+// A test app whose Meetings clock can be moved (`k.at(iso)`) and whose AI can be swapped (`k.ai(fn)`; null = demo provider).
+async function mtKit({ clock = null, assistantClient = null, outreachOptions = {} } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-mt-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const prov = { name: "test", model: "test", async generate(a) { return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-mt", assistantClient, outreachOptions, meetingsOptions: { clock: () => (t == null ? Date.now() : t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-mt" });
+  const as = async (c, p, m = "GET", body) => { const r = await fetch(b2 + p, { method: m, headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const user = async (role, tag = role) => { const email = `mt-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Mt ${tag}`, email, password: `mt-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `mt-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id, name: `Mt ${tag}` }; };
+  return { app: app2, st, w, X: `/api/workspaces/${w.id}/meetings`, W: `/api/workspaces/${w.id}`, j, as, ck, user, b2,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+// A minimal .docx (zip with word/document.xml, deflated) for the upload test.
+async function mtDocx(paragraphs) {
+  const zlib = await import("node:zlib");
+  const xml = Buffer.from(`<?xml version="1.0"?><w:document xmlns:w="x"><w:body>${paragraphs.map((p) => `<w:p><w:r><w:t>${p.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</w:t></w:r></w:p>`).join("")}</w:body></w:document>`, "utf8");
+  const data = zlib.deflateRawSync(xml), name = Buffer.from("word/document.xml");
+  const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(xml.length, 22); local.writeUInt16LE(name.length, 26);
+  const cen = Buffer.alloc(46); cen.writeUInt32LE(0x02014b50, 0); cen.writeUInt16LE(20, 4); cen.writeUInt16LE(20, 6); cen.writeUInt16LE(8, 10); cen.writeUInt32LE(data.length, 20); cen.writeUInt32LE(xml.length, 24); cen.writeUInt16LE(name.length, 28); cen.writeUInt32LE(0, 42);
+  const body = Buffer.concat([local, name, data]), dir = Buffer.concat([cen, name]);
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(body.length, 16);
+  return Buffer.concat([body, dir, end]);
+}
+
+test("meetings: create, list, edit and delete with validation; investor and hiring meetings only for Owner/Admin, attendees and the creator", async () => {
+  const k = await mtKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const meta = (await k.j(`${k.X}/meta`)).body;
+    assert.deepEqual(meta.types.map((t) => t.id), ["internal", "sales_call", "customer", "partner", "investor", "hiring"]);
+    assert.equal(meta.today, "2026-11-03"); assert.ok(meta.targets.every((t) => t.allowed));
+    assert.equal((await k.j(k.X, { title: "", date: "2026-11-03" })).status, 422);
+    assert.equal((await k.j(k.X, { title: "X", date: "03/11/2026" })).status, 422);
+    assert.equal((await k.j(k.X, { title: "X", date: "2026-11-03", time: "25:00" })).status, 422);
+    assert.equal((await k.j(k.X, { title: "X", date: "2026-11-03", type: "party" })).status, 422);
+    assert.equal((await k.j(k.X, { title: "X", date: "2026-11-03", attendees: [{ name: "A", email: "not-an-email" }] })).status, 422);
+    assert.equal((await k.j(k.X, { title: "X", date: "2026-11-03", links: { deal_id: "999" } })).status, 422);
+    const lead = await k.user("manager", "lead"), mem = await k.user("member", "mem"), fin = await k.user("finance", "fin"), view = await k.user("viewer", "view");
+    const m = (await k.j(k.X, { title: "Weekly sync", date: "2026-11-03", time: "13:30", agenda: "Pipeline", attendees: [{ user_id: mem.id }, { user_id: mem.id }, { name: "Nora", email: "NORA@oud.sa", org: "Oud" }] })).body;
+    assert.equal(m.type, "internal"); assert.equal(m.time, "13:30"); assert.equal(m.starts_at, "2026-11-03T10:30:00.000Z"); // Riyadh is UTC+3
+    assert.equal(m.attendees.length, 2); assert.equal(m.attendees[0].name, "Mt mem"); assert.deepEqual(m.attendees[1], { kind: "external", name: "Nora", email: "nora@oud.sa", org: "Oud" });
+    assert.equal(m.external, true); assert.equal(m.created_by_id, "owner");
+    const ed = (await k.j(`${k.X}/${m.id}`, { title: "Weekly team sync", time: "09:00" }, "PUT")).body;
+    assert.equal(ed.title, "Weekly team sync"); assert.equal(ed.starts_at, "2026-11-03T06:00:00.000Z"); assert.equal(ed.agenda, "Pipeline");
+    assert.equal((await k.j(`${k.X}/${m.id}`, { title: "" }, "PUT")).status, 422);
+    // Roles: Finance views, Viewer has no access, members edit.
+    assert.equal((await k.as(fin.ck, k.X)).status, 200); assert.equal((await k.as(fin.ck, k.X, "POST", { title: "F", date: "2026-11-03" })).status, 403);
+    assert.equal((await k.as(view.ck, k.X)).status, 403);
+    // Investor and hiring: Owner/Admin, attendees and the creator only (404 for everyone else, also by id).
+    const inv = (await k.j(k.X, { title: "Seed round", date: "2026-11-04", type: "investor", attendees: [{ user_id: lead.id }] })).body;
+    const hire = (await k.as(mem.ck, k.X, "POST", { title: "Interview", date: "2026-11-05", type: "hiring" })).body;
+    const seen = async (c) => (await k.as(c, k.X)).body.meetings.map((x) => x.title).sort();
+    assert.deepEqual(await seen(k.ck), ["Interview", "Seed round", "Weekly team sync"]);
+    assert.deepEqual(await seen(lead.ck), ["Seed round", "Weekly team sync"]);
+    assert.deepEqual(await seen(mem.ck), ["Interview", "Weekly team sync"]);
+    assert.deepEqual(await seen(fin.ck), ["Weekly team sync"]);
+    assert.equal((await k.as(mem.ck, `${k.X}/${inv.id}`)).status, 404); assert.equal((await k.as(fin.ck, `${k.X}/${hire.id}`)).status, 404);
+    assert.equal((await k.as(mem.ck, `${k.X}/${inv.id}/notes`, "POST", { text: "x" })).status, 404);
+    assert.equal((await k.as(lead.ck, `${k.X}/${inv.id}`, "PUT", { attendees: [] })).status, 422); // would lock the lead out
+    assert.equal((await k.j(`${k.X}?type=investor`)).body.meetings.length, 1);
+    assert.equal((await k.j(`${k.X}/${m.id}`, undefined, "DELETE")).status, 204);
+    assert.equal((await k.j(`${k.X}/${m.id}`)).status, 404);
+  } finally { k.done(); }
+});
+
+test("meetings notes: paste, .txt/.vtt/.srt/.docx upload to plain speaker lines, audio refused, 200 KB limit", async () => {
+  const { parseVtt, parseSrt, notesFromFile } = await import("../lib/meetings.js");
+  const vtt = "WEBVTT\n\nNOTE recorded\n\n1\n00:00:01.000 --> 00:00:03.500\n<v Sara Ali>Hello everyone.</v>\n\n2\n00:00:03.500 --> 00:00:05.000\n<v Sara Ali>Action: send the deck</v>\n\n00:00:05.000 --> 00:00:07.000 align:start\n<v Omar><i>سوف أرسل العرض</i></v>\n\n00:00:07.000 --> 00:00:09.000\nKhalid: TODO book the demo\n";
+  assert.equal(parseVtt(vtt), "Sara Ali: Hello everyone. Action: send the deck\nOmar: سوف أرسل العرض\nKhalid: TODO book the demo");
+  const srt = "1\r\n00:00:01,000 --> 00:00:02,000\r\n[Nora] We need video ads.\r\n\r\n2\r\n00:00:02,000 --> 00:00:04,000\r\n[Nora] Mostly for oud.\r\n\r\n3\r\n00:00:04,000 --> 00:00:06,000\r\n<i>Owner: - [ ] share pricing</i>\r\n";
+  assert.equal(parseSrt(srt), "Nora: We need video ads. Mostly for oud.\nOwner: - [ ] share pricing");
+  assert.match(notesFromFile("call.m4a", { text: "x" }).error, /can't be transcribed/);
+  assert.match(notesFromFile("deck.pdf", { text: "x" }).error, /\.txt, \.vtt, \.srt or \.docx/);
+  assert.equal(notesFromFile("a.vtt", { b64: Buffer.from(vtt).toString("base64") }).text.split("\n").length, 3);
+  const k = await mtKit();
+  try {
+    const m = (await k.j(k.X, { title: "Call", date: "2026-11-03", type: "customer" })).body;
+    assert.equal((await k.j(`${k.X}/${m.id}/notes`, { text: "  " })).status, 422);
+    const a = (await k.j(`${k.X}/${m.id}/notes`, { text: "Line one\r\nLine two" })).body;
+    assert.equal(a.notes, "Line one\nLine two"); assert.equal(a.notes_source, "paste"); assert.ok(a.notes_at);
+    const b = (await k.j(`${k.X}/${m.id}/notes`, { filename: "zoom.vtt", text: vtt, append: true })).body;
+    assert.match(b.notes, /^Line one\nLine two\n\nSara Ali: Hello everyone\./); assert.equal(b.notes_source, "file:zoom.vtt");
+    const c = (await k.j(`${k.X}/${m.id}/notes`, { filename: "meet.srt", file_b64: Buffer.from(srt).toString("base64") })).body;
+    assert.equal(c.notes, "Nora: We need video ads. Mostly for oud.\nOwner: - [ ] share pricing");
+    const docx = await mtDocx(["Decision: launch on Salla first", "Action: Owner to call Nora & Co", "المطلوب: تجهيز العينات"]);
+    const dx = (await k.j(`${k.X}/${m.id}/notes`, { filename: "notes.docx", file_b64: docx.toString("base64") })).body;
+    assert.equal(dx.notes, "Decision: launch on Salla first\nAction: Owner to call Nora & Co\nالمطلوب: تجهيز العينات");
+    assert.equal((await k.j(`${k.X}/${m.id}/notes`, { filename: "bad.docx", file_b64: Buffer.from("hello").toString("base64") })).status, 422);
+    assert.equal((await k.j(`${k.X}/${m.id}/notes`, { filename: "rec.mp3", file_b64: "AAAA" })).status, 422);
+    assert.equal((await k.j(`${k.X}/${m.id}/notes`, { text: "x".repeat(200_001) })).status, 413);
+    assert.equal((await k.j(k.X, { title: "Big", date: "2026-11-03", notes: "y".repeat(200_001) })).status, 413);
+  } finally { k.done(); }
+});
+
+test("meetings secretary: rule-based extractor (English and Arabic); demo and invalid JSON fall back; checked AI JSON is kept; invented numbers, quotes and ungrounded items are refused", async () => {
+  const { ruleExtract, checkDraft } = await import("../lib/meetings.js");
+  const att = [{ kind: "user", user_id: "u1", name: "Sara Ali" }, { kind: "external", name: "Nora", email: "" }];
+  const notes = "Sara Ali: Hello all\n- Action: Sara to send the deck by 2026-11-06\n* TODO: update the help center\n- [ ] book the Zid test\nOmar: Next steps: Nora shares the product feed\nسوف نرسل العينات يوم الأحد\nالمطلوب: تجهيز قوالب رمضان\nمهمة: مراجعة الأسعار\nDecision: start with 3 perfume stores\nقررنا: نبدأ بسلة\nWho owns the Snap pixel?\nهل نحتاج موافقة؟\nJust a normal line.";
+  const r = ruleExtract(notes, att);
+  assert.deepEqual(r.items.map((x) => x.text), ["Sara to send the deck by 2026-11-06", "update the help center", "book the Zid test", "Nora shares the product feed", "سوف نرسل العينات يوم الأحد", "تجهيز قوالب رمضان", "مراجعة الأسعار"]);
+  assert.equal(r.items[0].owner_id, "u1"); assert.equal(r.items[0].due, "2026-11-06"); assert.equal(r.items[3].owner_name, "Nora"); assert.equal(r.items[1].owner_id, null); assert.equal(r.items[1].due, null);
+  assert.deepEqual(r.decisions, ["start with 3 perfume stores", "نبدأ بسلة"]);
+  assert.deepEqual(r.questions, ["Who owns the Snap pixel?", "هل نحتاج موافقة؟"]);
+  const m0 = { title: "T", notes, attendees: att, links: { deal_id: "5" } };
+  assert.equal(checkDraft("not json", m0, "2026-11-03").ok, false);
+  assert.equal(checkDraft(JSON.stringify({ summary: "We agreed on 12 stores.", action_items: [] }), m0, "2026-11-03").ok, false); // 12 isn't in the notes
+  assert.equal(checkDraft(JSON.stringify({ summary: 'Sara said "we will win everything".', action_items: [] }), m0, "2026-11-03").ok, false);
+  const good = checkDraft(JSON.stringify({ summary: 'Kick-off: start with 3 perfume stores, "book the Zid test".', decisions: ["Start with 3 perfume stores"], open_questions: ["Who owns the Snap pixel?"],
+    action_items: [{ text: "Send the deck", owner: "Sara Ali", due: "2026-11-06", module: "deal", source: "- Action: Sara to send the deck by 2026-11-06" },
+      { text: "Share the feed", owner: "Someone", due: "[ADD]", module: "crm", source: "Nora shares the product feed" },
+      { text: "Invented", owner: "[ADD]", due: "[ADD]", module: "ops", source: "a line that isn't there" }] }), m0, "2026-11-03");
+  assert.equal(good.ok, true); assert.equal(good.draft.items.length, 2); assert.match(good.issues[0], /Dropped "Invented"/);
+  assert.deepEqual(good.draft.items.map((x) => [x.owner_id, x.due, x.target]), [["u1", "2026-11-06", "deal"], [null, null, "ops"]]); // no store linked: crm → ops
+
+  const k = await mtKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const m = (await k.j(k.X, { title: "Kick-off", date: "2026-11-03", attendees: [{ name: "Nora", email: "" }] })).body;
+    assert.equal((await k.j(`${k.X}/${m.id}/draft`, {})).status, 422); // no notes yet
+    await k.j(`${k.X}/${m.id}/notes`, { text: notes });
+    // Demo provider: not JSON → factual draft built by the rules, an escalated outcome.
+    const d1 = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    assert.equal(d1.by_ai, false); assert.match(d1.note, /expected JSON/); assert.match(d1.summary, /^\[ADD\]/);
+    assert.equal(d1.items.length, 7); assert.ok(d1.items.every((x) => x.target === "ops" && x.state === "draft" && x.id));
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "meeting_secretary" && e.outcome === "escalated"));
+    let seen = "";
+    k.ai((p) => { seen = p; return JSON.stringify({ summary: "Kick-off with Nora.", decisions: [], open_questions: [], action_items: [{ text: "Update the help center", owner: "[ADD]", due: "[ADD]", module: "ops", source: "* TODO: update the help center" }] }); });
+    const d2 = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    assert.equal(d2.by_ai, true); assert.equal(d2.summary, "Kick-off with Nora."); assert.equal(d2.items.length, 1);
+    assert.match(seen, /Never invent numbers/); assert.match(seen, /<notes>\n[\s\S]*Just a normal line\./); assert.match(seen, /- Nora \(outside DPA AD\)/);
+    k.ai(() => JSON.stringify({ summary: "Revenue will grow 40%.", action_items: [] }));
+    const d3 = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    assert.equal(d3.by_ai, false); assert.match(d3.note, /numbers that aren't in the notes \(40\)/);
+    // Switched off in AI Workforce: rules only, no AI call.
+    k.app.locals.workforce.set("meeting_secretary", { level: 0 });
+    seen = ""; const d4 = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    assert.equal(seen, ""); assert.equal(d4.by_ai, false); assert.match(d4.note, /switched off/);
+    // A person edits the draft: summary, an item's owner/date/module, and adds one.
+    const ed = (await k.j(`${k.X}/${m.id}/draft`, { summary: "Kick-off.", items: [{ id: d4.items[0].id, owner_id: "owner", due: "2026-11-10", target: "ops" }, { text: "New item", target: "ops" }] }, "PUT")).body.draft;
+    assert.equal(ed.summary, "Kick-off."); assert.equal(ed.items.length, 2); assert.equal(ed.items[0].owner_name, "Owner"); assert.equal(ed.items[1].added, true);
+    assert.equal((await k.j(`${k.X}/${m.id}/draft`, { items: [{ id: d4.items[0].id, due: "soon" }] }, "PUT")).status, 422);
+    assert.equal((await k.j(`${k.X}/${m.id}/draft`, { items: [{ id: d4.items[0].id, target: "finance" }] }, "PUT")).status, 422);
+  } finally { k.done(); }
+});
+
+test("meetings review and create: ops task, deal next action, CRM note, Success task, hiring note and OKR note, each linked back; refused without Edit on the target", async () => {
+  const k = await mtKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    await k.j(`${k.W}/crm/sample`, {}); await k.j(`${k.W}/sample-data`, {});
+    const crm = k.app.locals.crm;
+    const deal = (await k.j(`${k.W}/deals`, { name: "Oud Co" })).body;
+    const store = crm.add(k.w.id, { store_name: "Oud Co store", domain: "oudco.sa", email: "nora@oudco.sa" });
+    const cust = k.st.db.billing_customers.find((c) => c.workspace_id === k.w.id && c.sample);
+    const cand = (await k.j(`${k.W}/hr/candidates`, { name: "Huda" })).body;
+    const obj = (await k.j(`${k.W}/okr/objectives`, { title: "Win stores", krs: [{ title: "Listing", kind: "manual", target: 1 }, { title: "Deals", kind: "linked", metric: "deals_won", target: 5 }] })).body;
+    await k.j(`${k.W}/okr/objectives/${obj.id}/activate`, {});
+    const kr = obj.krs.find((x) => x.kind === "manual");
+    const mem = await k.user("member", "mem2"), cre = await k.user("creative", "cre");
+    const m = (await k.j(k.X, { title: "Customer call", date: "2026-11-03", type: "customer", attendees: [{ user_id: mem.id }, { name: "Nora", email: "nora@oudco.sa" }],
+      links: { deal_id: deal.id, store_id: store.id, customer_id: cust.id, candidate_id: cand.id } })).body;
+    assert.equal(m.link_info.deal.label, "Oud Co"); assert.equal(m.link_info.store.label, "Oud Co store"); assert.equal(m.link_info.candidate.label, "Huda");
+    await k.j(`${k.X}/${m.id}/notes`, { text: "Action: Mt mem2 to fix the feed by 2026-11-05\nTODO: send the proposal\nTODO: log the call\nTODO: renewal check\nTODO: second interview\nTODO: listing update\nTODO: skip me" });
+    const d = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    assert.equal(d.items[0].owner_id, mem.id); assert.equal(d.items[0].due, "2026-11-05");
+    const [i1, i2, i3, i4, i5, i6, i7] = d.items.map((x) => x.id);
+    // The Creative role can edit Meetings but not Operations or Sales: those items are refused, nothing is created.
+    const refused = (await k.as(cre.ck, `${k.X}/${m.id}/create`, "POST", { items: [{ id: i1, target: "ops" }, { id: i2, target: "deal" }] })).body;
+    assert.equal(refused.created, 0); assert.equal(refused.refused.length, 2); assert.match(refused.refused[0].error, /can't change Operations task/); assert.equal(refused.refused[0].status, 403);
+    // A Team member can't edit Team & hiring (view only): the hiring item is refused, the rest go through.
+    const r1 = (await k.as(mem.ck, `${k.X}/${m.id}/create`, "POST", { items: [{ id: i1, target: "ops" }, { id: i2, target: "deal", due: "2026-11-04" }, { id: i3, target: "crm" }, { id: i5, target: "hiring" }] })).body;
+    assert.equal(r1.created, 3); assert.deepEqual(r1.refused.map((x) => x.id), [i5]);
+    const task = k.st.db.ops_tasks.find((t) => t.meeting_id === m.id);
+    assert.equal(task.title, "Mt mem2 to fix the feed by 2026-11-05"); assert.equal(task.owner, "Mt mem2"); assert.equal(task.owner_kind, "human"); assert.equal(task.due, "2026-11-05"); assert.equal(task.source, "meeting"); assert.match(task.notes, new RegExp(`Meetings #${m.id}`));
+    const dl = (await k.j(`${k.W}/deals/${deal.id}`)).body;
+    assert.equal(dl.deal.next_step.text, "send the proposal"); assert.equal(dl.deal.next_step.meeting_id, m.id);
+    assert.equal(dl.deal.next.owner, "you"); assert.match(dl.deal.next.text, /^send the proposal, due 2026-11-04/); assert.equal(dl.deal.next.meeting_id, m.id);
+    assert.ok(dl.activities.some((a) => a.type === "note" && /Next action: send the proposal/.test(a.text) && a.meeting_id === m.id));
+    const note = crm.notesFor(store.id).find((n) => n.meeting_id === m.id);
+    assert.match(note.text, /^log the call\nFrom meeting "Customer call" on 2026-11-03/);
+    // The Owner creates the rest: Success task, hiring note, OKR note (needs a key result), and skips one.
+    assert.equal((await k.j(`${k.X}/${m.id}/create`, { items: [{ id: i6, target: "okr" }] })).body.refused[0].error, "Pick the key result this note is for.");
+    const r2 = (await k.j(`${k.X}/${m.id}/create`, { items: [{ id: i4, target: "success", owner_id: mem.id }, { id: i5, target: "hiring" }, { id: i6, target: "okr", kr_id: kr.id }, { id: i7, selected: false }, { id: i1, target: "ops" }] })).body;
+    assert.equal(r2.created, 3); assert.equal(r2.refused[0].error, "Already created");
+    const al = k.st.db.success_alerts.find((a) => a.meeting_id === m.id);
+    assert.equal(al.type, "meeting_action"); assert.equal(al.owner_id, mem.id); assert.equal(al.customer_id, cust.id); assert.match(al.reason, /^renewal check/); assert.ok(al.steps.length >= 3);
+    const ha = k.st.listHrActivities("candidate", cand.id).find((a) => a.meeting_id === m.id);
+    assert.match(ha.text, /^second interview/);
+    const ol = k.st.db.okr_log.find((l) => l.meeting_id === m.id);
+    assert.equal(ol.kr_id, kr.id); assert.match(ol.text, /^Note: listing update/);
+    const full = (await k.j(`${k.X}/${m.id}`)).body;
+    assert.equal(full.draft.status, "reviewed"); assert.equal(full.items.length, 6);
+    assert.deepEqual(full.draft.items.map((x) => x.state), ["created", "created", "created", "created", "created", "created", "skipped"]);
+    assert.ok(full.items.every((x) => x.meeting_id === m.id && x.ref_id && x.route));
+    assert.equal(full.items.find((x) => x.target === "deal").route, "pipeline");
+    // A rule-based draft records no AI outcome; an AI draft that a person edits records "edited".
+    assert.ok(!k.st.db.agent_events.some((e) => e.agent_id === "meeting_secretary" && ["accepted", "edited", "rejected"].includes(e.outcome)));
+    const m2 = (await k.j(k.X, { title: "Ops sync", date: "2026-11-03", notes: "TODO: renew the domain" })).body;
+    k.ai(() => JSON.stringify({ summary: "Domain renewal.", action_items: [{ text: "Renew the domain", owner: "[ADD]", due: "[ADD]", module: "ops", source: "TODO: renew the domain" }] }));
+    const d2 = (await k.j(`${k.X}/${m2.id}/draft`, {})).body.draft;
+    await k.j(`${k.X}/${m2.id}/create`, { items: [{ id: d2.items[0].id, due: "2026-11-20" }] });
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "meeting_secretary" && e.outcome === "edited"));
+    assert.equal((await k.j(`${k.X}/${m2.id}/draft`, {})).status, 409); // reviewed: drafting again needs force
+  } finally { k.done(); }
+});
+
+test("meetings follow-up: Arabic-first draft for outside attendees; never sent in Test mode or to sample stores; [ADD], links, CRM rights and Saudi hours checked", async () => {
+  const sent = [];
+  const { channelConfig } = await import("../lib/outreach.js");
+  const cfg = channelConfig({ SMTP_HOST: "smtp.test", SMTP_USER: "u", SMTP_PASS: "p", MAIL_FROM: "hi@dpa.ad", PUBLIC_URL: "https://wizard.dpa.ad" });
+  const k = await mtKit({ clock: "2026-11-03T09:00:00Z", outreachOptions: { cfg, senders: { email: async (x) => { sent.push(x); return { provider_id: "p1" }; }, whatsapp: async () => { throw new Error("no"); } } } });
+  try {
+    const crm = k.app.locals.crm;
+    const store = crm.add(k.w.id, { store_name: "Oud Co", domain: "oudco.sa", email: "nora@oudco.sa" });
+    const internal = (await k.j(k.X, { title: "Team", date: "2026-11-03" })).body;
+    assert.equal((await k.j(`${k.X}/${internal.id}/followup`, {})).status, 422);
+    const m = (await k.j(k.X, { title: "Demo call", date: "2026-11-03", type: "sales_call", attendees: [{ name: "Nora", email: "nora@oudco.sa" }], notes: "TODO: send samples" })).body;
+    await k.j(`${k.X}/${m.id}/draft`, {});
+    const f = (await k.j(`${k.X}/${m.id}/followup`, {})).body.followup;
+    assert.equal(f.by_ai, false); assert.match(f.body, /^هلا Nora،/); assert.match(f.body, /- send samples/); assert.match(f.body, /---\n\nHi Nora,/); assert.match(f.body, /\[ADD name\]/);
+    assert.equal((await k.j(`${k.X}/${m.id}/followup/send`, {})).status, 422); // no Store CRM link
+    await k.j(`${k.X}/${m.id}`, { links: { store_id: store.id } }, "PUT");
+    assert.match((await k.j(`${k.X}/${m.id}/followup/send`, {})).body.detail, /Fill in every \[ADD\]/);
+    const body = f.body.replace(/\[ADD الاسم\]/g, "سارة").replace(/\[ADD name\]/g, "Sara");
+    const t = (await k.j(`${k.X}/${m.id}/followup/send`, { body })).body;
+    assert.equal(t.message.status, "test"); assert.equal(t.message.error, "Test mode: not sent"); assert.equal(sent.length, 0);
+    assert.equal(t.meeting.followup.sent.status, "test");
+    // Roles without Store CRM edit can't send (they copy the email).
+    const fin = await k.user("finance", "fin2");
+    assert.equal((await k.as(fin.ck, `${k.X}/${m.id}/followup/send`, "POST", { body })).status, 403);
+    // Live: only 09:00–21:00 Riyadh, not Friday; then through the CRM.
+    await k.j(`${k.W}/crm/settings`, { mode: "live" }, "PUT");
+    k.at("2026-11-06T10:00:00Z"); // a Friday
+    assert.match((await k.j(`${k.X}/${m.id}/followup/send`, { body })).body.detail, /09:00–21:00 Riyadh/);
+    k.at("2026-11-03T20:00:00Z"); // 23:00 Riyadh
+    assert.equal((await k.j(`${k.X}/${m.id}/followup/send`, { body })).status, 422);
+    k.at("2026-11-03T09:00:00Z");
+    const live = (await k.j(`${k.X}/${m.id}/followup/send`, { body })).body;
+    assert.equal(live.message.status, "sent"); assert.equal(sent.length, 1); assert.equal(sent[0].to, "nora@oudco.sa"); assert.match(sent[0].text, /سارة/);
+    // Opted-out stores and sample stores are never sent.
+    crm.update(k.w.id, store.id, { email_opt_out: true });
+    const off = await k.j(`${k.X}/${m.id}/followup/send`, { body });
+    assert.equal(off.status, 422); assert.match(off.body.detail, /Unsubscribed/); assert.equal(sent.length, 1);
+    const smp = crm.add(k.w.id, { store_name: "Sample · Store", domain: "s.example.com", email: "s@example.com", sample: true });
+    await k.j(`${k.X}/${m.id}`, { links: { store_id: smp.id } }, "PUT");
+    const sm = (await k.j(`${k.X}/${m.id}/followup/send`, { body })).body;
+    assert.equal(sm.message.status, "test"); assert.match(sm.message.error, /Sample store/); assert.equal(sent.length, 1);
+    // A checked AI draft is kept; one with invented numbers falls back to the template.
+    k.ai(() => JSON.stringify({ subject: "متابعة", body: "هلا نورة، نرسل العينات. --- Hi Nora, we'll send samples." }));
+    assert.equal((await k.j(`${k.X}/${m.id}/followup`, {})).body.followup.by_ai, true);
+    k.ai(() => JSON.stringify({ subject: "Offer", body: "We'll give you 30% off." }));
+    const fb = (await k.j(`${k.X}/${m.id}/followup`, {})).body.followup;
+    assert.equal(fb.by_ai, false); assert.match(fb.note, /numbers that aren't in the meeting \(30\)/);
+  } finally { k.done(); }
+});
+
+test("meetings: my action items and overdue ones, marking done (ops tasks done count), Command Center needs for overdue items and notes waiting 2+ days", async () => {
+  const k = await mtKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const mem = await k.user("member", "mem3"), lead = await k.user("manager", "lead3"), cre = await k.user("creative", "cre3");
+    const m = (await k.j(k.X, { title: "Planning", date: "2026-11-03", attendees: [{ user_id: mem.id }], notes: "TODO: Mt mem3 writes the brief by 2026-11-04\nTODO: Mt mem3 updates the deck by 2026-11-20\nTODO: owner thing" })).body;
+    const d = (await k.j(`${k.X}/${m.id}/draft`, {})).body.draft;
+    await k.j(`${k.X}/${m.id}/create`, { items: d.items.map((x) => ({ id: x.id })) });
+    const empty = (await k.as(mem.ck, `${k.X}/my-items`)).body;
+    assert.equal(empty.open.length, 2); assert.equal(empty.overdue.length, 0);
+    k.at("2026-11-06T09:00:00Z");
+    const mine = (await k.as(mem.ck, `${k.X}/my-items`)).body;
+    assert.deepEqual(mine.overdue.map((x) => x.due), ["2026-11-04"]); assert.equal(mine.open[0].meeting_title, "Planning");
+    // Command Center: the owner of an overdue item sees it; a Team lead sees the count; a Creative user sees nothing about others.
+    const needs = async (c) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Meetings");
+    assert.match((await needs(mem.ck))[0].text, /was due 2026-11-04/);
+    assert.ok((await needs(lead.ck)).some((n) => /1 meeting action item is overdue/.test(n.text)));
+    assert.equal((await needs(cre.ck)).length, 0);
+    // Marking done: only the owner, the meeting's creator or a manager.
+    const it = mine.overdue[0];
+    assert.equal((await k.as(cre.ck, `${k.X}/items/${it.id}`, "PUT", { status: "done" })).status, 403);
+    assert.equal((await k.as(mem.ck, `${k.X}/items/${it.id}`, "PUT", { status: "done" })).body.status, "done");
+    assert.equal((await needs(mem.ck)).length, 0);
+    // An ops task marked done in Operations counts as done here.
+    const other = mine.open.find((x) => x.due === "2026-11-20");
+    await k.j(`${k.W}/ops/tasks/${other.ref_id}`, { status: "done" }, "PUT");
+    assert.equal((await k.as(mem.ck, `${k.X}/my-items`)).body.open.length, 0);
+    // Notes with no reviewed draft after 2 days: a need for the creator, attendees and managers.
+    const w2 = (await k.as(mem.ck, k.X, "POST", { title: "Partner chat", date: "2026-11-06", type: "partner", notes: "We talked." })).body;
+    assert.equal((await needs(mem.ck)).length, 0);
+    k.at("2026-11-09T10:00:00Z");
+    assert.match((await needs(mem.ck)).find((n) => n.title === "Meeting notes waiting").text, /1 meeting has notes but no reviewed action items after 2 days: Partner chat/);
+    assert.ok((await needs(k.ck)).some((n) => n.title === "Meeting notes waiting"));
+    assert.ok(!(await needs(cre.ck)).some((n) => n.title === "Meeting notes waiting"));
+    assert.equal((await k.j(k.X)).body.meetings.find((x) => x.id === w2.id).waiting_review, true);
+    await k.j(`${k.X}/${w2.id}/draft`, {}); await k.j(`${k.X}/${w2.id}/review`, {});
+    assert.ok(!(await needs(mem.ck)).some((n) => n.title === "Meeting notes waiting"));
+    // Viewers have no Meetings access, so no needs either.
+    const vw = await k.user("viewer", "vw3");
+    assert.equal((await needs(vw.ck)).length, 0);
+  } finally { k.done(); }
+});
+
+test("meetings: AI Meeting secretary agent, roles, Ask DPA AD tools, data requests cover outside attendees, sample data removal, workspace delete", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  const { findSubject, exportSubject, deleteSubject, REGISTER_STARTER } = await import("../lib/compliance.js");
+  const ag = AGENTS.find((a) => a.id === "meeting_secretary");
+  assert.equal(ag.name, "AI Meeting secretary"); assert.equal(ag.team, "Operations"); assert.equal(ag.max, 1); assert.equal(ag.module, "meetings");
+  assert.equal(agentFor("POST", "/api/workspaces/1/meetings/4/draft"), "meeting_secretary");
+  assert.ok(MODULE_IDS.includes("meetings")); assert.equal(moduleFor("POST", "/api/workspaces/1/meetings/4/create"), "meetings");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.meetings])), { owner: "edit", admin: "edit", manager: "edit", member: "edit", finance: "view", creative: "edit", viewer: "none" });
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-mtr-"));
+  fs.writeFileSync(path.join(dd, "db.json"), JSON.stringify({ roles: [{ id: "viewer", name: "Viewer", perms: { command: "view" } }] }));
+  assert.equal(new Store(dd).db.roles.find((r) => r.id === "viewer").perms.meetings, "none"); fs.rmSync(dd, { recursive: true, force: true });
+  assert.ok(REGISTER_STARTER.some((r) => r.key === "meetings_notes" && r.module === "meetings"));
+  const lt = TOOLS.find((t) => t.name === "list_meetings"), at = TOOLS.find((t) => t.name === "add_meeting_notes");
+  assert.equal(lt.module, "meetings"); assert.ok(!lt.write); assert.equal(at.module, "meetings"); assert.equal(at.write, true); assert.equal(at.risk, "low"); assert.equal(typeof at.preview, "function");
+
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await mtKit({ assistantClient: fakeClient });
+  try {
+    const real = (await k.j(k.X, { title: "Board prep", date: "2026-11-03", type: "investor", attendees: [{ name: "Investor A", email: "a@vc.example" }] })).body;
+    await k.j(k.X, { title: "Weekly", date: "2026-11-02" });
+    script = [use("m1", "list_meetings", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.total, 2); assert.equal(r.meetings[0].title, "Board prep"); assert.equal(r.meetings[0].has_notes, false); return say("Two meetings."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "Which meetings?", ws: k.w.id })).body;
+    assert.match(a1.reply, /Two meetings/);
+    script = [use("m2", "add_meeting_notes", { meeting_id: real.id, notes: "Action: send the deck to a@vc.example" })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Save these notes", ws: k.w.id })).body;
+    assert.match(a2.pending.summary, /^Save 37 characters of notes on "Board prep" \(2026-11-03\)/);
+    assert.equal(k.st.db.meetings_meetings.find((x) => x.id === real.id).notes, "");
+    script = [say("Saved.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const saved = k.st.db.meetings_meetings.find((x) => x.id === real.id);
+    assert.equal(saved.notes, "Action: send the deck to a@vc.example"); assert.equal(saved.notes_source, "assistant");
+    script = [use("m3", "add_meeting_notes", { title: "Call with Zid", date: "2026-11-04", time: "11:00", type: "partner", notes: "We agreed to test." })];
+    const a3 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "New meeting", ws: k.w.id })).body;
+    assert.match(a3.pending.summary, /Create the meeting "Call with Zid" on 2026-11-04 11:00 \(partner\)/);
+    script = [say("Created.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a3.pending.id, approve: true });
+    assert.ok(k.st.db.meetings_meetings.some((x) => x.title === "Call with Zid" && x.notes === "We agreed to test."));
+
+    // Data requests: outside attendee emails and mentions in notes are found, exported and redacted on delete.
+    const f = findSubject({ store: k.st, crm: k.app.locals.crm }, { email: "A@vc.example" });
+    assert.equal(f.meetings.length, 1); assert.equal(f.meetings[0].attendee, true);
+    const x = exportSubject({ store: k.st, crm: k.app.locals.crm }, { email: "a@vc.example" });
+    assert.equal(x.meetings[0].attendee.name, "Investor A"); assert.deepEqual(x.meetings[0].notes_lines, ["Action: send the deck to a@vc.example"]);
+    const c = deleteSubject({ store: k.st, crm: k.app.locals.crm }, { email: "a@vc.example" });
+    assert.equal(c.meeting_attendees_redacted, 1);
+    const red = k.st.db.meetings_meetings.find((y) => y.id === real.id);
+    assert.deepEqual(red.attendees[0], { kind: "external", name: "[removed]", email: "", org: "" }); assert.equal(red.notes, "Action: send the deck to [removed]");
+    assert.equal(findSubject({ store: k.st, crm: k.app.locals.crm }, { email: "a@vc.example" }).meetings.length, 0);
+
+    // Sample meetings: two "Sample ·" meetings with notes and a rule-based draft; removed with Remove sample data.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.meetings, 2);
+    const smp = k.st.db.meetings_meetings.filter((y) => y.sample);
+    assert.ok(smp.every((y) => y.title.startsWith("Sample · ") && y.notes && y.draft && y.draft.by_ai === false && y.draft.items.length >= 2));
+    assert.ok(smp.some((y) => y.links.deal_id && y.links.store_id));
+    const sd = smp[0];
+    await k.j(`${k.X}/${sd.id}/create`, { items: [{ id: sd.draft.items[0].id }] });
+    assert.ok(k.st.db.ops_tasks.some((t) => t.meeting_id === sd.id && t.sample));
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.meetings, 2); assert.equal(rm.meeting_items, 1);
+    assert.ok(!k.st.db.meetings_meetings.some((y) => y.sample)); assert.ok(!k.st.db.ops_tasks.some((t) => t.meeting_id === sd.id));
+    assert.equal(k.st.db.meetings_meetings.length, 3);
+    // Deleting a workspace clears its meetings_* rows and keeps other workspaces'.
+    k.st.db.meetings_meetings.push({ id: "zm", workspace_id: "other" });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    for (const coll of ["meetings_meetings", "meetings_items"]) assert.equal(k.st.db[coll].filter((y) => y.workspace_id === k.w.id).length, 0, coll);
+    assert.deepEqual(k.st.db.meetings_meetings.map((y) => y.id), ["zm"]);
+  } finally { k.done(); }
+});
