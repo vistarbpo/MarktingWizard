@@ -1147,6 +1147,9 @@ details > summary { cursor: pointer; }
 .okr-sec { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; min-width: 0; overflow-wrap: anywhere; }
 .okr-sec h4 { margin: 0 0 8px; font-size: var(--fs-md); }
 .okr-table td, .okr-table th { padding: 6px 8px; }
+.okr-table { min-width: 600px; } /* scrolls inside its .table-wrap on phones instead of crushing the names */
+.okr-table td.num, .okr-table th.num { white-space: nowrap; }
+.okr-table td:nth-child(2) { min-width: 160px; }
 .okr-wgoal { margin-bottom: 10px; }
 .okr-wkrs { margin: 4px 0 0; padding-left: 18px; }
 .okr-wkrs li { margin-bottom: 3px; }
@@ -1156,7 +1159,7 @@ details > summary { cursor: pointer; }
 .okr-cmform .input { flex: 1; min-width: 0; }
 .okr-narr { width: 100%; font-family: var(--font); min-height: 260px; }
 .okr-issues { color: var(--warn); margin: 6px 0; padding-left: 18px; }
-.cc-okr-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px 44px; gap: 8px; align-items: center; margin-top: 8px; }
+.cc-okr-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 90px 44px; gap: 8px; align-items: center; margin-top: 8px; }
 @media (max-width: 760px) {
   .okr-form { grid-template-columns: minmax(0, 1fr); }
   .okr-kr-main { grid-template-columns: minmax(0, 1fr); }
