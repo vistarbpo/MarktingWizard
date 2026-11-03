@@ -16,7 +16,7 @@ import { COLL as LEGAL, canSeeRestricted, currentVersion, legalPath, saveLegalUp
 import { publicBase } from "./media.js";
 import { canSee as canSeeMeeting } from "./meetings.js";
 import { h, newNonce, publicPage, PUBLIC_HEADERS } from "./publicsite.js";
-import { AGENT_ID, CLOSED, COLL, CONFIRM, FOLDERS, FOLDER_IDS, INSTRUMENTS, ITEM_KINDS, KINDS, NO_DATA, PACK, PACK_IDS, ROUND_STATUS, STAGES, TERM_FIELDS, VIEWER_INLINE,
+import { AGENT_ID, CLOSED, aiParts, COLL, CONFIRM, FOLDERS, FOLDER_IDS, INSTRUMENTS, ITEM_KINDS, KINDS, NO_DATA, PACK, PACK_IDS, ROUND_STATUS, STAGES, TERM_FIELDS, VIEWER_INLINE,
   cleanInvestor, cleanLink, cleanRound, cleanUrl, daysBetween, engagement, ensureInvestors, folderName, hasAdd, includesSample, isMonth, itemTarget, linkItems, linkState, liveMetrics, logView,
   monthName, newToken, passCookie, passcodeOk, people, personName, removeItemFile, roundView, stageName, stripRefs, todayOf } from "./investors.js";
 
@@ -465,7 +465,7 @@ export function mountInvestors(app, { store, investors, workforce = null, env = 
     if (u.status !== "draft") return res.status(409).json({ detail: "Already approved." });
     if (hasAdd(u.text)) return res.status(422).json({ detail: "Fill in every [ADD] first (the lowlights are always written by the founder)." });
     Object.assign(u, { status: "approved", approved_by: by(req), approved_at: iso() }); store.save();
-    if (u.by_ai) outcome(w, u.text === u.original ? "accepted" : "edited", `Investor update ${u.month}`);
+    if (u.by_ai) outcome(w, aiParts(u.text) === aiParts(u.original) ? "accepted" : "edited", `Investor update ${u.month}`);
     audit(res, `approved the investor update for ${u.month}`);
     res.json(updView(w, u));
   });

@@ -370,6 +370,13 @@ export function composeUpdate(w, { month, snapshot, highlights, asks }) {
     "## Asks", ...asks.map((x) => `- ${x}`), ""].join("\n");
 }
 export const hasAdd = (t) => /\[ADD\b/i.test(String(t || ""));
+// The parts the AI writes (highlights and asks): kept unchanged = "accepted", changed = "edited" (the lowlights are always the founder's).
+export const aiParts = (t) => ["Highlights", "Asks"].map((name) => {
+  const lines = String(t || "").split("\n"), i = lines.findIndex((l) => l.trim() === `## ${name}`);
+  if (i < 0) return "";
+  const end = lines.findIndex((l, n) => n > i && /^## /.test(l));
+  return lines.slice(i + 1, end < 0 ? undefined : end).join("\n").trim();
+}).join("\n---\n");
 
 export function createInvestors({ store, provider, workforce = null, clock = () => Date.now() } = {}) {
   ensureInvestors(store);
