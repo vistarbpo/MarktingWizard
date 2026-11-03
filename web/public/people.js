@@ -131,6 +131,7 @@ function pplMyDayDialog() {
       <section><h3>Apply for leave</h3>${pplLeaveForm("pplMe")}</section>
       ${me.requests.length ? `<section><h3>My requests</h3>${me.requests.slice(0, 10).map((r) => pplReqRow(r, "mine")).join("")}</section>` : ""}
       <section><h3>My payslips</h3>${me.payslips.length ? `<ul class="ppl-list">${me.payslips.map((p) => `<li><a href="/api/me/people/${esc(S.ws.id)}/payslips/${esc(p.run_id)}" target="_blank" rel="noopener">${esc(pplMonthName(p.month))}</a><span class="num">${pplInr(p.net)}</span></li>`).join("")}</ul>` : `<p class="subtle s-small">No approved payslips yet.</p>`}</section>
+      ${me.documents?.length ? `<section><h3>My employment documents</h3><ul class="ppl-list">${me.documents.map((d) => `<li><a href="/api/me/legal/${esc(S.ws.id)}/documents/${esc(d.id)}/file" dir="auto">${esc(d.title)}</a><span class="subtle s-small">${esc(d.status)}</span></li>`).join("")}</ul></section>` : ""}
       ${me.holidays.length ? `<section><h3>Upcoming holidays</h3><ul class="ppl-list">${me.holidays.map((h) => `<li><span>${esc(h.name)}</span><span class="num">${esc(h.date)}</span></li>`).join("")}</ul></section>` : ""}
     </div></div>`, true);
 }

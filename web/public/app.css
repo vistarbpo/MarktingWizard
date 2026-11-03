@@ -1265,3 +1265,55 @@ textarea.pt-dbody { width: 100%; height: auto; min-height: 220px; font-size: var
   .pt-board { grid-auto-columns: 82%; }
   .pt-row { flex-direction: column; align-items: stretch; }
 }
+
+/* Legal & documents */
+.lg-tabs { flex-wrap: wrap; width: fit-content; max-width: 100%; }
+.lg-banner { margin: 0 0 16px; padding: 8px 12px; border-radius: var(--r-md); background: var(--warn-soft); color: var(--text); display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
+.lg-new summary { cursor: pointer; }
+.lg-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); align-items: start; }
+.lg-wide { grid-column: 1 / -1; }
+.lg-chk { align-self: end; }
+.lg-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lg-filters .input { flex: 1 1 160px; min-width: 0; width: auto; }
+.lg-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 12px 14px; text-align: left; border: 1px solid var(--border); font: inherit; color: inherit; cursor: pointer; width: 100%; min-width: 0; }
+.lg-row:hover { border-color: var(--accent); }
+.lg-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lg-row-side { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; justify-content: flex-end; max-width: 55%; }
+.lg-title { overflow-wrap: anywhere; }
+.lg-notice { color: var(--warn); }
+.lg-link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: left; }
+.lg-link:hover { text-decoration: underline; }
+.lg-head { min-width: 0; overflow-wrap: anywhere; }
+.lg-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 6px; }
+.lg-text { margin: 6px 0 0; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.lg-note { margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-md); background: var(--warn-soft); color: var(--text); }
+.lg-ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.lg-li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid var(--border); padding: 8px 0; min-width: 0; overflow-wrap: anywhere; }
+.lg-li .row { flex-wrap: wrap; }
+.lg-done { opacity: .6; }
+.lg-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.lg-inline .input { flex: 1 1 160px; min-width: 0; width: auto; }
+.lg-acts { flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.lg-h4 { margin: 14px 0 0; font-size: var(--fs-sm); }
+.lg-sum { margin: 10px 0 0; }
+.lg-sum-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; border-top: 1px solid var(--border); padding: 8px 0; }
+.lg-sum-row dt { font-weight: 500; font-size: var(--fs-sm); }
+.lg-sum-row dd { margin: 0; min-width: 0; font-size: var(--fs-sm); }
+.lg-pt + .lg-pt { margin-top: 8px; }
+.lg-pt blockquote { margin: 4px 0 0; padding: 4px 10px; border-inline-start: 3px solid var(--border); color: var(--text-2); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+textarea.lg-paste { width: 100%; min-height: 180px; height: auto; font-size: var(--fs-sm); }
+.lg-hits { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.lg-hit { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); padding: 6px 8px; cursor: pointer; font: inherit; color: inherit; }
+.lg-hit:hover { border-color: var(--accent); }
+.lg-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s-3); align-items: start; }
+.lg-tpls summary { cursor: pointer; }
+.lg-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--fs-xs)/1.6 var(--font); background: var(--surface-2); padding: 10px 12px; border-radius: var(--r-md); max-height: 420px; overflow: auto; margin: 10px 0 0; }
+.lg-table { min-width: 560px; }
+.lg-over td:first-child { color: var(--bad); }
+@media (max-width: 760px) {
+  .lg-form { grid-template-columns: minmax(0, 1fr); }
+  .lg-row, .lg-li { flex-direction: column; align-items: stretch; }
+  .lg-row-side { justify-content: flex-start; max-width: none; }
+  .lg-sum-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .lg-tpls { grid-template-columns: minmax(0, 1fr); }
+}
