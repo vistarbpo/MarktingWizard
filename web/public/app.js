@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", okr: "okr", meetings: "meetings", sop: "sop",overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", partners: "partners", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance", legal: "legal", helpcenter: "helpcenter" };
+  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", partners: "partners", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance", legal: "legal", helpcenter: "helpcenter", changelog: "product" };
 // Pages that open for more than one module: the best level among them (each tab checks its own module).
 const ROUTE_ANY = { people: ["team", "payroll"] };
 const LEVEL_RANK = { none: 0, view: 1, edit: 2 };
@@ -108,7 +108,7 @@ const NAV = [
   { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["intel", "Market intel"], ["partners", "Partners & referrals"], ["results", "ROAS results"]] },
   { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"], ["success", "Customer success"], ["helpcenter", "Help center"]] },
   { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
-  { route: "product", label: "Product", icon: "box" },
+  { group: "product", label: "Product", icon: "box", items: [["product", "Roadmap & releases"], ["changelog", "Changelog"]] },
   { route: "finance", label: "Finance", icon: "coin" },
   { route: "ops", label: "Operations", icon: "gear" },
   { group: "team", label: "Team", icon: "people", items: [["workforce", "AI Workforce"], ["team", "Hiring"], ["people", "Attendance & payroll"]] },
