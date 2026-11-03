@@ -3,6 +3,7 @@
 //   /api/workspaces/:ws/payroll/...  payroll runs, payslips, statutory dues, bank CSV  → "payroll" module
 //   /api/me/people/:ws/...           self-service for the signed-in person's own employee record only
 // Salary fields are stripped from employee records unless the role can view Payroll.
+import { myEmploymentDocs } from "./legal.js";
 import { DEFAULT_RATES, PT_PRESETS, RATES_META, RATE_SOURCES, STATES, STATE_CODES, TAX_REGIMES, dueDates, fyIndex, fyMonths, fyOf, incomeTax, stateName, structureFromCtc } from "./india-payroll.js";
 import { levelOk } from "./access.js";
 import {
@@ -606,6 +607,7 @@ export function mountPeople(app, { store }) {
       payslips: store.listOps(RUNS, w.id).filter((r) => ["approved", "paid"].includes(r.status) && (r.lines || []).some((l) => l.employee_id === e.id)).sort((a, b) => b.month.localeCompare(a.month))
         .map((r) => ({ run_id: r.id, month: r.month, status: r.status, net: r.lines.find((l) => l.employee_id === e.id).net })),
       approvals: c.requests.filter((r) => r.status === "pending" && reports.includes(r.employee_id)).map((r) => ({ ...r, name: c.employees.find((x) => x.id === r.employee_id)?.name || "?" })),
+      documents: myEmploymentDocs(store, w.id, e.id), // Legal & documents: own signed employment contract / offer letter
     });
   });
   app.post("/api/me/people/:ws/punch", (req, res) => {

@@ -1,4 +1,4 @@
-// Backups: a consistent snapshot of db.json + crm.json (+ optionally media/) as a gzip'd tar, encrypted
+// Backups: a consistent snapshot of db.json + crm.json + legal/ (+ optionally media/) as a gzip'd tar, encrypted
 // with AES-256-GCM (BACKUP_KEY), kept in DATA_DIR/backups (last 14 nightly + 8 weekly + 10 manual) and,
 // when configured, copied off-site to S3-compatible storage (SigV4 signed with node:crypto) and/or by email.
 // Nothing here needs a dependency beyond Node itself (nodemailer is already used by the Store CRM).
@@ -6,7 +6,8 @@
 // Env: BACKUP_KEY (64 hex chars, or a long passphrase; without it backups stay local and unencrypted),
 //      BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_KEY, BACKUP_S3_SECRET, BACKUP_S3_REGION (default us-east-1),
 //      BACKUP_S3_PREFIX (default "marketing-wizard/"), BACKUP_S3_PATH_STYLE (1/0; default 1 except on amazonaws.com),
-//      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15), BACKUP_MEDIA (0 to leave media out), BACKUP_MEDIA_MAX_MB (default 200).
+//      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15), BACKUP_MEDIA (0 to leave media out), BACKUP_MEDIA_MAX_MB (default 200),
+//      BACKUP_LEGAL_MAX_MB (default 500: Legal & documents files, always included up to this size).
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +30,7 @@ export function backupConfig(env = process.env) {
     key: env.BACKUP_KEY || "",
     media: env.BACKUP_MEDIA !== "0",
     media_max: Number(env.BACKUP_MEDIA_MAX_MB || 200) * 1048576,
+    legal_max: Number(env.BACKUP_LEGAL_MAX_MB || 500) * 1048576,
     s3: { ready: s3Ready, endpoint, bucket: env.BACKUP_S3_BUCKET || "", access: env.BACKUP_S3_KEY || "", secret: env.BACKUP_S3_SECRET || "",
       region: env.BACKUP_S3_REGION || "us-east-1", prefix: env.BACKUP_S3_PREFIX ?? "marketing-wizard/",
       path_style: env.BACKUP_S3_PATH_STYLE ? env.BACKUP_S3_PATH_STYLE !== "0" : !/amazonaws\.com$/i.test(endpoint.replace(/^https?:\/\//, "").split("/")[0]) },
@@ -161,7 +163,7 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     if (!fs.existsSync(dir)) return [];
     return fs.readdirSync(dir).map(parse).filter(Boolean).map((f) => {
       const logEntry = db.backup_log.find((l) => l.name === f.name) || {};
-      return { ...f, size: fs.statSync(path.join(dir, f.name)).size, offsite: logEntry.offsite || {}, counts: logEntry.counts || null, media_files: logEntry.media_files ?? null, media_note: logEntry.media_note || "", verified: logEntry.verified || null };
+      return { ...f, size: fs.statSync(path.join(dir, f.name)).size, offsite: logEntry.offsite || {}, counts: logEntry.counts || null, media_files: logEntry.media_files ?? null, media_note: logEntry.media_note || "", legal_files: logEntry.legal_files ?? null, legal_note: logEntry.legal_note || "", verified: logEntry.verified || null };
     }).sort((a, b) => b.at.localeCompare(a.at));
   }
   function record(entry) {
@@ -181,6 +183,17 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     return removed;
   }
 
+  // Legal & documents files (DATA_DIR/legal): contracts and certificates, so they are in every backup, with their own cap.
+  async function legalEntries() {
+    const ldir = path.join(store.dir, "legal");
+    if (!fs.existsSync(ldir)) return { entries: [], note: "" };
+    const names = fs.readdirSync(ldir).filter((n) => /^[A-Za-z0-9_-]+\.[a-z0-9]+$/.test(n) && Buffer.byteLength("legal/" + n) <= 100 && fs.statSync(path.join(ldir, n)).isFile());
+    const total = names.reduce((a, n) => a + fs.statSync(path.join(ldir, n)).size, 0);
+    if (total > cfg.legal_max) return { entries: [], note: `Legal files left out: ${Math.round(total / 1048576)} MB is over BACKUP_LEGAL_MAX_MB (${Math.round(cfg.legal_max / 1048576)} MB). Copy the legal folder another way.` };
+    const entries = [];
+    for (const n of names) entries.push({ name: "legal/" + n, data: await fs.promises.readFile(path.join(ldir, n)) });
+    return { entries, note: "" };
+  }
   async function mediaEntries() {
     const mdir = path.join(store.dir, "media");
     if (!cfg.media) return { entries: [], note: "Media left out (BACKUP_MEDIA=0)." };
@@ -200,8 +213,9 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     const dbJson = Buffer.from(JSON.stringify(store.db)), crmJson = Buffer.from(JSON.stringify(crm ? crm.db : {}));
     const counts = { db: countsOf(store.db), crm: countsOf(crm?.db) };
     const m = media ? await mediaEntries() : { entries: [], note: "Media not included in this backup." };
-    const entries = [{ name: "db.json", data: dbJson }, { name: "crm.json", data: crmJson }, ...m.entries];
-    const manifest = { app: "marketing-wizard", format: 1, created_at: new Date(t).toISOString(), kind, by, encrypted: !!cfg.key, media_included: m.entries.length, media_note: m.note,
+    const lg = await legalEntries();
+    const entries = [{ name: "db.json", data: dbJson }, { name: "crm.json", data: crmJson }, ...m.entries, ...lg.entries];
+    const manifest = { app: "marketing-wizard", format: 1, created_at: new Date(t).toISOString(), kind, by, encrypted: !!cfg.key, media_included: m.entries.length, media_note: m.note, legal_included: lg.entries.length, legal_note: lg.note,
       files: entries.map((e) => ({ name: e.name, size: e.data.length, sha256: sha256(e.data) })), counts };
     const tgz = await gzip(tarPack([{ name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2)) }, ...entries], t), { level: 6 });
     const body = cfg.key ? encrypt(tgz, cfg.key) : tgz;
@@ -211,7 +225,7 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     const file = path.join(dir, name);
     await fs.promises.writeFile(file + ".tmp", body);
     await fs.promises.rename(file + ".tmp", file);
-    return { name, file, body, counts, media_files: m.entries.length, media_note: m.note, at: new Date(t).toISOString() };
+    return { name, file, body, counts, media_files: m.entries.length, media_note: m.note, legal_files: lg.entries.length, legal_note: lg.note, at: new Date(t).toISOString() };
   }
 
   async function offsite(name, body = null) {
@@ -257,7 +271,7 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
       const t0 = now();
       try {
         const b = await build({ kind, media, by });
-        const e = record({ name: b.name, at: b.at, kind, by, ok: true, size: b.body.length, encrypted: !!cfg.key, counts: b.counts, media_files: b.media_files, media_note: b.media_note, ms: now() - t0, offsite: {} });
+        const e = record({ name: b.name, at: b.at, kind, by, ok: true, size: b.body.length, encrypted: !!cfg.key, counts: b.counts, media_files: b.media_files, media_note: b.media_note, legal_files: b.legal_files, legal_note: b.legal_note, ms: now() - t0, offsite: {} });
         const removed = prune();
         if (send) await offsite(b.name, b.body);
         return { ...e, pruned: removed };
@@ -276,7 +290,7 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     if (!file) throw new Error("Backup not found");
     const { manifest, db: d, crm: c } = await openBackup(await fs.promises.readFile(file), cfg.key);
     const out = { ok: true, name, created_at: manifest.created_at, kind: manifest.kind, encrypted: name.endsWith(".enc"), counts: { db: countsOf(d), crm: countsOf(c) },
-      media_files: manifest.media_included, files: manifest.files.length, checked_at: new Date(now()).toISOString() };
+      media_files: manifest.media_included, legal_files: manifest.legal_included ?? 0, files: manifest.files.length, checked_at: new Date(now()).toISOString() };
     const e = entryFor(name);
     if (e) { e.verified = { ok: true, at: out.checked_at }; store.save(); }
     return out;

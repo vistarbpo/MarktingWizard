@@ -83,6 +83,9 @@ export const AGENTS = [
   { id: "partnerships_manager", name: "AI Partnerships manager", team: "Sales", module: "partners", route: "partners", max: 1, level: 1, budget: 10,
     job: "Drafts partner outreach and onboarding emails and the monthly partner update in Saudi Arabic and English, from the partner's agreement, link and real results only, with [ADD] where something is missing.",
     levels: { 1: "Drafts only; a person edits and sends (through the Store CRM, with every outreach rule). Commissions and statements are computed by fixed rules from Billing, not by AI." } },
+  { id: "legal_assistant", name: "AI Legal assistant", team: "Leadership", module: "legal", route: "legal", max: 1, level: 1, budget: 10,
+    job: "Summarizes contracts (parties, term, renewal, notice, payment, liability cap, governing law, data protection, unusual clauses) with a quoted source sentence for every point, and suggests obligations and reminders. Not legal advice.",
+    levels: { 1: "Drafts only; points whose quote isn't in the contract are dropped, and a person accepts each suggested obligation. A lawyer reviews anything that matters." } },
 ];
 export const AGENT_IDS = AGENTS.map((a) => a.id);
 export const agentDef = (id) => AGENTS.find((a) => a.id === id);
@@ -99,6 +102,7 @@ export function agentFor(method, path) {
   if (seg === "okr") return "chief_of_staff";
   if (seg === "meetings") return "meeting_secretary";
   if (seg === "partners") return "partnerships_manager";
+  if (seg === "legal") return "legal_assistant";
   if (seg === "success") return /\/ai\/(expansion|renewal)$/.test(p) ? "success_writer" : "retention_watcher";
   return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }
