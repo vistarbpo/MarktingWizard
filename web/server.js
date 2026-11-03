@@ -16,7 +16,7 @@
 //      BACKUP_KEY (required to encrypt and to send off-site; 64 hex chars from `openssl rand -hex 32`; keep a copy safe)
 //      BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_KEY, BACKUP_S3_SECRET, BACKUP_S3_REGION (default us-east-1),
 //      BACKUP_S3_PREFIX (default marketing-wizard/), BACKUP_S3_PATH_STYLE (1/0) (Cloudflare R2, Backblaze B2, AWS S3, Hostinger…)
-//      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15; uses the SMTP_* mailbox), BACKUP_MEDIA=0 (leave media out), BACKUP_MEDIA_MAX_MB (default 200)
+//      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15; uses the SMTP_* mailbox), BACKUP_MEDIA=0 (leave media out), BACKUP_MEDIA_MAX_MB (default 200), BACKUP_LEGAL_MAX_MB (default 500; Legal & documents files)
 // Status page (/status, public): self-checks PUBLIC_URL/healthz every 5 minutes (localhost when PUBLIC_URL is unset).
 // Billing & customers (optional; Test mode by default: no card links, no ZATCA calls, reminders logged not sent):
 //      MOYASAR_SECRET_KEY (card payment links), MOYASAR_WEBHOOK_SECRET (shared secret on the /hooks/moyasar webhook)
