@@ -134,7 +134,7 @@ function lgSigs(d, edit) {
     ${edit ? `<button class="btn btn-sm btn-ghost" data-lgact="sig-del" data-id="${esc(s.id)}">Remove</button>` : ""}</li>`).join("");
   return `<section class="card card-pad"><div class="row between gap-8" style="flex-wrap:wrap"><h3 style="margin:0">Signatures</h3><span class="subtle s-small">A log, not an e-signature tool: sign in DocuSign or on paper, then record it here with the signed file.</span></div>
     ${rows ? `<ul class="lg-ul">${rows}</ul>` : `<p class="muted s-small">No signature recorded.</p>`}
-    ${edit ? files.length ? `<form id="lgSigForm" class="lg-form" style="margin-top:12px">
+    ${edit ? files.length ? `<details class="lg-sigbox" ${d.signatures.length ? "" : "open"}><summary class="s-small"><b>Record a signature</b></summary><form id="lgSigForm" class="lg-form" style="margin-top:12px">
       <div class="field"><label for="lgs-name">Signed by</label><input class="input" id="lgs-name" required maxlength="120" dir="auto"></div>
       <div class="field"><label for="lgs-email">Email</label><input class="input" id="lgs-email" type="email" maxlength="200"></div>
       <div class="field"><label for="lgs-party">For (party)</label><input class="input" id="lgs-party" maxlength="200" dir="auto"></div>
@@ -142,7 +142,7 @@ function lgSigs(d, edit) {
       <div class="field"><label for="lgs-method">How</label><select class="input" id="lgs-method">${lgOpts(LG.meta.sign_methods.map((m) => [m.id, m.name]), "wet")}</select></div>
       <div class="field"><label for="lgs-ver">Signed file</label><select class="input" id="lgs-ver">${lgOpts(files.map((v) => [v.n, `v${v.n} · ${v.name}`]), files.find((v) => v.kind === "signed")?.n || files[0].n)}</select></div>
       <div class="field lg-wide"><label for="lgs-note">Note</label><input class="input" id="lgs-note" maxlength="200" placeholder="e.g. DocuSign envelope id"></div>
-      <div class="row gap-8 lg-wide"><button class="btn btn-primary" type="submit">Record signature</button></div></form>`
+      <div class="row gap-8 lg-wide"><button class="btn btn-primary" type="submit">Record signature</button></div></form></details>`
       : `<p class="subtle s-small">Upload the signed file first (Files and versions → Signed copy), then record who signed it.</p>` : ""}</section>`;
 }
 function lgObls(d, edit) {

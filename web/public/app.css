@@ -1310,6 +1310,8 @@ textarea.lg-paste { width: 100%; min-height: 180px; height: auto; font-size: var
 .lg-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--fs-xs)/1.6 var(--font); background: var(--surface-2); padding: 10px 12px; border-radius: var(--r-md); max-height: 420px; overflow: auto; margin: 10px 0 0; }
 .lg-table { min-width: 560px; }
 .lg-over td:first-child { color: var(--bad); }
+.lg-sigbox { margin-top: 10px; }
+.lg-sigbox summary { cursor: pointer; }
 @media (max-width: 760px) {
   .lg-form { grid-template-columns: minmax(0, 1fr); }
   .lg-row, .lg-li { flex-direction: column; align-items: stretch; }
