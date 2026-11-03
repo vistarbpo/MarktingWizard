@@ -4,6 +4,8 @@
 //   numbers that opted in (WhatsApp Business policy); free text only inside 24h of their last message.
 // Without credentials, or in Test mode, nothing leaves the server: messages are logged as "test".
 import { CITIES, PLATFORMS } from "./sales.js";
+import { emailDesign, creativeSettings } from "./creativeroutes.js";
+import { renderEmail } from "./creative.js";
 import { CHANNELS, guessIntent, inWindow, nextWindowStart, parseTriage, renderTemplate, replyTriagePrompt, riyadhDay, normEmail, normPhone } from "./crm.js";
 
 export function channelConfig(env = process.env) {
@@ -69,13 +71,20 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
   const sentToday = (wsId, channel, day) => crm.db.messages.filter((m) => m.workspace_id === wsId && m.direction === "out" && m.channel === channel && ["sent", "test"].includes(m.status) && riyadhDay(new Date(m.at)) === day).length;
 
   // Sends one message to one store, or records why it couldn't. Never throws.
-  async function sendOne(wsId, c, { channel, subject = "", body, wa_template = "", wa_params = null, campaign_id = null, step = null, by = "ai" }) {
+  async function sendOne(wsId, c, { channel, subject = "", body, wa_template = "", wa_params = null, campaign_id = null, step = null, by = "ai", design_id = "" }) {
     const s = settings(wsId), w = ws(wsId), company = w?.brief?.company_name || "DPA AD";
     const vars = { sender_name: s.sender_name || company, company };
-    const text = renderTemplate(body, c, vars), subj = renderTemplate(subject, c, vars);
+    // A designed email from Creative Studio (approved only) replaces the plain-text body.
+    let design = null;
+    if (channel === "email" && design_id) {
+      const d = emailDesign(store, wsId, design_id);
+      if (d) design = renderEmail(d, creativeSettings(w).brand, { vars: { company, contact: c, extra: vars }, footer: { company, address: cfg.address, unsubscribe: `${cfg.public_url}/u/${c.unsub_token}` } });
+    }
+    const text = design ? design.text : renderTemplate(body, c, vars), subj = subject ? renderTemplate(subject, c, vars) : design?.subject || "";
     const base = { workspace_id: wsId, contact_id: c.id, campaign_id, step, channel, direction: "out", subject: subj, body: text, by };
     const skip = (reason) => crm.addMessage({ ...base, status: "skipped", error: reason });
     if (c.stage === "do_not_contact") return skip("Store is on do-not-contact");
+    if (channel === "email" && design_id && !design) return skip("The email design isn't approved in Creative Studio");
     if (channel === "email") {
       if (!c.email) return skip("No email");
       if (c.email_opt_out) return skip("Unsubscribed from email");
@@ -92,7 +101,7 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
     if (!live) { touch(c, campaign_id); return crm.addMessage({ ...base, status: "test", error: c.sample ? "Sample store: never sent for real" : cfg[channel].ready ? "Test mode: not sent" : `${channel === "email" ? "Email" : "WhatsApp"} isn't connected yet: not sent` }); }
     try {
       const r = channel === "email"
-        ? await senders.email({ to: c.email, ...emailParts(cfg, c, subj, text, company) })
+        ? await senders.email({ to: c.email, ...emailParts(cfg, c, subj, text, company), ...(design ? { html: design.html } : {}) })
         : await senders.whatsapp({ to: c.phone, text, template: base.wa_template, params: (wa_params || ["owner_name", "store_name"]).map((k) => (k === "sender_name" ? vars.sender_name : c[k] || c.store_name)) });
       touch(c, campaign_id);
       return crm.addMessage({ ...base, status: "sent", provider_id: r?.provider_id || "" });

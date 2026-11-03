@@ -11,7 +11,7 @@ const cMoney = (n) => {
   return "$" + Math.round(n).toLocaleString("en-US");
 };
 const cNum = (v, unit) => unit === "$" ? cMoney(v) : unit === "%" ? `${+v.toFixed(1)}%` : `${+Number(v).toFixed(2)}${unit && !["$", "%"].includes(unit) ? " " + unit : ""}`;
-const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8" };
+const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8", Creative: "#c026d3" };
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
@@ -41,6 +41,8 @@ function ccHello(d) {
   if (d.needs.length) chips.push([`${d.needs.length} need${d.needs.length === 1 ? "s" : ""} you`, "warn", ""]);
   if (o?.calls) chips.push([`${o.calls} call${o.calls === 1 ? "" : "s"} to make`, "warn", "crm"]);
   if (o?.inbox_open) chips.push([`${o.inbox_open} store repl${o.inbox_open === 1 ? "y" : "ies"} in the inbox`, o.inbox_person ? "warn" : "", "crm"]);
+  if (d.creative?.due) chips.push([`${d.creative.due} post${d.creative.due === 1 ? "" : "s"} to publish today`, "warn", "studio"]);
+  if (d.creative?.review) chips.push([`${d.creative.review} content to approve`, "", "studio"]);
   if (o) chips.push([o.mode === "live" ? `Outreach live · ${o.running} campaign${o.running === 1 ? "" : "s"}` : "Outreach in test mode", o.mode === "live" ? "good" : "", "crm"]);
   if (!d.finance.hidden && d.finance.runway_months != null) chips.push([`${d.finance.runway_months} mo runway`, d.finance.runway_months < 6 ? "bad" : "", "finance"]);
   return `<section class="cc-hello cc-span-12"><div><h2>${hello}${d.me?.name ? ", " + esc(d.me.name) : ""}</h2><span class="subtle s-small">${esc(day)} · ${esc(d.company)}</span></div>

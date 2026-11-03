@@ -14,6 +14,7 @@ import { CrmStore } from "./crmstore.js";
 import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel } from "./pricing.js";
 import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
+import { mountCreative } from "./creativeroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -157,6 +158,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
   });
 
   mountCrm(app, { store, crm, outreach, provider });
+  mountCreative(app, { store, provider });
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
@@ -1099,7 +1101,8 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     const d = { ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) };
     // The overview only shows what this person's role may see in each module.
     const can = (m) => levelOk(req.perms[m], "view");
-    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support" };
+    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative" };
+    if (!can("creative")) d.creative = null;
     const ok = (label) => !MOD[label] || can(MOD[label]);
     if (!can("finance")) d.finance = { hidden: true, runway_months: null, cash_sar: 0, cash_as_of: null, net_burn_sar: 0, month_costs_sar: 0, cash_zero_month: null };
     if (!can("team")) d.team = { ...d.team, payroll_sar: 0, candidates: 0, hidden: true };

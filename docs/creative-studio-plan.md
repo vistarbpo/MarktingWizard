@@ -1,6 +1,6 @@
 # Creative Studio: plan
 
-A new dashboard module for DPA AD's own marketing content: designed emails, WhatsApp media messages, social posts, carousels and reels. You plan them on a calendar, AI makes them, a person approves them, and the studio schedules and publishes them. Status: **plan, not built yet**.
+A new dashboard module for DPA AD's own marketing content: designed emails, WhatsApp media messages, social posts, carousels and reels. You plan them on a calendar, AI makes them, a person approves them, and the studio schedules and publishes them. Status: **phase 1 built** (Nov 2026); phases 2–4 planned.
 
 Same rule as the rest of the dashboard: AI does every step it can (ideas, copy, design, editing, scheduling, reporting); people approve, film, record voice and take anything the AI flags.
 

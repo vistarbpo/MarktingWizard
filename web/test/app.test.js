@@ -128,7 +128,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["studio", "crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -981,4 +981,108 @@ test("home board: greeting data, outreach funnel and role-aware sections", async
   assert.ok(d.close && "verdict" in d.close);
   assert.equal(d.me.name, ""); // team-password owner has no first name
   await json(`${P}/sample`, { method: "DELETE" });
+});
+
+test("creative studio: items, checks, approvals, posting, brand kit, email design in CRM", async () => {
+  const { seasonsBetween, checkItem, renderEmail, cleanItem, DEFAULT_BRAND, STARTER_EMAIL, cleanVariant } = await import("../lib/creative.js");
+  // Saudi seasons with lead times; Hijri dates are flagged approx.
+  const s = seasonsBetween("2027-01-01", "2027-03-31");
+  const ram = s.find((x) => x.name.startsWith("Ramadan"));
+  assert.equal(ram.date, "2027-02-08"); assert.equal(ram.approx, true); assert.equal(ram.prepare_from, "2026-12-25");
+  assert.ok(s.some((x) => x.name.startsWith("Founding Day") && x.date === "2027-02-22"));
+  assert.ok(s.some((x) => x.minor && x.date === "2027-01-27")); // payday
+  // Checks: limits, missing Arabic, unproven numbers, guarantees.
+  const it = cleanItem({ title: "T", channels: ["x", "ig_reel"], variants: { x: { caption_en: "a".repeat(300) }, ig_reel: { caption_ar: "نتائج مضمونة ٣ أضعاف" } } });
+  const ch = checkItem(it, DEFAULT_BRAND);
+  assert.ok(ch.some((c) => c.level === "bad" && /limit is 280/.test(c.text)));
+  assert.ok(ch.some((c) => /no Arabic caption/.test(c.text)));
+  assert.ok(ch.some((c) => /number or % claim/.test(c.text)));
+  assert.ok(ch.some((c) => c.level === "bad" && /guarantee/.test(c.text)));
+  // Email renderer: RTL, escaped, placeholders filled, https-only links, footer.
+  const d = cleanVariant("email", { ...STARTER_EMAIL, blocks: [...STARTER_EMAIL.blocks, { type: "text", text: "<script>x</script>" }, { type: "button", label: "x", url: "javascript:alert(1)" }] });
+  const r = renderEmail(d, DEFAULT_BRAND, { vars: { company: "DPA AD", contact: { store_name: "عبايات لمسة" }, extra: { sender_name: "نورة" } }, footer: { company: "DPA AD", address: "Riyadh", unsubscribe: "https://x.test/u/t" } });
+  assert.equal(r.rtl, true); assert.match(r.html, /dir="rtl"/); assert.match(r.html, /عبايات لمسة/); assert.match(r.html, /https:\/\/x\.test\/u\/t/);
+  assert.ok(!r.html.includes("<script>")); assert.ok(!r.html.includes("javascript:"));
+  assert.match(r.text, /نورة/); assert.equal(r.subject, "إعلانات مصممة لكل منتج في عبايات لمسة");
+
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/creative`;
+  const meta = await json(`${P}/meta`);
+  assert.ok(meta.channels.length >= 12 && meta.pillars.length === 5 && meta.can_approve);
+  const item = await (await post(`${P}/items`, { title: "Reel: plain vs designed", date: "2026-11-10", channels: ["ig_reel", "tiktok"], pillar: "product" })).json();
+  assert.equal(item.status, "idea");
+  // Can't approve while blocking checks fail.
+  assert.equal((await post(`${P}/items/${item.id}/status`, { status: "approved" })).status, 422);
+  await call(`${P}/items/${item.id}`, { method: "PUT", body: JSON.stringify({ variants: { ig_reel: { caption_ar: "الفرق بين صورة عادية وإعلان مصمم", script: "مشهد ١", asset_url: "https://drive.example/r.mp4" }, tiktok: { caption_ar: "شوف الفرق", script: "مشهد ١" } } }) });
+  assert.equal((await post(`${P}/items/${item.id}/posted`, { channel: "tiktok" })).status, 422); // not approved yet
+  await post(`${P}/items/${item.id}/status`, { status: "review" });
+  const ok = await (await post(`${P}/items/${item.id}/status`, { status: "approved" })).json();
+  assert.equal(ok.status, "approved"); assert.ok(ok.approved_by);
+  // Editing after approval sends it back to review.
+  const back = await json(`${P}/items/${item.id}`, { method: "PUT", body: JSON.stringify({ variants: { ...ok.variants, tiktok: { ...ok.variants.tiktok, caption_ar: "شوف الفرق 👀" } } }) });
+  assert.equal(back.status, "review"); assert.equal(back.history.length >= 1, true);
+  await post(`${P}/items/${item.id}/status`, { status: "approved" });
+  const pack = await (await call(`${P}/items/${item.id}/pack/tiktok`)).text();
+  assert.match(pack, /شوف الفرق/);
+  await post(`${P}/items/${item.id}/posted`, { channel: "tiktok", url: "https://tiktok.com/@dpa/1" });
+  const done = await json(`${P}/items/${item.id}/posted`, { method: "POST", body: JSON.stringify({ channel: "ig_reel" }) });
+  assert.equal(done.status, "published"); assert.equal(done.published.tiktok.url, "https://tiktok.com/@dpa/1");
+
+  // A Creative user can send for review but not approve.
+  await post("/api/admin/users", { name: "Reem Creative", email: "reem-cr@dpa.ad", password: "creative-pass", role_id: "creative" });
+  const lr = await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "reem-cr@dpa.ad", password: "creative-pass" }) });
+  const cc = lr.headers.get("set-cookie").split(";")[0];
+  const asC = (p, b) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", cookie: cc }, body: JSON.stringify(b) });
+  const mine = await (await asC(`${P}/items`, { title: "Carousel tips", channels: ["linkedin"], variants: { linkedin: { caption_ar: "نصيحة", caption_en: "Tip" } }, date: "2026-11-12" })).json();
+  assert.equal((await asC(`${P}/items/${mine.id}/status`, { status: "review" })).status, 200);
+  assert.equal((await asC(`${P}/items/${mine.id}/status`, { status: "approved" })).status, 403);
+  assert.equal((await fetch(base + `/api/workspaces/${ws.id}/finance`, { headers: { cookie: cc } })).status, 403);
+  const cmd = await json(`/api/workspaces/${ws.id}/command`);
+  assert.ok(cmd.creative.review >= 1); assert.ok(cmd.needs.some((n) => n.module === "Creative"));
+
+  // Brand kit.
+  const bk = await json(`${P}/brand`, { method: "PUT", body: JSON.stringify({ brand: { colors: { primary: "#ff0000", ink: "bad" }, hashtags: "dpa سلة", logo_url: "http://insecure" } }) });
+  assert.equal(bk.brand.colors.primary, "#ff0000"); assert.equal(bk.brand.colors.ink, "#111111"); assert.deepEqual(bk.brand.hashtags, ["#dpa", "#سلة"]); assert.equal(bk.brand.logo_url, "");
+
+  // Email design → approved → used by a CRM campaign step.
+  const em = await (await post(`${P}/items`, { title: "Outreach email", starter_email: true })).json();
+  assert.ok(em.variants.email.blocks.length > 3);
+  const preview = await (await call(`${P}/items/${em.id}/email`)).text();
+  assert.match(preview, /متجر نموذج/);
+  const C = `/api/workspaces/${ws.id}/crm`;
+  await post(`${C}/sample`);
+  const camp = await (await post(`${C}/campaigns`, { name: "Designed", type: "outreach", filter: { tags: ["sample"], has_email: true }, steps: [{ channel: "email", delay_days: 0, subject: "", body: "", design_id: em.id }] })).json();
+  assert.equal(camp.steps[0].design_id, em.id);
+  const pv = await json(`${C}/campaigns/${camp.id}/preview`);
+  assert.match(pv.steps[0].subject, /not approved/);
+  await post(`${P}/items/${em.id}/status`, { status: "approved" });
+  const pv2 = await json(`${C}/campaigns/${camp.id}/preview`);
+  assert.match(pv2.steps[0].subject, /إعلانات مصممة/);
+  assert.ok((await json(`${P}/emails`)).some((x) => x.id === em.id));
+  assert.equal((await post(`${C}/campaigns/${camp.id}/launch`)).status, 200);
+  await json(`${C}/sample`, { method: "DELETE" });
+});
+
+test("creative studio: AI plans a month and writes every version (JSON in, reviewed out)", async () => {
+  const fake = { name: "fake", model: "fake", async generate({ prompt }) {
+    if (prompt.includes('title="Content calendar')) return JSON.stringify({ items: [{ title: "Ramadan prep tips", pillar: "seasonal", date: "2027-01-12", channels: ["ig_reel", "bogus"], brief: "..." }, { title: "Out of month", date: "2027-05-01", channels: ["x"] }] });
+    if (prompt.includes('title="Write every version"')) return JSON.stringify({ ig_reel: { caption_ar: "جهّز لرمضان", caption_en: "Get ready", hashtags: ["رمضان"], script: "1. hook" }, email: { subject: "S", blocks: [{ type: "text", text: "hi" }] } });
+    return "{}";
+  } };
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-cs-"));
+  const st2 = new Store(d2), app2 = createApp({ store: st2, provider: fake, password: "pw-cs" }), srv = app2.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const ck = (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-cs" }) })).headers.get("set-cookie").split(";")[0];
+  const j = (p, b) => fetch(b2 + p, { method: b ? "POST" : "GET", headers: { "Content-Type": "application/json", cookie: ck }, body: b && JSON.stringify(b) }).then((r) => r.json());
+  const [w] = await j("/api/workspaces");
+  const plan = await j(`/api/workspaces/${w.id}/creative/plan`, { month: "2027-01" });
+  assert.equal(plan.added, 2);
+  assert.deepEqual(plan.items[0].channels, ["ig_reel"]); assert.equal(plan.items[0].created_by, "AI strategist");
+  assert.equal(plan.items[1].date, null); // dates outside the month are dropped
+  const it = plan.items[0];
+  await fetch(b2 + `/api/workspaces/${w.id}/creative/items/${it.id}`, { method: "PUT", headers: { "Content-Type": "application/json", cookie: ck }, body: JSON.stringify({ channels: ["ig_reel", "email"] }) });
+  const wr = await j(`/api/workspaces/${w.id}/creative/items/${it.id}/write`, {});
+  assert.equal(wr.status, "draft"); assert.equal(wr.variants.ig_reel.hashtags[0], "#رمضان"); assert.equal(wr.variants.email.subject, "S");
+  srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
 });

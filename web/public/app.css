@@ -687,3 +687,51 @@ details > summary { cursor: pointer; }
   .cc-g-conv { flex-direction: row; gap: 6px; min-width: 0; justify-content: flex-start; padding-left: 14px; }
   .cc-g-conv span { transform: rotate(90deg); }
 }
+
+/* ---- Creative Studio */
+.cs-cal-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+.cs-week, .cs-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cs-week div { padding: 8px 10px; font-size: var(--fs-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); }
+.cs-day { min-height: 112px; padding: 6px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; cursor: pointer; min-width: 0; }
+.cs-day:nth-child(7n) { border-right: 0; }
+.cs-day.off { background: var(--surface-2); cursor: default; }
+.cs-day.fri { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+.cs-day:hover:not(.off) { background: var(--accent-soft); }
+.cs-day.today .cs-dnum { background: var(--accent); color: #fff; border-radius: 999px; width: 22px; text-align: center; }
+.cs-dnum { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.cs-season { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--warn-soft); color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-season.prep { background: none; color: var(--text-3); padding: 0 2px; }
+.cs-season.minor { background: var(--surface-2); color: var(--text-3); }
+.cs-chip { display: flex; flex-direction: column; text-align: left; gap: 1px; border: 0; border-inline-start: 3px solid var(--text-3); background: var(--surface); box-shadow: 0 0 0 1px var(--border); border-radius: 6px; padding: 3px 6px; font: 12px var(--font); color: var(--text); cursor: pointer; min-width: 0; }
+.cs-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-chip small { color: var(--text-3); font-size: 10px; }
+.cs-chip.st-draft { border-inline-start-color: #8a7cf0; } .cs-chip.st-review { border-inline-start-color: var(--warn); }
+.cs-chip.st-approved, .cs-chip.st-published { border-inline-start-color: var(--good); } .cs-chip.st-scheduled { border-inline-start-color: var(--accent); }
+.cs-up { display: flex; flex-direction: column; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.cs-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.cs-pillars .num { font-size: 22px; font-weight: 600; }
+.cs-emails { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.cs-email-card iframe { width: 100%; height: 340px; border: 0; border-bottom: 1px solid var(--border); background: #f3f4f6; border-radius: var(--r-lg) var(--r-lg) 0 0; pointer-events: none; }
+.cs-drawer { width: min(980px, 100%); }
+.cs-title { font-size: 18px; font-weight: 600; height: 40px; }
+.cs-chans { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-checks { display: flex; flex-direction: column; gap: 4px; }
+.cs-check { font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); }
+.cs-check.bad { background: var(--bad-soft); color: var(--bad); } .cs-check.warn { background: var(--warn-soft); color: var(--warn); } .cs-check.ok { background: var(--good-soft); color: var(--good); }
+.cs-vtabs { overflow-x: auto; flex-wrap: nowrap; } .cs-vtabs button { white-space: nowrap; }
+.cs-email-ed { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.cs-block { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.cs-block .input { background: var(--surface); }
+.cs-email-prev { position: sticky; top: 0; }
+.cs-email-prev iframe { width: 100%; height: 640px; border: 1px solid var(--border); border-radius: 12px; background: #f3f4f6; display: block; margin: 0 auto; }
+@media (max-width: 1100px) { .cs-cal-wrap { grid-template-columns: 1fr; } .cs-email-ed { grid-template-columns: 1fr; } .cs-email-prev { position: static; } }
+@media (max-width: 700px) {
+  .cs-week div { padding: 6px 2px; text-align: center; font-size: 10px; }
+  .cs-day { min-height: 64px; padding: 3px; }
+  .cs-chip small, .cs-season.prep { display: none; }
+  .cs-chip { padding: 2px 4px; font-size: 10px; }
+  .cs-season { font-size: 9px; padding: 0 3px; }
+}
+.cs-drawer > * { flex-shrink: 0; }
+.cs-chip { width: 100%; max-width: 100%; }
+.cs-vtabs { min-height: 34px; }

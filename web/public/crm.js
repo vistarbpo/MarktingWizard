@@ -229,6 +229,7 @@ async function crmEditor(body) {
   const c = list.find((x) => x.id === CRM.editId);
   if (!c) { CRM.editId = null; return crmRerender(); }
   if (!CRM.list) CRM.list = await api(`${crmP()}/contacts?size=1`);
+  try { CRM.designs = levelFor("studio") !== "none" ? await api(`/api/workspaces/${S.ws.id}/creative/emails`) : []; } catch { CRM.designs = []; }
   const locked = c.status === "running";
   const dt = c.start_at ? new Date(new Date(c.start_at).getTime() + 3 * 3600e3).toISOString().slice(0, 16) : "";
   body.innerHTML = `<div class="row gap-8" style="margin-bottom:14px"><button class="btn btn-sm btn-ghost" data-caction="back">← Campaigns</button>${locked ? `<span class="badge warn">Running: changes apply to messages not sent yet</span>` : ""}</div>
@@ -271,14 +272,16 @@ function crmStepHtml(s, i) {
     <span class="subtle">${i ? "wait" : "send after"}</span><input class="input input-sm" type="number" min="0" data-s="delay_days" value="${s.delay_days}" style="width:64px"><span class="subtle">days</span>
     ${s.channel === "whatsapp" ? `<input class="input input-sm" data-s="wa_template" placeholder="Approved template name" value="${esc(s.wa_template || "")}" style="width:200px" title="First WhatsApp to a store must be an approved template (Meta). The text below is used inside a 24h chat window.">` : ""}
     <button class="btn btn-sm btn-ghost" data-caction="del-step" data-i="${i}" style="margin-left:auto">Remove</button></div>
-    ${s.channel === "email" ? `<input class="input" data-s="subject" placeholder="Subject" value="${esc(s.subject || "")}" dir="auto">` : ""}
+    ${s.channel === "email" ? `<div class="row gap-8" style="flex-wrap:wrap"><select class="input input-sm" data-s="design_id" style="width:auto" title="Designed emails approved in Creative Studio"><option value="">Plain email (text below)</option>${(CRM.designs || []).map((d) => `<option value="${esc(d.id)}" ${String(d.id) === String(s.design_id || "") ? "selected" : ""}>Design: ${esc(d.title)}</option>`).join("")}${s.design_id && !(CRM.designs || []).some((d) => String(d.id) === String(s.design_id)) ? `<option value="${esc(s.design_id)}" selected>Design #${esc(s.design_id)} (not approved: won't send)</option>` : ""}</select>
+      ${s.design_id ? `<span class="subtle" style="font-size:12px">Subject and content come from the design unless you write a subject here. The text below is kept as a fallback.</span>` : ""}</div>
+      <input class="input" data-s="subject" placeholder="${s.design_id ? "Subject (optional: the design has one)" : "Subject"}" value="${esc(s.subject || "")}" dir="auto">` : ""}
     ${s.channel === "call" ? `<span class="subtle" style="font-size:12px">Creates a call task with this script for the store's owner (Store CRM → Inbox → Calls). Only stores with a phone number.</span>` : ""}
     <textarea class="input" data-s="body" rows="6" dir="auto" placeholder="${s.channel === "call" ? "Call script: permission opener, 15-second hook, soft ask" : "Message."} Placeholders: {{store_name}} {{owner_name}} {{category_ar}} {{category}} {{city}} {{products}} {{sender_name}}">${esc(s.body || "")}</textarea></div>`;
 }
 function crmReadSteps() {
   return [...document.querySelectorAll("#ceSteps .c-step")].map((el) => {
     const g = (k) => el.querySelector(`[data-s="${k}"]`)?.value ?? "";
-    return { channel: g("channel"), delay_days: Number(g("delay_days")) || 0, subject: g("subject"), body: g("body"), wa_template: g("wa_template") };
+    return { channel: g("channel"), delay_days: Number(g("delay_days")) || 0, subject: g("subject"), body: g("body"), wa_template: g("wa_template"), design_id: g("design_id") };
   });
 }
 function crmReadCampaign() {
@@ -487,7 +490,7 @@ document.addEventListener("change", async (e) => {
   if (t.id === "cBulkAct") return crmBulkValue();
   if (t.dataset.csel) { t.checked ? CRM.sel.add(t.dataset.csel) : CRM.sel.delete(t.dataset.csel); CRM.allMatching = false; return crmRerender(); }
   if (t.id === "cSelPage") { CRM.list.rows.forEach((r) => (t.checked ? CRM.sel.add(r.id) : CRM.sel.delete(r.id))); CRM.allMatching = false; return crmRerender(); }
-  if (t.closest?.(".c-step") && t.dataset.s === "channel") { const steps = crmReadSteps(); $("#ceSteps").innerHTML = steps.map((s, i) => crmStepHtml(s, i)).join(""); }
+  if (t.closest?.(".c-step") && ["channel", "design_id"].includes(t.dataset.s)) { const steps = crmReadSteps(); $("#ceSteps").innerHTML = steps.map((s, i) => crmStepHtml(s, i)).join(""); }
   if (t.dataset.caction === "mycalls") { CRM.myCalls = t.checked; return crmRerender(); }
   if (t.dataset.caction === "mine") { CRM.mine = t.checked; return crmRerender(); }
 });

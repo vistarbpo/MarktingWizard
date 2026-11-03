@@ -57,6 +57,9 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - `crmstore.js`: `crm.json` storage and its migrations.
   - `outreach.js`: senders (SMTP via nodemailer, WhatsApp Cloud API), the scheduler `tick()`, inbound handling and AI triage, IMAP polling.
   - `crmroutes.js`: CRM HTTP routes.
+- **Creative Studio:**
+  - `creative.js`: channels and their limits, statuses, pillars, the Saudi season calendar, brand kit, content items and variants, rule-based checks before approval, the email renderer (blocks → table HTML, RTL), AI prompts.
+  - `creativeroutes.js`: routes, approvals (approver roles in the brand kit), "download and post" log, and `emailDesign()` which Store CRM uses to send approved designed emails.
 - `web/public/`: one script per module sharing globals from `app.js` (`S`, `$`, `api`, `esc`, `md`, `toast`, `fmtDate`, `ROUTES`, `render`, `levelFor`). Each file registers `ROUTES.<route> = { title, crumb, render }` and ends with `if (S.route === "<route>" && S.ws) render();`. New modules need a nav link and a `<script>` tag in `index.html`, plus an entry in `ROUTE_MODULE` in `app.js`.
 - **Permissions:** add a module to `MODULES` in `access.js` and map its API segment in `moduleFor()`. The server enforces None/View/Edit per role, the menu hides what's refused, and the Command Center redacts other modules.
 
@@ -80,7 +83,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - Starter $199, Growth $449, Scale $1,299, Enterprise from $4,000, by SKU count; yearly billing at 2 months free.
   - Draft render limits: Scale 15,000/month then $10 per extra 1,000; Enterprise 50,000/month then $8 per extra 1,000.
   - Prices live in `PLANS` in `web/lib/sales.js` and in `docs/dpa-ad-pricing.md`; when they're final, change both and the CRM call script in `crm.js`.
-- **Next module planned:** Creative Studio (`docs/creative-studio-plan.md`): content calendar, email designer, WhatsApp creatives, reels, scheduler and publishing. Waiting on founder decisions in section 7 of that doc.
+- **Creative Studio** (`docs/creative-studio-plan.md`): **phase 1 is built**: calendar, board, ideas, email designer used by CRM campaigns, brand kit, approvals, download-and-post. Phases 2–4 (rendering images and reels, direct publishing, personalized "your products" emails) wait on the founder decisions in section 7 of that doc.
 - **Sales system:** `docs/dpa-ad-sales-system.md`, DPA AD's own funnel targets (editable in Store CRM → Settings). External masterclass notes were only a reference.
 - **Still to do:**
   1. Nightly backups of `DATA_DIR` and a download-backup button.

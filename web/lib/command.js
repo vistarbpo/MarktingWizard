@@ -48,8 +48,17 @@ export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
 
   const prod = productSnapshot({ items: store.listOps("product_items", id), feedback: store.listOps("product_feedback", id), releases: store.listOps("product_releases", id), now: new Date(now) });
 
+  // Creative Studio: content waiting for approval, and approved posts due today (posted by hand for now).
+  const riyadhToday = new Date(now + 3 * 3600e3).toISOString().slice(0, 10);
+  const cItems = store.listOps("creative_items", id);
+  const inReview = cItems.filter((i) => i.status === "review");
+  const dueToday = cItems.filter((i) => ["approved", "scheduled"].includes(i.status) && i.date && i.date <= riyadhToday && (i.channels || []).some((c) => c !== "email" && !i.published?.[c]));
+  const creative = { review: inReview.length, due: dueToday.length, planned_30d: cItems.filter((i) => i.date && i.date >= riyadhToday && i.date <= new Date(now + 33 * 864e5).toISOString().slice(0, 10) && i.status !== "archived").length };
+
   // Everything waiting on a person, across modules.
   const needs = [
+    ...(inReview.length ? [{ module: "Creative", route: "studio", param: null, title: "Creative Studio", text: `${inReview.length} piece${inReview.length === 1 ? "" : "s"} of content waiting for approval` }] : []),
+    ...dueToday.slice(0, 3).map((i) => ({ module: "Creative", route: "studio", param: null, title: i.title, text: `Post today${i.date < riyadhToday ? " (overdue)" : ""}: ${(i.channels || []).filter((c) => c !== "email" && !i.published?.[c]).join(", ")}` })),
     ...prod.needs.map((n) => ({ module: "Product", route: "product", param: null, title: "Product", text: n.text })),
     ...ops.needs.map((n) => ({ module: "Operations", route: "ops", param: null, title: "Operations", text: n.text })),
     ...fin.needs.filter((n) => !n.soft).map((n) => ({ module: "Finance", route: "finance", param: null, title: "Finance", text: n.text })),
@@ -109,6 +118,7 @@ export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
   return {
     company: ws.brief.company_name,
     outreach,
+    creative,
     close: sales.close,
     goal: { arr_goal: ARR_GOAL, arr, next_milestone: next, milestones: MILESTONES, pct_of_goal: arr / ARR_GOAL },
     revenue: { paying_mrr: sales.paying_mrr, expected_mrr: sales.expected_mrr, paying: sales.paying_count, open_deals: sales.open_count, open_value: sales.open_value, funnel },

@@ -5,6 +5,8 @@ import express from "express";
 import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, STEP_CHANNELS, INTENTS, ONBOARDING_STEPS, SALLA_CATEGORIES, STAGES, STAGE_IDS, STARTER_CAMPAIGNS, cleanFilter, matchCategory, normDomain, normEmail, normPhone, parseSequence, parseStores, renderTemplate, riyadhDay, scoreContact, sequencePrompt } from "./crm.js";
 import { DEFAULT_SETTINGS } from "./outreach.js";
 import { zTest } from "./roas.js";
+import { creativeSettings, emailDesign } from "./creativeroutes.js";
+import { renderEmail } from "./creative.js";
 import { PLATFORMS, PLATFORM_LIST, detectPlatform } from "./platforms.js";
 
 const page = (title, body) => `<!doctype html><html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
@@ -312,7 +314,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (b.name !== undefined) o.name = String(b.name).trim().slice(0, 120) || "Untitled campaign";
     if (b.type !== undefined) o.type = CAMPAIGN_TYPES.some((t) => t.id === b.type) ? b.type : "outreach";
     if (b.filter !== undefined) o.filter = cleanFilter(b.filter);
-    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: STEP_CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100) }));
+    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: STEP_CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100), design_id: s.channel === "email" && s.design_id ? String(s.design_id).slice(0, 20) : "" }));
     if (b.daily_limit !== undefined) o.daily_limit = Math.max(1, Math.min(5000, Math.round(Number(b.daily_limit) || 150)));
     if (b.start_at !== undefined) o.start_at = b.start_at ? new Date(b.start_at).toISOString() : null;
     if (b.window !== undefined) o.window = { from: Math.max(0, Math.min(23, Number(b.window.from) || 9)), to: Math.max(1, Math.min(24, Number(b.window.to) || 21)), skip_friday: b.window.skip_friday !== false };
@@ -367,14 +369,14 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (!c) return res.status(404).json({ detail: "Campaign not found" });
     if (req.params.action === "pause") return res.json(crm.updateCampaign(req.params.ws, c.id, { status: "paused" }));
     if (req.params.action === "resume") return res.json(crm.updateCampaign(req.params.ws, c.id, { status: "running" }));
-    if (!c.steps.length || c.steps.some((s) => !s.body.trim())) return res.status(422).json({ detail: "Every step needs a message." });
-    if (c.steps.some((s) => s.channel === "email" && !s.subject.trim())) return res.status(422).json({ detail: "Every email step needs a subject." });
+    if (!c.steps.length || c.steps.some((s) => !s.body.trim() && !s.design_id)) return res.status(422).json({ detail: "Every step needs a message." });
+    if (c.steps.some((s) => s.channel === "email" && !s.subject.trim() && !s.design_id)) return res.status(422).json({ detail: "Every email step needs a subject." });
     // A/B test: both versions launch together and split the stores in half, so nobody gets both.
     const partner = c.experiment ? partnerOf(c) : null;
     const group = partner && partner.status === "draft" ? [c, partner] : [c];
     for (const x of group) {
-      if (!x.steps.length || x.steps.some((s) => !s.body.trim())) return res.status(422).json({ detail: `${x.name}: every step needs a message.` });
-      if (x.steps.some((s) => s.channel === "email" && !s.subject.trim())) return res.status(422).json({ detail: `${x.name}: every email step needs a subject.` });
+      if (!x.steps.length || x.steps.some((s) => !s.body.trim() && !s.design_id)) return res.status(422).json({ detail: `${x.name}: every step needs a message.` });
+      if (x.steps.some((s) => s.channel === "email" && !s.subject.trim() && !s.design_id)) return res.status(422).json({ detail: `${x.name}: every email step needs a subject.` });
     }
     let enrolled = 0, starts_at = null;
     for (const x of group) {
@@ -391,7 +393,13 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (!c) return res.status(404).json({ detail: "Campaign not found" });
     const sample = (req.query.contact_id && crm.get(req.params.ws, req.query.contact_id)) || (c.type === "onboarding" ? crm.contacts(req.params.ws)[0] : crm.query(req.params.ws, c.filter)[0]) || { store_name: "متجر نموذج", owner_name: "", category: "Fashion & abayas", city: "Riyadh", products: 250 };
     const s = outreach.settings(req.params.ws), company = store.getWorkspace(req.params.ws).brief.company_name;
-    res.json({ store: sample.store_name, steps: c.steps.map((st) => ({ ...st, subject: renderTemplate(st.subject, sample, { sender_name: s.sender_name || company, company }), body: renderTemplate(st.body, sample, { sender_name: s.sender_name || company, company }) })) });
+    const ex = { sender_name: s.sender_name || company, company };
+    res.json({ store: sample.store_name, steps: c.steps.map((st) => {
+      const d = st.design_id ? emailDesign(store, req.params.ws, st.design_id) : null;
+      if (st.design_id && !d) return { ...st, subject: "⚠ Design not approved in Creative Studio", body: "This step will be skipped until the design is approved." };
+      if (d) { const r = renderEmail(d, creativeSettings(store.getWorkspace(req.params.ws)).brand, { vars: { company, contact: sample, extra: ex } }); return { ...st, subject: st.subject ? renderTemplate(st.subject, sample, ex) : r.subject, body: `[Designed email]\n${r.text}` }; }
+      return { ...st, subject: renderTemplate(st.subject, sample, ex), body: renderTemplate(st.body, sample, ex) };
+    }) });
   });
   app.post(`${P}/campaigns/:id/ai-write`, async (req, res) => {
     const w = W(req, res); if (!w) return;

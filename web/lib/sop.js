@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", studio: "Creative Studio", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -23,6 +23,7 @@ export const SOP = [
       { id: "roadmapstart", text: "Product: load the starter roadmap and confirm what's Now, Next and Later.", owner: "Founder", go: "product" },
       { id: "people", text: "Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams.", owner: "Founder", go: "access" },
       { id: "crmsetup", text: "Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first.", owner: "Head of Growth", go: "crm" },
+      { id: "brandkit", text: "Creative Studio: fill the brand kit (colours, Arabic and English fonts, logo, do/don't, hashtags, who approves) and check the content pillars.", owner: "Head of Growth", go: "studio" },
       { id: "champion", text: "Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd \"yes\". Losing to \"we'll keep doing it by hand\" is more common than losing to a competitor: log that as the lost reason.", owner: "Founder", go: "pipeline" },
       { id: "agentdocs", text: "Make DPA AD easy for AI agents to evaluate: public help center, clear pricing page and API docs (buyers increasingly send an agent to check first).", owner: "Founder", go: "support" },
       { id: "ops", text: "Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login.", owner: "Founder", go: "ops" },
@@ -38,6 +39,7 @@ export const SOP = [
     steps: [
       { id: "crmweekly", text: "Store CRM: clear the Inbox, compare reply rates by category and campaign, and run one A/B test that changes ONE thing (subject, message, channel, timing or segment). Raise daily caps only if bounces and unsubscribes stay low.", owner: "Head of Growth", go: "crm" },
       { id: "founderbrand", text: "Founder branding: post your own thinking (not company news) on X daily and LinkedIn daily, in your own voice. Be where Saudi merchants and agencies are; don't spread across every channel.", owner: "Founder" },
+      { id: "contentweek", text: "Creative Studio: approve next week's content, post everything marked \"Post today\" and log each post (link), and move one winning idea into next month.", owner: "Head of Growth", go: "studio" },
       { id: "log", text: "Monday: log last week's values for every weekly KPI.", owner: "Each KPI owner", go: "kpis" },
       { id: "report", text: "Monday: run KPI Report & Analysis and agree the one bottleneck to fix this week.", owner: "Head of Growth", go: "playbooks", param: "kpi_report" },
       { id: "experiment", text: "Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner).", owner: "Head of Growth", go: "knowledge" },
@@ -59,6 +61,7 @@ export const SOP = [
     goal: "Check unit economics and plan next month's content and spend.",
     steps: [
       { id: "newsletter", text: "Send the monthly newsletter to contacted, replied, customer and not-now stores; review Onboarding stores stuck on a checklist step.", owner: "Head of Growth", go: "crm" },
+      { id: "contentmonth", text: "Creative Studio: let AI plan next month's calendar (Saudi seasons included), keep the best ideas, assign them, and check what worked last month.", owner: "Head of Growth", go: "studio" },
       { id: "unitecon", text: "Check the sales engine: close rate on opportunities over 20% (below 18% = fix the demo, not the lead volume), LTV:CAC at 3:1 or better, and how many deals were lost to the status quo.", owner: "Founder", go: "pipeline" },
       { id: "pricingexp", text: "Pricing: price on value (designer cost saved), not on our cost. Review the month's discounts: over 10% must have been traded for a case study, logo rights, a public post or a yearly prepay.", owner: "Founder", go: "finance" },
       { id: "access", text: "Teams & roles: deactivate anyone who left, check the activity log for unexpected changes.", owner: "Founder", go: "access" },
