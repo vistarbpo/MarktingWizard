@@ -3908,3 +3908,343 @@ test("data requests also cover billing contacts (invoices kept) and Customer Suc
     assert.deepEqual(st.db.success_responses.map((r) => r.id), ["r2"]);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- Market intel. Competitor pages are fetched only through safeGet with an injected fetch and DNS (never the real internet).
+async function intelKit({ pages = {}, providerImpl = provider, assistantClient = null } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-mi-")), st = new Store(d), calls = [];
+  const app2 = createApp({ store: st, provider: providerImpl, password: "pw-mi", assistantClient, intelOptions: { fetchImpl: mockWeb(pages, calls), lookup: publicDns } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-mi" });
+  const as = (c, p, m = "GET", body) => fetch(b2 + p, { method: m, headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = async (p, body, m) => { const r = await as(ck, p, m || (body === undefined ? "GET" : "POST"), body); return { status: r.status, body: r.status === 204 ? null : await r.json() }; };
+  const [w] = await (await as(ck, "/api/workspaces")).json();
+  const user = async (role) => { const email = `mi-${role}@dpa.ad`; await j("/api/admin/users", { name: `Mi ${role}`, email, password: `mi-${role}-pass1`, role_id: role }); return login({ email, password: `mi-${role}-pass1` }); };
+  return { app: app2, st, w, X: `/api/workspaces/${w.id}/intel`, W: `/api/workspaces/${w.id}`, j, as, ck, user, calls, b2,
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+
+test("intel competitors: add, edit with a change log, notes, duplicates refused, pricing needs its source, delete", async () => {
+  const k = await intelKit();
+  try {
+    assert.equal((await k.j(`${k.X}/competitors`, { name: "" })).status, 422);
+    const c = (await k.j(`${k.X}/competitors`, { name: "Rival Ads", site: "rival.example", platforms: ["Meta", "TikTok"], segment: "AI ad generator" })).body;
+    assert.equal(c.site, "https://rival.example/"); assert.deepEqual(c.platforms, ["Meta", "TikTok"]); assert.equal(c.changes[0].kind, "created");
+    assert.equal((await k.j(`${k.X}/competitors`, { name: "rival ads" })).status, 409);
+    // Pricing as typed by a person needs the link where it was read.
+    const noSrc = await k.j(`${k.X}/competitors/${c.id}`, { pricing: [{ tier: "Pro", price: "$99/mo" }] }, "PUT");
+    assert.equal(noSrc.status, 422); assert.match(noSrc.body.detail, /source/);
+    const up = (await k.j(`${k.X}/competitors/${c.id}`, { pricing: [{ tier: "Pro", price: "$99/mo" }], pricing_source_url: "https://rival.example/pricing", pricing_checked_on: "2026-11-01", weaknesses: "No Arabic" }, "PUT")).body;
+    assert.deepEqual(up.pricing, [{ tier: "Pro", price: "$99/mo", notes: "" }]);
+    const edit = up.changes.find((x) => x.kind === "edit");
+    assert.ok(edit.lines.some((l) => /^Pricing: none → Pro \$99\/mo$/.test(l))); assert.ok(edit.lines.some((l) => /^Weaknesses: empty → No Arabic$/.test(l)));
+    assert.equal((await k.j(`${k.X}/competitors/${c.id}`, { pricing_checked_on: "yesterday" }, "PUT")).status, 422);
+    // Saving the same values adds no log line.
+    const n = up.changes.length;
+    assert.equal((await k.j(`${k.X}/competitors/${c.id}`, { weaknesses: "No Arabic" }, "PUT")).body.changes.length, n);
+    const note = await k.j(`${k.X}/competitors/${c.id}/changes`, { text: "Launched in UAE (heard on a demo call)", url: "https://rival.example/blog" });
+    assert.equal(note.status, 201); assert.equal(note.body.kind, "note");
+    assert.equal((await k.j(`${k.X}/competitors/${c.id}/changes`, { text: "x", url: "javascript:alert(1)" })).status, 422);
+    const list = (await k.j(`${k.X}/competitors`)).body;
+    assert.equal(list.length, 1); assert.equal(list[0].watch.snapshot, undefined); assert.ok(list[0].changes_count >= 3);
+    assert.equal((await k.j(`${k.X}/competitors/${c.id}`, undefined, "DELETE")).status, 204);
+    assert.equal(k.st.db.intel_changes.filter((x) => x.competitor_id === c.id).length, 0);
+  } finally { k.done(); }
+});
+
+test("intel page watch: baseline, weekly limit, change detected with a diff and prices, a need until reviewed, SSRF refused", async () => {
+  const { pageLines, diffSummary } = await import("../lib/intel.js");
+  assert.deepEqual(pageLines("<html><script>var x=1</script><style>p{}</style><h1>Plans</h1><p>Pro &amp; Team</p><p>$99 / month</p><!-- c --></html>"), ["Plans", "Pro & Team", "$99 / month"]);
+  const ds = diffSummary(["Plans", "Pro $99/mo"], ["Plans", "Pro $129/mo", "New: video"]);
+  assert.equal(ds.price_changed, true); assert.deepEqual(ds.added, ["Pro $129/mo", "New: video"]); assert.match(ds.summary, /2 lines added, 1 removed; prices on the page now: \$129\/mo/);
+  const pages = { "https://rival.example/pricing": { body: "<h1>Pricing</h1><p>Starter $49/mo</p><p>Pro $99/mo</p>" } };
+  const k = await intelKit({ pages });
+  try {
+    const c = (await k.j(`${k.X}/competitors`, { name: "Rival", watch_url: "https://rival.example/pricing", watch_enabled: true })).body;
+    const first = await k.j(`${k.X}/competitors/${c.id}/check`, {});
+    assert.equal(first.status, 200); assert.equal(first.body.baseline, true); assert.equal(first.body.changed, false);
+    const saved = k.st.db.intel_competitors.find((x) => x.id === c.id).watch;
+    assert.match(saved.hash, /^[0-9a-f]{64}$/); assert.equal(saved.snapshot, "Pricing\nStarter $49/mo\nPro $99/mo");
+    // At most once a week per page.
+    const again = await k.j(`${k.X}/competitors/${c.id}/check`, {});
+    assert.equal(again.status, 429); assert.match(again.body.detail, /once a week/);
+    assert.equal(k.calls.length, 1);
+    // A week later the page changed: diff summary, a need on Home until a person reviews it.
+    pages["https://rival.example/pricing"].body = "<h1>Pricing</h1><p>Starter $59/mo</p><p>Pro $99/mo</p><p>New: TikTok video ads</p>";
+    const t0 = Date.now(); k.app.locals.intel.clock = () => t0 + 8 * 864e5;
+    const r = (await k.j(`${k.X}/competitors/${c.id}/check`, {})).body;
+    assert.equal(r.changed, true); assert.deepEqual(r.change.added, ["Starter $59/mo", "New: TikTok video ads"]); assert.deepEqual(r.change.removed, ["Starter $49/mo"]);
+    assert.equal(r.change.price_changed, true); assert.equal(r.change.reviewed_at, null);
+    let cc = (await k.j(`${k.W}/command`)).body;
+    const need = cc.needs.find((x) => x.module === "Market intel" && x.title === "Rival");
+    assert.ok(need); assert.equal(need.route, "intel"); assert.match(need.text, /Watched page changed: 2 lines added, 1 removed/);
+    assert.equal((await k.j(k.X)).body.unreviewed, 1);
+    // Unchanged page on the next weekly check: no new change. The scheduler only fetches due pages.
+    k.app.locals.intel.clock = () => t0 + 16 * 864e5;
+    assert.deepEqual(await k.app.locals.intel.tick(), { checked: 1, changed: 0, failed: 0 });
+    assert.deepEqual(await k.app.locals.intel.tick(), { checked: 0, changed: 0, failed: 0 });
+    assert.equal(k.calls.length, 3);
+    assert.equal((await k.j(`${k.X}/changes/${r.change.id}/review`, { note: "Price up" })).status, 200);
+    cc = (await k.j(`${k.W}/command`)).body;
+    assert.ok(!cc.needs.some((x) => x.module === "Market intel" && x.title === "Rival"));
+    // A private address is refused before any request is made (DNS answer and literal IP), and the error is kept.
+    const before = k.calls.length;
+    const evil = (await k.j(`${k.X}/competitors`, { name: "Evil", watch_url: "https://evil.example/pricing" })).body;
+    const ref = await k.j(`${k.X}/competitors/${evil.id}/check`, {});
+    assert.equal(ref.status, 422); assert.equal(ref.body.refused, true); assert.match(ref.body.detail, /Private/);
+    const lo = (await k.j(`${k.X}/competitors`, { name: "Loopback", watch_url: "http://127.0.0.1:8080/admin" })).body;
+    assert.match((await k.j(`${k.X}/competitors/${lo.id}/check`, {})).body.detail, /Private/);
+    assert.equal(k.calls.length, before);
+    assert.match(k.st.db.intel_competitors.find((x) => x.id === evil.id).watch.last_error, /Private/);
+    // A new watched page starts a new baseline.
+    const moved = (await k.j(`${k.X}/competitors/${evil.id}`, { watch_url: "https://rival.example/pricing" }, "PUT")).body;
+    assert.equal(moved.watch.last_checked_at, null); assert.equal(moved.watch.due, true);
+  } finally { k.done(); }
+});
+
+test("intel signals: quick add with validation, filters and themes, import from deals, tickets, feedback and CRM replies once", async () => {
+  const k = await intelKit();
+  try {
+    assert.equal((await k.j(`${k.X}/signals`, { title: "Snap changed something", type: "platform_change" })).status, 422); // needs the platform
+    assert.equal((await k.j(`${k.X}/signals`, { title: "x", type: "rumour" })).status, 422);
+    assert.equal((await k.j(`${k.X}/signals`, { title: "x", type: "trend", source_url: "ftp://x" })).status, 422);
+    const s = (await k.j(`${k.X}/signals`, { title: "Snap catalog feed rule change", type: "platform_change", platform: "Snap", tags: "Catalog Feeds, video", impact: "high", module: "product", source_url: "https://businesshelp.snapchat.com/x" })).body;
+    assert.deepEqual(s.tags, ["catalog-feeds", "video"]); assert.equal(s.date, new Date().toISOString().slice(0, 10));
+    await k.j(`${k.X}/signals`, { title: "More stores ask for video", type: "trend", tags: ["video"], impact: "low", date: "2026-01-02" });
+    const d = (await k.j(`${k.X}/signals`)).body;
+    assert.equal(d.total, 2); assert.deepEqual(d.themes.tags[0], { tag: "video", n: 2, high: 1 }); assert.equal(d.themes.types.find((t) => t.id === "trend").n, 1);
+    assert.equal((await k.j(`${k.X}/signals?tag=catalog-feeds`)).body.signals.length, 1);
+    assert.equal((await k.j(`${k.X}/signals?days=30`)).body.signals.length, 1);
+    assert.equal((await k.j(`${k.X}/signals/${s.id}`, { impact: "med" }, "PUT")).body.impact, "med");
+    // Import: a lost deal with a reason (one without is skipped), a feature-request ticket, product feedback, CRM triage labels.
+    const lost = (await k.j(`${k.W}/deals`, { name: "Lamsa", skus: 300 })).body;
+    await k.j(`${k.W}/deals/${lost.id}`, { stage: "lost", lost_reason: "Staying with Canva for now", competitor: "Canva" }, "PUT");
+    const noReason = (await k.j(`${k.W}/deals`, { name: "Quiet" })).body;
+    await k.j(`${k.W}/deals/${noReason.id}`, { stage: "lost" }, "PUT");
+    const t = k.st.addTicket(k.w.id, { channel: "Email", customer_name: "Reem", contact: "", store: "", category: "feature-request" });
+    k.st.addTicketMessage(k.w.id, t.id, { from: "customer", text: "Can you support Zid?" });
+    k.st.addOps("product_feedback", k.w.id, { text: "Need Arabic fonts", customer: "Abaya Lane", source: "demo", item_id: null, dismissed: false });
+    k.st.addOps("product_feedback", k.w.id, { text: "Dismissed one", customer: "", source: "", item_id: null, dismissed: true });
+    const crm = k.app.locals.crm, ct = crm.add(k.w.id, { store_name: "Oud House", domain: "oudhouse.sa" });
+    crm.addMessage({ workspace_id: k.w.id, contact_id: ct.id, channel: "email", direction: "in", body: "Not now, maybe after Ramadan", intent: "not_now", summary: "Wants to wait until after Ramadan" });
+    crm.addMessage({ workspace_id: k.w.id, contact_id: ct.id, channel: "email", direction: "in", body: "Interested!", intent: "interested", summary: "Interested" });
+    const imp = (await k.j(`${k.X}/signals/import`, {})).body;
+    assert.deepEqual(imp.added, { deal: 1, ticket: 1, feedback: 1, crm: 1 }); assert.deepEqual(imp.skipped, { deals: 1 });
+    const sig = k.st.db.intel_signals.filter((x) => x.workspace_id === k.w.id);
+    const fromDeal = sig.find((x) => x.origin === `deal:${lost.id}`);
+    assert.equal(fromDeal.type, "win_loss"); assert.deepEqual(fromDeal.tags, ["lost", "status-quo", "canva"]); assert.match(fromDeal.text, /Competitor named: Canva/);
+    assert.equal(sig.find((x) => x.origin === `ticket:${t.id}`).type, "customer_request");
+    assert.match(sig.find((x) => /^crm:/.test(x.origin)).title, /not now.*Oud House.*Ramadan/);
+    // Importing again adds nothing.
+    assert.equal((await k.j(`${k.X}/signals/import`, {})).body.imported, 0);
+    // Creative only views intel: no import.
+    const cre = await k.user("creative");
+    assert.equal((await k.as(cre, `${k.X}/signals/import`, "POST", {})).status, 403);
+    assert.equal((await k.j(`${k.X}/signals/${s.id}`, undefined, "DELETE")).status, 204);
+  } finally { k.done(); }
+});
+
+test("intel win/loss: won and lost deals by reason and competitor; names hidden without Sales view", async () => {
+  const { winLoss } = await import("../lib/intel.js");
+  const now = Date.parse("2026-11-03T10:00:00Z");
+  const wl = winLoss([
+    { id: "1", name: "A", stage: "paying", won_reason: "Arabic templates", stage_changed_at: "2026-11-01T00:00:00Z" },
+    { id: "2", name: "B", stage: "lost", lost_reason: "Price", competitor: "Rival", stage_changed_at: "2026-11-02T00:00:00Z" },
+    { id: "3", name: "C", stage: "lost", lost_reason: "price", competitor: "rival", stage_changed_at: "2026-10-01T00:00:00Z" },
+    { id: "4", name: "D", stage: "lost", lost_reason: "Staying with Canva", stage_changed_at: "2026-10-20T00:00:00Z" },
+    { id: "5", name: "E", stage: "lost", stage_changed_at: "2026-10-21T00:00:00Z" },
+    { id: "6", name: "F", stage: "demo" },
+  ], { now });
+  assert.equal(wl.won, 1); assert.equal(wl.lost, 4); assert.equal(wl.win_rate, 0.2); assert.equal(wl.lost_to_status_quo, 1); assert.equal(wl.missing_reason, 1);
+  assert.deepEqual(wl.by_reason[0], { label: "Price", won: 0, lost: 2 }); assert.deepEqual(wl.by_competitor[0], { label: "(no competitor named)", won: 1, lost: 2 });
+  assert.deepEqual(wl.by_competitor[1], { label: "Rival", won: 0, lost: 2 });
+  assert.equal(winLoss([{ id: "3", stage: "lost", stage_changed_at: "2026-10-01T00:00:00Z" }], { now, days: 7 }).rows.length, 0);
+  assert.equal(winLoss([], { now }).win_rate, null);
+  const k = await intelKit();
+  try {
+    const d = (await k.j(`${k.W}/deals`, { name: "Won Store", skus: 100 })).body;
+    await k.j(`${k.W}/deals/${d.id}`, { stage: "paying", won_reason: "Zid import", competitor: "Agency" }, "PUT");
+    const r = (await k.j(`${k.X}/winloss`)).body;
+    assert.equal(r.won, 1); assert.equal(r.rows[0].reason, "Zid import"); assert.equal(r.rows[0].competitor, "Agency"); assert.equal(r.can_edit_deals, true);
+    const cre = await k.user("creative"); // views intel, no Sales
+    const rc = await (await k.as(cre, `${k.X}/winloss`)).json();
+    assert.equal(rc.rows[0].name, `Deal #${d.id}`); assert.equal(rc.can_edit_deals, false);
+  } finally { k.done(); }
+});
+
+test("intel sizing: empty inputs give no numbers; typed inputs with sources give TAM/SAM/SOM and the path to $100M ARR", async () => {
+  const { sizing, cleanSizing } = await import("../lib/intel.js");
+  const { PLANS } = await import("../lib/sales.js");
+  const empty = sizing({});
+  for (const k2 of ["stores", "tam_stores", "sam_stores", "som_stores", "arpa_usd", "tam_arr_usd", "sam_arr_usd", "som_arr_usd", "mix_sum"]) assert.equal(empty[k2], null, k2);
+  assert.equal(empty.goal.blended_stores_needed, null); assert.equal(empty.goal.pct_of_sam, null);
+  // The path per plan comes only from the PLANS list prices.
+  assert.deepEqual(empty.goal.per_plan.map((p) => p.stores_needed), PLANS.map((p) => Math.ceil(100e6 / (p.usd * 12))));
+  const { out, err } = cleanSizing({ stores_salla: { value: "10,000", source: "Salla report (link)" }, stores_zid: { value: 5000, source: "" }, pct_ad_spend: { value: 40, source: "survey" }, pct_fit: { value: 50 }, pct_som: { value: 10 },
+    mix_starter: { value: 50 }, mix_growth: { value: 30 }, mix_scale: { value: 15 }, mix_enterprise: { value: 5 } });
+  assert.deepEqual(err, []);
+  const r = sizing(out);
+  assert.equal(r.stores, 15000); assert.equal(r.tam_stores, 6000); assert.equal(r.sam_stores, 3000); assert.equal(r.som_stores, 300);
+  const arpa = PLANS.reduce((a, p) => a + ({ Starter: 0.5, Growth: 0.3, Scale: 0.15, Enterprise: 0.05 })[p.name] * p.usd, 0);
+  assert.equal(r.arpa_usd, Math.round(arpa * 100) / 100); assert.equal(r.som_arr_usd, Math.round(300 * r.arpa_usd * 12));
+  assert.equal(r.goal.blended_stores_needed, Math.ceil(100e6 / (r.arpa_usd * 12)));
+  assert.ok(r.unsourced.includes("stores_zid") && !r.unsourced.includes("stores_salla"));
+  // A plan mix that doesn't add up to 100% gives no ARPA (and no money numbers).
+  const half = sizing({ ...out, mix_enterprise: { value: null } });
+  assert.equal(half.arpa_usd, null); assert.equal(half.tam_arr_usd, null); assert.equal(half.mix_sum, 95); assert.equal(half.tam_stores, 6000);
+  assert.ok(cleanSizing({ pct_fit: { value: 140 } }).err.length); assert.ok(cleanSizing({ stores_zid: { value: -1 } }).err.length);
+  const k = await intelKit();
+  try {
+    const g = (await k.j(`${k.X}/sizing`)).body;
+    assert.equal(g.result.tam_stores, null); assert.deepEqual(g.inputs, {});
+    const p = (await k.j(`${k.X}/sizing`, { inputs: { stores_salla: { value: 2000, source: "x" }, pct_ad_spend: { value: 25, source: "y" } } }, "PUT")).body;
+    assert.equal(p.result.tam_stores, 500); assert.equal(p.result.sam_stores, null);
+    assert.equal((await k.j(`${k.X}/sizing`, { inputs: { pct_som: { value: "lots" } } }, "PUT")).status, 422);
+    assert.equal((await k.j(`${k.X}/sizing`)).body.inputs.stores_salla.source, "x");
+  } finally { k.done(); }
+});
+
+test("intel weekly brief: demo AI gives the factual list (no invented facts), a person approves; a cited AI draft records accepted/edited/rejected", async () => {
+  const { checkBrief } = await import("../lib/intel.js");
+  const k = await intelKit();
+  try {
+    // Nothing recorded yet: a brief that only says [ADD].
+    const none = (await k.j(`${k.X}/briefs`, {})).body;
+    assert.match(none.text, /\[ADD\]/); assert.equal(none.items, 0);
+    await k.j(`${k.X}/briefs/${none.id}`, undefined, "DELETE");
+    const s1 = (await k.j(`${k.X}/signals`, { title: "TikTok catalog ads opened in KSA", type: "platform_change", platform: "TikTok", impact: "high", source_url: "https://ads.tiktok.com/x" })).body;
+    const c = (await k.j(`${k.X}/competitors`, { name: "Rival" })).body;
+    await k.j(`${k.X}/competitors/${c.id}`, { weaknesses: "No Zid" }, "PUT");
+    const b = (await k.j(`${k.X}/briefs`, { lang: "en" })).body;
+    assert.equal(b.status, "draft"); assert.equal(b.by_ai, false); assert.match(b.note, /factual list/);
+    assert.match(b.text, new RegExp(`TikTok catalog ads opened in KSA \\(TikTok\\) \\[S${s1.id}\\]`)); assert.match(b.text, /\[ADD\]/);
+    const refs = [...b.text.matchAll(/\[([SCD]\d+)\]/g)].map((m) => m[1]);
+    assert.ok(refs.length >= 2 && refs.every((r) => b.refs.includes(r)));
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "market_analyst" && e.outcome === "escalated"));
+    assert.ok(k.st.db.agent_runs.some((r) => r.agent_id === "market_analyst"));
+    // The Command Center shows it waiting; an edit citing an item that isn't in the data can't be approved.
+    assert.ok((await k.j(`${k.W}/command`)).body.needs.some((n) => n.module === "Market intel" && /waiting for approval/.test(n.text)));
+    const bad = (await k.j(`${k.X}/briefs/${b.id}`, { text: b.text + "\n- Rival raised prices by 40% [S999999]" }, "PUT")).body;
+    assert.ok(bad.issues.some((x) => /S999999/.test(x)) && bad.issues.some((x) => /40/.test(x)));
+    assert.equal((await k.j(`${k.X}/briefs/${b.id}/approve`, {})).status, 422);
+    await k.j(`${k.X}/briefs/${b.id}`, { text: b.text }, "PUT");
+    const ok = (await k.j(`${k.X}/briefs/${b.id}/approve`, {})).body;
+    assert.equal(ok.status, "approved"); assert.equal(ok.approved_by, "Owner (team password)");
+    assert.equal((await k.j(`${k.X}/briefs/${b.id}`, { text: "x" }, "PUT")).status, 422); // approved briefs are locked
+    assert.equal((await k.j(`${k.X}/briefs/${b.id}`, undefined, "DELETE")).status, 422);
+    assert.equal((await k.j(`${k.X}/briefs`)).body.briefs.find((x) => x.id === b.id).status, "approved");
+    assert.ok(!(await k.j(`${k.W}/command`)).body.needs.some((n) => /waiting for approval/.test(n.text)));
+    // checkBrief catches uncited bullets and numbers not in the data.
+    const chk = checkBrief("- Rival has 500 customers\n- TikTok opened [S1]", { since: "2026-11-01", until: "2026-11-03", items: [{ ref: "S1", title: "TikTok opened" }] });
+    assert.equal(chk.uncited, 1); assert.deepEqual(chk.unsourced_numbers, ["500"]); assert.deepEqual(chk.cited, ["S1"]);
+  } finally { k.done(); }
+  // An AI that cites the items: its text is kept; outcomes go to AI Workforce.
+  const citing = { name: "test", model: "test", async generate({ prompt }) {
+    const items = JSON.parse(/<items count="\d+">\n([\s\S]*)\n<\/items>/.exec(prompt)[1]);
+    assert.match(prompt, /Never add facts/); assert.match(prompt, /\[ADD\]/);
+    return /Write in Saudi Arabic/.test(prompt) ? `## العناوين\n- ${items[0].title} [${items[0].ref}]\n- المسؤول: [ADD]` : `## Headlines\n- ${items[0].title} [${items[0].ref}]\n## What we should do\n- Owner and date: [ADD]`;
+  } };
+  const k2 = await intelKit({ providerImpl: citing });
+  try {
+    await k2.j(`${k2.X}/signals`, { title: "Zid opened an app store category for ads", type: "platform_change", platform: "Zid" });
+    const ev = () => k2.st.db.agent_events.filter((e) => e.agent_id === "market_analyst").map((e) => e.outcome);
+    const a = (await k2.j(`${k2.X}/briefs`, {})).body;
+    assert.equal(a.by_ai, true); assert.match(a.text, /Zid opened an app store category for ads \[S\d+\]/); assert.deepEqual(a.issues, []);
+    await k2.j(`${k2.X}/briefs/${a.id}/approve`, {});
+    const e2 = (await k2.j(`${k2.X}/briefs`, { lang: "ar" })).body;
+    assert.equal(e2.lang, "ar"); assert.match(e2.text, /العناوين/);
+    await k2.j(`${k2.X}/briefs/${e2.id}`, { text: e2.text + "\n- ملاحظة: [ADD]" }, "PUT");
+    assert.equal((await k2.j(`${k2.X}/briefs/${e2.id}/approve`, {})).body.edited, true);
+    const r3 = (await k2.j(`${k2.X}/briefs`, {})).body;
+    await k2.j(`${k2.X}/briefs/${r3.id}/reject`, { reason: "too thin" });
+    assert.deepEqual(ev(), ["accepted", "edited", "rejected"]);
+    // Switched off in AI Workforce: no draft.
+    await k2.j("/api/workforce/agents/market_analyst", { level: 0 }, "PUT");
+    assert.equal((await k2.j(`${k2.X}/briefs`, {})).status, 422);
+  } finally { k2.done(); }
+});
+
+test("intel: AI Market analyst agent, Ask DPA AD tools, permissions per role, Command Center redaction", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  const ag = AGENTS.find((a) => a.id === "market_analyst");
+  assert.equal(ag.name, "AI Market analyst"); assert.equal(ag.max, 1); assert.equal(ag.module, "intel"); assert.ok(["Marketing", "Leadership"].includes(ag.team));
+  assert.equal(agentFor("POST", "/api/workspaces/1/intel/briefs"), "market_analyst");
+  const lt = TOOLS.find((t) => t.name === "list_market_signals"), at = TOOLS.find((t) => t.name === "add_market_signal");
+  assert.equal(lt.module, "intel"); assert.ok(!lt.write); assert.equal(at.module, "intel"); assert.equal(at.write, true); assert.equal(at.risk, "low"); assert.equal(typeof at.preview, "function");
+  assert.ok(MODULE_IDS.includes("intel"));
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.intel])), { owner: "edit", admin: "edit", manager: "edit", member: "edit", finance: "none", creative: "view", viewer: "view" });
+  assert.equal(moduleFor("GET", "/api/workspaces/1/intel/signals"), "intel");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-mir-"));
+  fs.writeFileSync(path.join(d, "db.json"), JSON.stringify({ roles: [{ id: "creative", name: "Creative", perms: { command: "view" } }] }));
+  assert.equal(new Store(d).db.roles.find((r) => r.id === "creative").perms.intel, "view"); fs.rmSync(d, { recursive: true, force: true });
+
+  let script = [];
+  const seen = [];
+  const fakeClient = async (p) => { seen.push(p); const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await intelKit({ assistantClient: fakeClient });
+  try {
+    await k.j(`${k.X}/signals`, { title: "Meta Advantage+ catalog change", type: "platform_change", platform: "Meta", tags: ["catalog"], impact: "high" });
+    script = [use("i1", "list_market_signals", { type: "platform_change" }), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.shown, 1); assert.equal(r.signals[0].platform, "Meta"); return say("One platform change: Meta."); }];
+    const a1 = await (await k.as(k.ck, "/api/assistant", "POST", { message: "Any platform changes?", ws: k.w.id })).json();
+    assert.match(a1.reply, /Meta/);
+    script = [use("i2", "add_market_signal", { title: "Salla raised app fees", type: "trend", impact: "med", source_url: "https://salla.sa/x" })];
+    const a2 = await (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Log that Salla raised app fees", ws: k.w.id })).json();
+    assert.match(a2.pending.summary, /Add the market signal "Salla raised app fees" \(trend, med impact\) from https:\/\/salla\.sa\/x/);
+    assert.equal(k.st.db.intel_signals.length, 1);
+    script = [say("Added.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    assert.ok(k.st.db.intel_signals.some((s) => s.title === "Salla raised app fees"));
+
+    // Permissions per role.
+    const [mem, lead, fin, view, cre] = await Promise.all(["member", "manager", "finance", "viewer", "creative"].map(k.user));
+    assert.equal((await k.as(fin, k.X)).status, 403); assert.equal((await k.as(fin, `${k.X}/signals`)).status, 403);
+    assert.equal((await k.as(view, `${k.X}/signals`)).status, 200); assert.equal((await k.as(view, `${k.X}/signals`, "POST", { title: "x", type: "trend" })).status, 403);
+    assert.equal((await k.as(cre, `${k.X}/competitors`)).status, 200); assert.equal((await k.as(cre, `${k.X}/competitors`, "POST", { name: "X" })).status, 403);
+    assert.equal((await k.as(mem, `${k.X}/signals`, "POST", { title: "Member signal", type: "trend" })).status, 201);
+    assert.equal((await k.as(lead, `${k.X}/sizing`, "PUT", { inputs: { pct_fit: { value: 20 } } })).status, 200);
+    // The Viewer's assistant gets the read tool but not the write tool; Finance gets neither.
+    script = [say("ok")]; await k.as(view, "/api/assistant", "POST", { message: "hi", ws: k.w.id });
+    assert.ok(seen.at(-1).tools.some((t) => t.name === "list_market_signals") && !seen.at(-1).tools.some((t) => t.name === "add_market_signal"));
+    script = [say("ok")]; await k.as(fin, "/api/assistant", "POST", { message: "hi", ws: k.w.id });
+    assert.ok(!seen.at(-1).tools.some((t) => /market_signal/.test(t.name)));
+    // Command Center: a brief waiting shows for Team members, not for Finance.
+    await k.j(`${k.X}/briefs`, {});
+    const cm = await (await k.as(mem, `${k.W}/command`)).json();
+    assert.ok(cm.needs.some((n) => n.module === "Market intel"));
+    const cf = await (await k.as(fin, `${k.W}/command`)).json();
+    assert.ok(!cf.needs.some((n) => n.module === "Market intel"));
+    assert.equal((await fetch(k.b2 + k.X)).status, 401);
+  } finally { k.done(); }
+});
+
+test("intel sample data loads clearly marked rows and removes them; deleting a workspace clears intel rows", async () => {
+  const k = await intelKit();
+  try {
+    const W = k.W;
+    await k.j(`${k.X}/signals`, { title: "Real signal", type: "trend" });
+    const loaded = (await k.j(`${W}/sample-data`, {})).body;
+    assert.equal(loaded.intel_competitors, 2); assert.ok(loaded.intel_signals >= 5);
+    const comps = (await k.j(`${k.X}/competitors`)).body;
+    assert.ok(comps.every((c) => c.sample && c.name.startsWith("Sample · ")));
+    // Imports from sample deals, tickets and feedback are sample rows too.
+    const imp = (await k.j(`${k.X}/signals/import`, {})).body;
+    assert.ok(imp.added.deal >= 1 && imp.added.ticket >= 1 && imp.added.feedback >= 1);
+    const wl = (await k.j(`${k.X}/winloss`)).body;
+    assert.ok(wl.won >= 3 && wl.lost >= 1); assert.ok(wl.by_competitor.some((r) => r.label === "Canva (in-house)"));
+    await k.j(`${k.X}/briefs`, {});
+    const rm = (await k.j(`${W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.intel_competitors, 2); assert.ok(rm.intel_signals >= 8);
+    assert.deepEqual(k.st.db.intel_signals.filter((s) => s.workspace_id === k.w.id).map((s) => s.title), ["Real signal"]);
+    assert.equal(k.st.db.intel_changes.filter((s) => s.workspace_id === k.w.id).length, 0);
+    // Deleting a workspace clears its intel_* rows (and keeps other workspaces').
+    k.st.db.intel_briefs.push({ id: "zb", workspace_id: "other" });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    for (const c of ["intel_competitors", "intel_changes", "intel_signals", "intel_briefs"]) assert.equal(k.st.db[c].filter((x) => x.workspace_id === k.w.id).length, 0, c);
+    assert.deepEqual(k.st.db.intel_briefs.map((b) => b.id), ["zb"]);
+  } finally { k.done(); }
+});

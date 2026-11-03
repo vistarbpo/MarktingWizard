@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance" };
+  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance" };
 // Pages that open for more than one module: the best level among them (each tab checks its own module).
 const ROUTE_ANY = { people: ["team", "payroll"] };
 const LEVEL_RANK = { none: 0, view: 1, edit: 2 };
@@ -103,7 +103,7 @@ const canSee = (route) => levelFor(route) !== "none";
 const NAV = [
   { route: "command", label: "Home", icon: "home" },
   { route: "sop", label: "SOP", icon: "check" },
-  { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["results", "ROAS results"]] },
+  { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["intel", "Market intel"], ["results", "ROAS results"]] },
   { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"], ["success", "Customer success"]] },
   { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
   { route: "product", label: "Product", icon: "box" },

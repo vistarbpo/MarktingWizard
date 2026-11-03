@@ -11,7 +11,7 @@ const cMoney = (n) => {
   return "$" + Math.round(n).toLocaleString("en-US");
 };
 const cNum = (v, unit) => unit === "$" ? cMoney(v) : unit === "%" ? `${+v.toFixed(1)}%` : `${+Number(v).toFixed(2)}${unit && !["$", "%"].includes(unit) ? " " + unit : ""}`;
-const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8", Creative: "#c026d3", "AI Workforce": "#7c3aed", "Paid Ads": "#e1306c" };
+const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8", Creative: "#c026d3", "AI Workforce": "#7c3aed", "Paid Ads": "#e1306c", "Market intel": "#b45309" };
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;

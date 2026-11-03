@@ -7,6 +7,7 @@ import { STARTER_ROADMAP } from "./product.js";
 import { saudiStarter } from "./ops.js";
 import { periodFor } from "./sop.js";
 import { loadSamplePeople, removeSamplePeople } from "./peopleroutes.js";
+import { loadSampleIntel, removeSampleIntel } from "./intel.js";
 
 const DAY = 864e5;
 const ago = (days, now) => new Date(now - days * DAY).toISOString();
@@ -60,6 +61,9 @@ export function loadSampleData(store, wsId, now = Date.now()) {
     ["Tabuk Outdoors", "Outdoor", "Tabuk", "Salla", 540, "lead", 2, 2], ["Asir Honey", "Food", "Abha", "Salla", 60, "lost", 40, 25],
   ];
   const order = ["lead", "contacted", "demo", "beta", "trial", "paying"];
+  // Win/loss reasons for Market intel (sample wording, not real customers).
+  const reasons = { "Asir Honey": { lost_reason: "Sample: catalog too small to need it yet; keeps doing designs in Canva", competitor: "Canva (in-house)" },
+    "Pearl Jewels": { won_reason: "Sample: Arabic templates and prices updated from the feed" }, "Coast Optics": { won_reason: "Sample: Zid catalog import" } };
   counts.deals = 0;
   for (const [name, category, city, platform, skus, stage, age, quiet] of deals) {
     const d = tag(store.addDeal(id, { name: S(name), category, city, platform, skus, contact_name: "", notes: "" }));
@@ -70,7 +74,7 @@ export function loadSampleData(store, wsId, now = Date.now()) {
     acts.push({ type: "ai_draft", by: "ai", task: "opener", text: "السلام عليكم، سوّينا لكم ٣ إعلانات من كتالوجكم… (sample draft)", at: age - 1 });
     if (stage !== "lead") acts.push({ type: "sent", by: "you", task: "opener", text: "Opener sent on WhatsApp (sample)", at: age - 1 });
     for (const a of acts) { const row = store.addDealActivity(d.id, { type: a.type, by: a.by, text: a.text, task: a.task || null }, false); row.created_at = ago(a.at, now); row.sample = true; }
-    Object.assign(d, { stage, created_at: ago(age, now), stage_changed_at: ago(quiet, now), last_activity_at: ago(quiet, now) });
+    Object.assign(d, { stage, created_at: ago(age, now), stage_changed_at: ago(quiet, now), last_activity_at: ago(quiet, now) }, reasons[name] || {});
     counts.deals++;
   }
 
@@ -201,6 +205,7 @@ export function loadSampleData(store, wsId, now = Date.now()) {
     if (!store.db.sop_checks.some((c) => c.workspace_id === id && c.period === period && c.step === key)) store.db.sop_checks.push({ workspace_id: id, period, step: key, done_at: ago(0, now), sample: true });
   }
 
+  Object.assign(counts, loadSampleIntel(store, id, now)); // Market intel: sample competitors and signals
   store.save();
   return counts;
 }
@@ -230,6 +235,7 @@ export function removeSampleData(store, wsId) {
   removed.roles = drop("hr_roles");
   for (const r of db.hr_roles) if (mine(r) && r.sample_holder) Object.assign(r, { holder: "", sample_holder: false, status: r.prev_status || "planned" });
   Object.assign(removed, removeSamplePeople(store, id));
+  Object.assign(removed, removeSampleIntel(store, id));
   store.save();
   return removed;
 }

@@ -12,6 +12,7 @@ export const MODULES = [
   { id: "crm", name: "Store CRM & outreach" },
   { id: "creative", name: "Creative Studio" },
   { id: "ads", name: "Paid Ads" },
+  { id: "intel", name: "Market intel (competitors, signals, win/loss, sizing, weekly brief)" },
   { id: "workforce", name: "AI Workforce (agents, levels, budgets)" },
   { id: "support", name: "AI Support" },
   { id: "results", name: "ROAS results" },
@@ -35,7 +36,7 @@ export const DEFAULT_ROLES = [
   { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none", compliance: "view", billing: "view" } },
   { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none", billing: "none", ads: "view" } },
   { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit", billing: "edit", ads: "view", success: "view" } },
-  { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view", ads: "view" } },
+  { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view", ads: "view", intel: "view" } },
   { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none", payroll: "none" } },
 ];
 
@@ -74,7 +75,7 @@ export function moduleFor(method, path) {
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
     deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team", people: "team", payroll: "payroll", billing: "billing", success: "success", customers: "support",
-    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", "sample-data": "admin" })[seg] || "admin";
+    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", intel: "intel", "sample-data": "admin" })[seg] || "admin";
 }
 
 // One short line for the activity log.

@@ -33,6 +33,8 @@ import { createBackups } from "./backup.js";
 import { createStatus } from "./status.js";
 import { complianceNeeds, mountCompliance, mountCompliancePublic } from "./complianceroutes.js";
 import { createSuccess } from "./success.js";
+import { createIntel, intelNeeds } from "./intel.js";
+import { mountIntel } from "./intelroutes.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -44,7 +46,7 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -59,6 +61,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const billing = createBillingService({ store, crm, outreach, ...billingOptions }); // Billing & customers: subscriptions, invoices, Moyasar, ZATCA, dunning
   const ads = createAds({ store, provider, workforce, crm, studio, cfg: adsConfig(process.env, password), ...adsOptions }); // Paid Ads: insights every 6 h in Live mode
   const success = createSuccess({ store, billing, crm, outreach, ...successOptions }); // Customer Success: health snapshots, churn alerts, renewals, NPS
+  const intel = createIntel({ store, ...intelOptions }); // Market intel: weekly checks of watched competitor pages (through products.js safeGet)
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -82,7 +85,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -214,6 +217,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountBilling(app, { store, billing, provider, workforce, crm });
   mountCustomersLite(app, { store, billing, crm });
   mountSuccess(app, { store, success, billing, crm, provider, workforce });
+  mountIntel(app, { store, crm, provider, workforce, intel });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -389,7 +393,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const out = {}, err = [];
     const str = (k, max = 200) => { if (b[k] !== undefined) out[k] = String(b[k] ?? "").trim().slice(0, max); };
     ["name", "category", "contact_name", "contact_phone", "contact_email"].forEach((k) => str(k));
-    str("notes", 4000); str("lost_reason", 500);
+    str("notes", 4000); str("lost_reason", 500); str("won_reason", 500); str("competitor", 120);
     if (b.city !== undefined) out.city = Object.hasOwn(CITIES, b.city) ? b.city : "Other";
     if (b.platform !== undefined) out.platform = PLATFORMS.includes(b.platform) ? b.platform : "Other";
     if (b.skus !== undefined) { const n = Math.round(Number(b.skus)); if (!(n >= 0 && n <= 10_000_000)) err.push("skus must be a number"); else out.skus = n; }
@@ -1176,7 +1180,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const d = { ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) };
     // The overview only shows what this person's role may see in each module.
     const can = (m) => levelOk(req.perms[m], "view");
-    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success" };
+    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel" };
     d.needs = [...peopleNeeds(store, w, app.locals.peopleClock ? app.locals.peopleClock() : Date.now()), ...d.needs];
     if (!can("creative")) d.creative = null;
     if (can("ads")) { const a = adsCommand(store, w); d.ads = a.summary; d.needs = [...a.needs, ...d.needs]; d.feed = [...a.feed, ...d.feed].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 14); } else d.ads = null;
@@ -1186,6 +1190,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
       d.needs = [...wsum.needs.filter((n) => !n.soft).slice(0, 3).map((n) => ({ module: "AI Workforce", route: "workforce", param: null, title: "AI Workforce", text: n.text })), ...d.needs];
     }
     if (can("compliance")) d.needs = [...complianceNeeds({ store, backups }).slice(0, 4), ...d.needs];
+    if (can("intel")) d.needs = [...intelNeeds(store, w), ...d.needs]; // competitor page changes not reviewed, weekly brief waiting for approval
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
     billingCommandHook(d, billing, w, can("billing")); // billed MRR and overdue invoices, failed payments, trials ending
     const ok = (label) => !MOD[label] || can(MOD[label]);
