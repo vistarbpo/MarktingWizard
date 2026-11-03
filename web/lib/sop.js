@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", studio: "Creative Studio", workforce: "AI Workforce", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", people: "Attendance & payroll", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", studio: "Creative Studio", workforce: "AI Workforce", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -22,6 +22,7 @@ export const SOP = [
       { id: "helpcenter", text: "Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat.", owner: "Founder", go: "support" },
       { id: "roadmapstart", text: "Product: load the starter roadmap and confirm what's Now, Next and Later.", owner: "Founder", go: "product" },
       { id: "people", text: "Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams.", owner: "Founder", go: "access" },
+      { id: "peoplesetup", text: "Attendance & payroll (India team): fill Settings (work state, shift and grace, weekly offs, leave policy, PF/ESI/PT/TDS options), add the state and festival holidays, then add every employee with joining date, salary (CTC), PF/ESI, tax regime and PAN/UAN, and link each person's login so they can punch in. Check every rate with your CA first.", owner: "Founder", go: "people" },
       { id: "agentowners", text: "AI Workforce: give every AI agent a person responsible, check each agent's level and monthly budget.", owner: "Founder", go: "workforce" },
       { id: "crmsetup", text: "Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first.", owner: "Head of Growth", go: "crm" },
       { id: "brandkit", text: "Creative Studio: fill the brand kit (colours, Arabic and English fonts, logo, do/don't, hashtags, who approves) and check the content pillars.", owner: "Head of Growth", go: "studio" },
@@ -75,6 +76,7 @@ export const SOP = [
       { id: "battlecards", text: "Refresh Competitor Battlecards with this month's competitor notes.", owner: "Sales", go: "playbooks", param: "competitor_battlecards" },
       { id: "roas", text: "ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs.", owner: "Customer Success", go: "results" },
       { id: "finance", text: "Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions.", owner: "Founder", go: "finance" },
+      { id: "payroll", text: "Attendance & payroll: regularize missing punch-outs, approve pending leave, then run last month's payroll, check the warnings, approve it, pay from the bank CSV and mark it paid. Deposit TDS by the 7th and PF/ESI by the 15th, and PT per your state (verify each date with the CA); post the run to Finance.", owner: "Founder", go: "people" },
       { id: "hiring", text: "Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent.", owner: "Founder", go: "team" },
       { id: "brief", text: "Update the Brief with anything that changed: pricing, features, markets, proof points.", owner: "Founder", go: "brief" },
     ],

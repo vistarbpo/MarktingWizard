@@ -15,6 +15,7 @@ import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel }
 import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { mountCreative } from "./creativeroutes.js";
+import { mountPeople, peopleNeeds } from "./peopleroutes.js";
 import { Workforce, agentFor, withAgent } from "./agents.js";
 import { mountWorkforce, workforceSummary } from "./agentroutes.js";
 import { claudeAssistantClient, createAssistant } from "./assistant.js";
@@ -188,6 +189,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountCreative(app, { store, provider, workforce, crm });
   mountStudio(app, { store, provider, studio });
   mountWorkforce(app, { store, workforce });
+  mountPeople(app, { store });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1150,7 +1152,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const d = { ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) };
     // The overview only shows what this person's role may see in each module.
     const can = (m) => levelOk(req.perms[m], "view");
-    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative" };
+    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll" };
+    d.needs = [...peopleNeeds(store, w, app.locals.peopleClock ? app.locals.peopleClock() : Date.now()), ...d.needs];
     if (!can("creative")) d.creative = null;
     if (can("workforce")) {
       const wsum = workforceSummary(store, workforce);

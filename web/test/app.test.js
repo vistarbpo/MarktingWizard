@@ -128,7 +128,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["workforce", "studio", "crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["people", "workforce", "studio", "crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -1978,4 +1978,322 @@ test("AI workforce office: every person gets a room, open roles show as hiring d
   const s = await json("/api/workforce");
   assert.ok(s.people.every((p) => typeof p.room === "string" && p.room));
   assert.ok(Array.isArray(s.hiring));
+});
+
+// ---------------------------------------------------------------- Attendance, leave and payroll (India)
+test("india payroll maths: PF cap, ESI threshold, PT slabs, new-regime TDS with 87A, gratuity", async () => {
+  const m = await import("../lib/india-payroll.js");
+  // EPF: 12% of PF wages capped at ₹15,000; employer 12% = EPS 8.33% (max ₹1,250) + EPF 3.67%
+  assert.deepEqual([m.pfFor(30000).pf_wages, m.pfFor(30000).employee, m.pfFor(30000).eps, m.pfFor(30000).employer_epf], [15000, 1800, 1250, 550]);
+  const full = m.pfFor(30000, { pf_on_full_basic: true });
+  assert.deepEqual([full.employee, full.eps, full.employer_epf], [3600, 1250, 2350]);
+  assert.deepEqual([m.pfFor(12000).employee, m.pfFor(12000).eps, m.pfFor(12000).employer_epf], [1440, 1000, 440]);
+  assert.equal(m.pfFor(30000, { edli_on: true }).edli, 75);
+  // ESI: covered at gross ≤ ₹21,000; 0.75% / 3.25%, rounded up
+  assert.deepEqual(m.esiFor(20000, 20000), { eligible: true, wages: 20000, employee: 150, employer: 650 });
+  assert.deepEqual([m.esiFor(21000, 21000).employee, m.esiFor(21000, 21000).employer], [158, 683]);
+  assert.equal(m.esiFor(21001, 21001).eligible, false);
+  // Professional Tax presets
+  assert.equal(m.professionalTax({ state: "KA", gross: 30000, month: "2026-06" }).amount, 200);
+  assert.equal(m.professionalTax({ state: "KA", gross: 30000, month: "2026-02" }).amount, 300);
+  assert.equal(m.professionalTax({ state: "KA", gross: 24999, month: "2026-06" }).amount, 0);
+  assert.equal(m.professionalTax({ state: "MH", gross: 9000, month: "2026-06", gender: "male" }).amount, 175);
+  assert.equal(m.professionalTax({ state: "MH", gross: 15000, month: "2026-02", gender: "male" }).amount, 300);
+  assert.equal(m.professionalTax({ state: "MH", gross: 20000, month: "2026-06", gender: "female" }).amount, 0);
+  assert.equal(m.professionalTax({ state: "DL", gross: 90000, month: "2026-06" }).amount, 0);
+  const tn = m.professionalTax({ state: "TN", gross: 30000, month: "2026-06" });
+  assert.equal(tn.amount, 0); assert.match(tn.warn, /No Professional Tax preset/); // never invented
+  assert.equal(m.professionalTax({ state: "TN", gross: 30000, month: "2026-06", custom: { slabs: [{ upto: 21000, amount: 0 }, { upto: Infinity, amount: 208 }] } }).amount, 208);
+  // New regime FY 2025-26: nil up to ₹12 lakh taxable (87A), marginal relief just above, 4% cess
+  assert.equal(m.incomeTax(1200000).total, 0);
+  assert.equal(m.incomeTax(1210000).total, 10400); // tax capped at the ₹10,000 over ₹12 lakh, + cess
+  assert.equal(m.incomeTax(1800000).total, 166400); // 20k + 40k + 60k + 40k = 1,60,000 + 6,400 cess
+  assert.equal(m.incomeTax(800000, "old").total, 75400);
+  assert.equal(m.incomeTax(500000, "old").total, 0);
+  assert.equal(m.incomeTax(6000000).surcharge_missing, true);
+  // Gratuity: 15/26 × last basic × years after 5 years; part year over 6 months rounds up
+  assert.deepEqual([m.gratuityPayable(30000, "2019-01-01", "2026-08-10").years, m.gratuityPayable(30000, "2019-01-01", "2026-08-10").amount], [8, 138462]);
+  assert.equal(m.gratuityPayable(30000, "2023-01-01", "2026-08-10").eligible, false);
+  // Structure: basic 50% of gross, HRA 40% of basic, rest special; CTC = gross + employer PF + gratuity
+  assert.deepEqual(m.structureFromGross(60000), { gross: 60000, basic: 30000, hra: 12000, special: 18000 });
+  assert.equal(m.structureFromGross(60000, { metro: true }).hra, 15000);
+  const st = m.structureFromCtc(758916);
+  assert.equal(st.gross, 60000); assert.equal(st.monthly_ctc, 758916 / 12);
+  assert.equal(m.fyOf("2026-03"), "2025-26"); assert.equal(m.fyOf("2026-04"), "2026-27");
+  const due = m.dueDates("2026-06", ["KA"]);
+  assert.deepEqual(due.map((d) => d.due), ["2026-07-07", "2026-07-15", "2026-07-15", "2026-07-20"]);
+  assert.ok(due.every((d) => d.verify));
+  assert.equal(m.dueDates("2026-03")[0].due, "2026-04-30");
+});
+
+test("payroll line: proration with loss-of-pay days, TDS spread, gratuity provision", async () => {
+  const { payLine, settingsOf } = await import("../lib/people.js");
+  const { incomeTax } = await import("../lib/india-payroll.js");
+  const settings = settingsOf({ brief: { company_name: "X" } });
+  const emp = { id: "e1", name: "T", doj: "2024-01-01", annual_ctc: 758916, work_state: "KA", pan: "ABCDE1234F" };
+  const l = payLine({ emp, month: "2026-06", settings, att: { totals: { lop: 2, missing_out: 0 }, days: [] } });
+  assert.deepEqual([l.days_in_month, l.lop_days, l.paid_days], [30, 2, 28]);
+  assert.deepEqual(l.earnings, { basic: 28000, hra: 11200, special: 16800 });
+  assert.equal(l.gross, 56000);
+  assert.equal(l.pf.employee, 1800); assert.equal(l.esi.eligible, false); assert.equal(l.pt, 200);
+  assert.equal(l.employer.gratuity, 1347); // 4.81% of earned basic
+  assert.equal(l.net, l.gross - l.pf.employee - l.pt - l.tds);
+  assert.equal(l.employer.cost, 56000 + 1800 + 1347);
+  // ₹13 lakh CTC: taxable stays under ₹12 lakh after the ₹75,000 standard deduction → no TDS
+  assert.equal(payLine({ emp: { ...emp, annual_ctc: 1300000 }, month: "2026-04", settings }).tds, 0);
+  // ₹24 lakh CTC: annualised tax spread over the 12 months from April
+  const hi = payLine({ emp: { ...emp, annual_ctc: 2400000 }, month: "2026-04", settings });
+  assert.equal(hi.tds, Math.round(incomeTax(hi.structure.gross * 12 - 75000).total / 12));
+  assert.ok(hi.tds > 0);
+  // Later in the year, what's already deducted is taken off and the rest spread over the months left
+  const later = payLine({ emp: { ...emp, annual_ctc: 2400000 }, month: "2026-10", settings, prior: Array.from({ length: 6 }, () => ({ taxable: hi.structure.gross, tds: 0, pt: 200 })) });
+  assert.equal(later.tds, Math.round(incomeTax(hi.structure.gross * 12 - 75000).total / 6));
+  // Months paid outside this dashboard: warned, and counted once entered as opening YTD
+  const noHistory = payLine({ emp: { ...emp, annual_ctc: 2400000 }, month: "2026-10", settings });
+  assert.ok(noHistory.warnings.some((w) => /6 earlier months of FY 2026-27/.test(w)));
+  const opened = payLine({ emp: { ...emp, annual_ctc: 2400000, opening_fy: "2026-27", opening_taxable: hi.structure.gross * 6, opening_tds: 0 }, month: "2026-10", settings });
+  assert.equal(opened.tds, later.tds); assert.ok(!opened.warnings.some((w) => /earlier month/.test(w)));
+  // Additions and deductions; reimbursements aren't taxed or in ESI
+  const adj = payLine({ emp, month: "2026-06", settings, adjustments: [{ kind: "bonus", label: "Bonus", amount: 5000 }, { kind: "reimbursement", label: "Travel", amount: 1000 }, { kind: "advance", label: "Advance", amount: 2000 }] });
+  assert.equal(adj.gross, 66000); assert.equal(adj.taxable, 65000); assert.equal(adj.net, 66000 - adj.pf.employee - adj.pt - adj.tds - 2000);
+  // Rates for another FY are flagged
+  assert.ok(payLine({ emp, month: "2026-06", settings }).warnings.some((w) => /FY 2025-26/.test(w)));
+});
+
+test("attendance rules: IST, late, half day, absent, weekly off, holiday, leave, missing punch-out", async () => {
+  const p = await import("../lib/people.js");
+  assert.deepEqual(p.istParts(Date.parse("2026-06-03T04:10:00Z")), { date: "2026-06-03", time: "09:40", dow: 3 });
+  assert.equal(p.istParts(Date.parse("2026-06-03T19:00:00Z")).date, "2026-06-04"); // 00:30 IST next day
+  assert.equal(p.istToIso("2026-06-03", "09:40"), "2026-06-03T04:10:00.000Z");
+  const settings = p.settingsOf({ brief: {} });
+  const emp = { id: "e", doj: "2025-01-01" };
+  const s = (inT, outT) => [{ id: "1", in_at: p.istToIso("2026-06-03", inT), out_at: outT ? p.istToIso("2026-06-03", outT) : null }];
+  const day = (sessions, extra = {}) => p.dayStatus({ emp, date: "2026-06-03", sessions, settings, today: "2026-06-10", ...extra });
+  assert.equal(day(s("09:40", "18:00")).status, "present"); // within 15 min grace of 09:30
+  assert.equal(day(s("09:50", "18:30")).status, "late");
+  assert.deepEqual([day(s("09:30", "14:30")).status, day(s("09:30", "14:30")).lop], ["half_day", 0.5]);
+  assert.deepEqual([day(s("09:30", "11:00")).status, day(s("09:30", "11:00")).lop], ["absent", 1]);
+  assert.deepEqual([day([]).status, day([]).lop], ["absent", 1]);
+  assert.equal(day(s("09:30", null)).status, "missing_out");
+  assert.equal(day(s("09:30", null), { today: "2026-06-03", nowMs: Date.parse("2026-06-03T06:00:00Z") }).status, "in");
+  assert.equal(day([], { today: "2026-06-03" }).status, "not_in");
+  assert.deepEqual([day(s("09:30", "11:00"), { today: "2026-06-03" }).status, day(s("09:30", "11:00"), { today: "2026-06-03" }).lop], ["out", 0]); // day not over yet
+  assert.equal(day([], { today: "2026-06-01" }).status, "upcoming");
+  assert.equal(p.dayStatus({ emp, date: "2026-06-07", sessions: [], settings, today: "2026-06-10" }).status, "weekly_off");
+  assert.equal(p.dayStatus({ emp, date: "2026-06-06", sessions: [], settings, today: "2026-06-10" }).status, "absent"); // Saturday works by default
+  assert.equal(p.dayStatus({ emp, date: "2026-06-06", sessions: [], settings: { ...settings, weekly_off: "sat_sun" }, today: "2026-06-10" }).status, "weekly_off");
+  assert.equal(p.isWeeklyOff("2026-06-13", "sun_alt_sat"), true); assert.equal(p.isWeeklyOff("2026-06-06", "sun_alt_sat"), false); // 2nd vs 1st Saturday
+  const hol = p.holidaysFor([], [2026]).find((h) => h.date === "2026-08-15");
+  assert.equal(hol.name, "Independence Day");
+  assert.equal(p.dayStatus({ emp, date: "2026-10-02", sessions: [], holiday: { name: "Gandhi Jayanti" }, settings, today: "2026-10-10" }).status, "holiday");
+  assert.equal(p.dayStatus({ emp, date: "2026-10-02", sessions: s("10:00", "18:00").map((x) => ({ ...x, in_at: p.istToIso("2026-10-02", "10:00"), out_at: p.istToIso("2026-10-02", "18:00") })), holiday: { name: "Gandhi Jayanti" }, settings, today: "2026-10-10" }).worked_off, true);
+  assert.deepEqual([day([], { leave: { type: "cl" } }).status, day([], { leave: { type: "cl" } }).lop], ["leave", 0]);
+  assert.equal(day([], { leave: { type: "lop" } }).lop, 1);
+  assert.deepEqual([day(s("09:30", "14:00"), { leave: { type: "cl", half_day: true } }).status, day(s("09:30", "14:00"), { leave: { type: "cl", half_day: true } }).lop], ["half_leave", 0]);
+  assert.equal(day([], { leave: { type: "cl", half_day: true } }).lop, 0.5);
+  assert.equal(p.dayStatus({ emp: { ...emp, attendance_from: "2026-06-05" }, date: "2026-06-03", sessions: [], settings, today: "2026-06-10" }).status, "untracked");
+  assert.equal(p.dayStatus({ emp: { id: "n", doj: "2026-06-05" }, date: "2026-06-03", sessions: [], settings, today: "2026-06-10" }).status, "na");
+  // Late rule: every 3 lates = half a day loss of pay
+  const late = [3, 4, 5].map((d) => ({ id: String(d), employee_id: "e", date: `2026-06-0${d}`, in_at: p.istToIso(`2026-06-0${d}`, "10:00"), out_at: p.istToIso(`2026-06-0${d}`, "19:00") }));
+  const att = p.monthAttendance({ employees: [{ ...emp, attendance_from: "2026-06-03", name: "E" }], month: "2026-06", punches: late, requests: [], holidays: [], settings: { ...settings, late_rule_on: true, late_rule_count: 3 }, today: "2026-06-05" });
+  assert.deepEqual([att.rows[0].totals.late, att.rows[0].totals.late_penalty, att.rows[0].totals.lop], [3, 0.5, 0.5]);
+});
+
+test("leave balances: monthly earned-leave accrual, carry-forward cap, yearly credits, comp-off", async () => {
+  const p = await import("../lib/people.js");
+  const settings = p.settingsOf({ brief: {} });
+  const emp = { id: "a", doj: "2025-03-10" };
+  const b = p.leaveBalances({ emp, settings, requests: [], asOf: "2026-06-04" });
+  const el = b.find((x) => x.type === "el"), cl = b.find((x) => x.type === "cl");
+  assert.deepEqual([el.carried, el.accrued, el.balance], [12.5, 6.25, 18.75]); // 10 months of 2025, Jan–May 2026
+  assert.equal(el.history.filter((h) => h.kind === "accrual").length, 5);
+  assert.equal(cl.balance, 8); assert.equal(cl.carried, 0);
+  const old = p.leaveBalances({ emp: { id: "o", doj: "2019-01-01" }, settings, requests: [], asOf: "2026-01-15" }).find((x) => x.type === "el");
+  assert.equal(old.carried, 45); // capped
+  const used = p.leaveBalances({ emp, settings, requests: [{ employee_id: "a", type: "cl", status: "approved", from: "2026-02-02", to: "2026-02-03", days: 2 }, { employee_id: "a", type: "cl", status: "pending", from: "2026-07-01", to: "2026-07-01", days: 1 }], asOf: "2026-06-04" }).find((x) => x.type === "cl");
+  assert.deepEqual([used.used, used.pending, used.balance, used.available], [2, 1, 6, 5]);
+  const co = p.leaveBalances({ emp, settings, requests: [], ledger: [{ employee_id: "a", type: "co", kind: "grant", days: 1, date: "2026-01-26", note: "Worked Republic Day" }], asOf: "2026-06-04" }).find((x) => x.type === "co");
+  assert.equal(co.balance, 1);
+  // Days in a request skip weekly offs and holidays; maternity counts calendar days
+  const hol = p.holidaysFor([], [2026]);
+  assert.equal(p.leaveDays({ from: "2026-08-14", to: "2026-08-17", type: "el", settings, holidays: hol }), 2); // Fri, (Sat 15 Aug holiday), (Sun), Mon
+  assert.equal(p.leaveDays({ from: "2026-08-14", to: "2026-08-17", type: "ml", settings, holidays: hol }), 4);
+});
+
+test("people & payroll API: IST punches, regularization audit, leave approvals, locked runs, finance, permissions", async () => {
+  const ws = await (await post("/api/workspaces", { company_name: "India Co" })).json();
+  const W = `/api/workspaces/${ws.id}`, ME = `/api/me/people/${ws.id}`;
+  let T = Date.parse("2026-06-03T04:10:00Z"); // Wednesday 09:40 IST
+  appRef.locals.peopleClock = () => T;
+  const signIn = async (email) => (await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email, password: "people-pass-1" }) })).headers.get("set-cookie").split(";")[0];
+  const as = (c, p, opts = {}) => fetch(base + p, { redirect: "manual", ...opts, headers: { "Content-Type": "application/json", cookie: c } });
+  const asPost = (c, p, body) => as(c, p, { method: "POST", body: JSON.stringify(body ?? {}) });
+  const mk = async (name, email, role) => (await post("/api/admin/users", { name, email, password: "people-pass-1", role_id: role })).json();
+  const uA = await mk("Asha Member", "asha@dpa.ad", "member"), uB = await mk("Bala Lead", "bala@dpa.ad", "member"), uF = await mk("Farah Finance", "farah-fin@dpa.ad", "finance");
+  const [ca, cb, cf] = [await signIn("asha@dpa.ad"), await signIn("bala@dpa.ad"), await signIn("farah-fin@dpa.ad")];
+  assert.ok(uF.id);
+
+  // New module: payroll, with role defaults
+  const roles = (await json("/api/admin")).roles;
+  assert.deepEqual(Object.fromEntries(roles.filter((r) => r.builtin).map((r) => [r.id, r.perms.payroll])), { owner: "edit", admin: "edit", manager: "none", member: "none", finance: "edit", creative: "none", viewer: "none" });
+
+  // Employees (Owner). PAN/UAN come back masked; salary only for Payroll viewers.
+  const lead = await (await post(`${W}/people/employees`, { name: "Bala Lead", code: "E1", doj: "2020-01-15", work_state: "KA", user_id: uB.id, annual_ctc: 2400000, pan: "abcde1234f", uan: "100200300400" })).json();
+  assert.equal(lead.pan, undefined); assert.equal(lead.pan_masked, "••••••234F"); assert.equal(lead.uan, undefined);
+  assert.equal(lead.attendance_from, "2026-06-03");
+  const asha = await (await post(`${W}/people/employees`, { name: "Asha Member", code: "E2", doj: "2025-03-10", work_state: "KA", user_id: uA.id, manager_id: lead.id, annual_ctc: 758916, gender: "female", attendance_from: "2026-06-01" })).json();
+  assert.equal((await post(`${W}/people/employees`, { name: "Dup", code: "E2", doj: "2025-01-01" })).status, 422);
+  assert.equal((await post(`${W}/people/employees`, { name: "Other", doj: "2025-01-01", user_id: uA.id })).status, 422); // one login, one employee
+  assert.equal((await post(`${W}/people/employees`, { name: "Bad PAN", doj: "2025-01-01", pan: "12345" })).status, 422);
+
+  // Self-service punch: server time, IST
+  const in1 = await asPost(ca, `${ME}/punch`);
+  assert.equal(in1.status, 201);
+  const in1j = await in1.json();
+  assert.deepEqual([in1j.action, in1j.date, in1j.time_ist, in1j.status.status, in1j.status.late], ["in", "2026-06-03", "09:40", "in", false]);
+  assert.equal((await asPost(ca, `${ME}/punch`)).status, 429); // double tap
+  T += 8.5 * 36e5;
+  const out1 = await (await asPost(ca, `${ME}/punch`)).json();
+  assert.deepEqual([out1.action, out1.time_ist], ["out", "18:10"]);
+  T = Date.parse("2026-06-03T04:35:00Z"); // 10:05 IST
+  const inB = await (await asPost(cb, `${ME}/punch`)).json();
+  assert.equal(inB.status.late, true);
+  assert.equal((await post(`${ME}/punch`)).status, 403); // the shared Owner login isn't an employee
+  const mine = await (await as(ca, ME)).json();
+  assert.equal(mine.linked, true); assert.equal(mine.employee.name, "Asha Member"); assert.equal(mine.sessions.length, 1);
+  assert.equal(mine.balances.find((b) => b.type === "el").balance, 18.75); // 2025: Mar–Dec, 2026: Jan–May (June not complete)
+
+  // Next day: attendance grid and statuses
+  T = Date.parse("2026-06-04T06:30:00Z"); // Thursday 12:00 IST
+  const att = await json(`${W}/people/attendance?month=2026-06`);
+  const rowA = att.rows.find((r) => r.employee_id === asha.id), rowB = att.rows.find((r) => r.employee_id === lead.id);
+  assert.deepEqual([rowA.days[0].status, rowA.days[1].status, rowA.days[2].status, rowA.days[3].status, rowA.days[4].status], ["absent", "absent", "present", "not_in", "upcoming"]);
+  assert.equal(rowB.days[2].status, "missing_out"); assert.equal(rowB.days[0].status, "untracked");
+  assert.equal(rowA.totals.lop, 2);
+
+  // Regularization keeps who, when and why
+  assert.equal((await post(`${W}/people/punches`, { employee_id: asha.id, date: "2026-06-01", in_time: "09:30", out_time: "18:00" })).status, 422); // reason required
+  assert.equal((await post(`${W}/people/punches`, { employee_id: asha.id, date: "2026-06-01", in_time: "18:00", out_time: "09:00", reason: "x" })).status, 422);
+  const reg = await (await post(`${W}/people/punches`, { employee_id: asha.id, date: "2026-06-01", in_time: "09:30", out_time: "18:00", reason: "Forgot to punch" })).json();
+  assert.deepEqual([reg.in_time, reg.out_time, reg.history[0].reason, reg.history[0].by_name, reg.history[0].action], ["09:30", "18:00", "Forgot to punch", "Owner (team password)", "added"]);
+  assert.equal((await post(`${W}/people/punches`, { employee_id: asha.id, date: "2026-06-01", in_time: "10:00", out_time: "11:00", reason: "dup" })).status, 422); // overlap
+  const bPunch = (await json(`${W}/people/day?employee_id=${lead.id}&date=2026-06-03`)).sessions[0];
+  assert.equal((await call(`${W}/people/punches/${bPunch.id}`, { method: "PUT", body: JSON.stringify({ out_time: "19:00" }) })).status, 422);
+  const fixed = await (await call(`${W}/people/punches/${bPunch.id}`, { method: "PUT", body: JSON.stringify({ out_time: "19:00", reason: "Left without punching out" }) })).json();
+  assert.deepEqual([fixed.history.length, fixed.history[0].before.out, fixed.history[0].after.out, fixed.history[0].after.in], [1, null, "19:00", "10:05"]);
+  assert.equal((await asPost(ca, `${W}/people/punches`, { employee_id: asha.id, date: "2026-06-02", in_time: "09:30", reason: "self" })).status, 403); // members view team only
+  const att2 = await json(`${W}/people/attendance?month=2026-06`);
+  assert.equal(att2.rows.find((r) => r.employee_id === asha.id).days[0].status, "present");
+  assert.equal(att2.rows.find((r) => r.employee_id === lead.id).days[2].status, "late");
+
+  // Leave: apply, manager approves, balance moves; reject; not enough balance
+  const lv = await (await asPost(ca, `${ME}/leave`, { type: "cl", from: "2026-06-10", to: "2026-06-10", reason: "Family" })).json();
+  assert.deepEqual([lv.status, lv.days], ["pending", 1]);
+  const cc = await (await as(ca, `${W}/command`)).json();
+  assert.ok(cc.needs.some((n) => n.module === "People" && /1 leave request to approve/.test(n.text)));
+  assert.ok(!cc.needs.some((n) => n.module === "Payroll")); // a member can't see payroll
+  assert.ok((await json(`${W}/command`)).needs.some((n) => n.module === "Payroll" && /May 2026 payroll not run/.test(n.text)));
+  assert.equal((await asPost(ca, `${ME}/approvals/${lv.id}`, { decision: "approve" })).status, 404); // not her own manager
+  const bView = await (await as(cb, ME)).json();
+  assert.equal(bView.approvals.length, 1);
+  assert.equal((await (await asPost(cb, `${ME}/approvals/${lv.id}`, { decision: "approve" })).json()).status, "approved");
+  assert.equal((await (await as(ca, ME)).json()).balances.find((b) => b.type === "cl").available, 7);
+  assert.equal((await json(`${W}/people/attendance?month=2026-06`)).rows.find((r) => r.employee_id === asha.id).days[9].status, "leave");
+  assert.equal((await asPost(ca, `${ME}/leave`, { type: "cl", from: "2026-06-10", to: "2026-06-10" })).status, 422); // overlap
+  const big = await asPost(ca, `${ME}/leave`, { type: "el", from: "2026-06-15", to: "2026-07-31" });
+  assert.equal(big.status, 422); assert.match((await big.json()).detail, /Loss of pay/);
+  const sl = await (await asPost(ca, `${ME}/leave`, { type: "sl", from: "2026-06-11", to: "2026-06-11", half_day: true })).json();
+  assert.equal(sl.days, 0.5);
+  assert.equal((await (await post(`${W}/people/leave/${sl.id}/decide`, { decision: "reject", note: "Busy week" })).json()).status, "rejected");
+  assert.equal((await (await as(ca, ME)).json()).balances.find((b) => b.type === "sl").available, 8);
+  assert.equal((await asPost(ca, `${ME}/leave`, { type: "ml", from: "2026-07-01", to: "2027-06-30" })).status, 422); // over 26 weeks
+  assert.equal((await post(`${W}/people/leave-ledger`, { employee_id: asha.id, kind: "grant", type: "co", days: 1, date: "2026-01-26", note: "Worked Republic Day" })).status, 201);
+  assert.equal((await json(`${W}/people/employees/${asha.id}/leave`)).balances.find((b) => b.type === "co").balance, 1);
+  // Unpaid leave in May for payroll
+  const lop = await (await post(`${W}/people/leave`, { employee_id: asha.id, type: "lop", from: "2026-05-12", to: "2026-05-13", reason: "Personal" })).json();
+  await post(`${W}/people/leave/${lop.id}/decide`, { decision: "approve" });
+  assert.equal((await post(`${W}/people/holidays`, { date: "2026-08-15", name: "Dup" })).status, 422); // national holiday built in
+  assert.equal((await post(`${W}/people/holidays`, { date: "2026-11-08", name: "Deepavali", kind: "festival" })).status, 201);
+
+  // Permissions: a member never sees salaries; finance can
+  const memEmps = (await (await as(ca, `${W}/people`)).json()).employees;
+  assert.ok(memEmps.every((e) => e.annual_ctc === undefined && e.pan_masked === undefined && e.structure === undefined));
+  assert.equal((await as(ca, `${W}/payroll`)).status, 403);
+  assert.equal((await as(ca, `${W}/payroll/employees`)).status, 403);
+  const finEmps = await (await as(cf, `${W}/payroll/employees`)).json();
+  assert.equal(finEmps.find((e) => e.id === asha.id).annual_ctc, 758916);
+  assert.equal((await as(cf, `${W}/people`)).status, 403); // finance has no attendance access by default
+  assert.equal((await (await as(cf, `${W}/payroll/employees/${asha.id}`, { method: "PUT", body: JSON.stringify({ tax_regime: "new", name: "Hacked" }) })).json()).name, "Asha Member");
+
+  // Payroll run for May: draft → approved (locked) → paid; reverse needs an Owner and a reason
+  assert.equal((await post(`${W}/payroll/runs`, { month: "2026-07" })).status, 422); // future month
+  const run = await (await post(`${W}/payroll/runs`, { month: "2026-05" })).json();
+  assert.equal(run.status, "draft");
+  assert.equal((await post(`${W}/payroll/runs`, { month: "2026-05" })).status, 409);
+  const la = run.lines.find((l) => l.employee_id === asha.id), lb = run.lines.find((l) => l.employee_id === lead.id);
+  assert.deepEqual([la.lop_days, la.paid_days, la.earnings.basic], [2, 29, Math.round(30000 * 29 / 31)]);
+  assert.equal(lb.lop_days, 0); assert.ok(lb.tds > 0); assert.equal(lb.pf.employee, 1800);
+  const adjd = await (await call(`${W}/payroll/runs/${run.id}/adjustments`, { method: "PUT", body: JSON.stringify({ employee_id: asha.id, items: [{ kind: "bonus", label: "Spot bonus", amount: 3000 }] }) })).json();
+  assert.equal(adjd.lines.find((l) => l.employee_id === asha.id).gross, la.gross + 3000);
+  assert.equal(adjd.statutory.pf.employee, adjd.totals.pf_employee);
+  assert.equal((await asPost(cf, `${W}/payroll/runs/${run.id}/approve`)).status, 200); // Finance role can approve
+  const approved = await json(`${W}/payroll/runs/${run.id}`);
+  assert.equal(approved.status, "approved");
+  assert.equal((await call(`${W}/payroll/runs/${run.id}/adjustments`, { method: "PUT", body: JSON.stringify({ employee_id: asha.id, items: [] }) })).status, 409);
+  assert.equal((await post(`${W}/payroll/runs/${run.id}/approve`)).status, 409);
+  assert.equal((await call(`${W}/payroll/runs/${run.id}`, { method: "DELETE" })).status, 409);
+  // Editing the salary after approval doesn't change the locked run
+  await call(`${W}/payroll/employees/${asha.id}`, { method: "PUT", body: JSON.stringify({ annual_ctc: 900000 }) });
+  assert.equal((await json(`${W}/payroll/runs/${run.id}`)).lines.find((l) => l.employee_id === asha.id).gross, la.gross + 3000);
+  // Outputs
+  const slip = await (await call(`${W}/payroll/runs/${run.id}/payslips/${asha.id}`)).text();
+  assert.match(slip, /India Co/); assert.match(slip, /May 2026/); assert.match(slip, /Spot bonus/); assert.match(slip, /Year to date/);
+  const csv = await (await call(`${W}/payroll/runs/${run.id}/bank.csv`)).text();
+  assert.match(csv, /^Employee code,Name,Bank account,IFSC,Net pay \(INR\)/); assert.match(csv, /\[ADD ACCOUNT NO\]/);
+  const ecr = await (await call(`${W}/payroll/runs/${run.id}/ecr.txt`)).text();
+  assert.match(ecr, /^100200300400#~#Bala Lead#~#/m);
+  assert.equal(approved.due[0].due, "2026-06-07"); assert.equal(approved.due[1].due, "2026-06-15");
+  // Self-service: own payslip only
+  const aMe = await (await as(ca, ME)).json();
+  assert.equal(aMe.payslips.length, 1); assert.equal(aMe.payslips[0].net, approved.lines.find((l) => l.employee_id === asha.id).net);
+  const ownSlip = await as(ca, `${ME}/payslips/${run.id}`);
+  assert.equal(ownSlip.status, 200); const ownHtml = await ownSlip.text();
+  assert.match(ownHtml, /Asha Member/); assert.doesNotMatch(ownHtml, /Bala Lead/);
+  assert.equal((await as(ca, `${W}/payroll/runs/${run.id}/payslips/${lead.id}`)).status, 403);
+  // Post to Finance: needs a typed INR→SAR rate
+  assert.equal((await asPost(cf, `${W}/payroll/runs/${run.id}/post-finance`, {})).status, 422);
+  const posted = await (await asPost(cf, `${W}/payroll/runs/${run.id}/post-finance`, { inr_sar_rate: 0.044 })).json();
+  assert.equal(posted.expense.category, "payroll"); assert.equal(posted.expense.amount_sar, Math.round(approved.totals.employer_cost * 0.044 * 100) / 100);
+  assert.equal((await asPost(cf, `${W}/payroll/runs/${run.id}/post-finance`, { inr_sar_rate: 0.044 })).status, 409);
+  assert.equal((await (await post(`${W}/payroll/runs/${run.id}/paid`)).json()).status, "paid");
+  assert.equal((await asPost(cf, `${W}/payroll/runs/${run.id}/reverse`, { reason: "Wrong" })).status, 403); // Owner only
+  assert.equal((await post(`${W}/payroll/runs/${run.id}/reverse`, {})).status, 422);
+  const rev = await (await post(`${W}/payroll/runs/${run.id}/reverse`, { reason: "Bonus entered twice" })).json();
+  assert.equal(rev.status, "reversed"); assert.equal(rev.finance_expense_removed, true);
+  assert.ok(!(await json(`${W}/finance`)).expenses.some((e) => e.id === posted.expense.id));
+  assert.equal((await as(ca, `${ME}/payslips/${run.id}`)).status, 404);
+  assert.equal((await post(`${W}/payroll/runs`, { month: "2026-05" })).status, 201); // can run again
+  // Audit trail of the run
+  assert.deepEqual(rev.history.map((h) => h.action), ["created", "adjusted", "approved", "posted to Finance", "paid", "reversed"]);
+  // Settings: rates need payroll edit; leave policy is editable; bad hours refused
+  assert.equal((await call(`${W}/people/settings`, { method: "PUT", body: JSON.stringify({ half_day_hours: 9 }) })).status, 422);
+  const st = await (await call(`${W}/people/settings`, { method: "PUT", body: JSON.stringify({ weekly_off: "sun_alt_sat", rates: { pf_on_full_basic: true }, leave: { el: { carry_cap: 30 } } }) })).json();
+  assert.deepEqual([st.weekly_off, st.rates.pf_on_full_basic, st.leave.el.carry_cap, st.leave.el.per_month], ["sun_alt_sat", true, 30, 1.25]);
+  delete appRef.locals.peopleClock;
+});
+
+test("people sample data: sample employees, punches and leave load and remove cleanly", async () => {
+  const ws = await (await post("/api/workspaces", { company_name: "Sample India" })).json();
+  const W = `/api/workspaces/${ws.id}`;
+  const r = await (await post(`${W}/sample-data`)).json();
+  assert.equal(r.employees, 4);
+  const d = await json(`${W}/people`);
+  assert.ok(d.employees.every((e) => e.sample && e.name.startsWith("Sample · ")));
+  assert.equal(d.pending_leave.length, 1);
+  const att = await json(`${W}/people/attendance`);
+  assert.ok(att.rows.length === 4);
+  const removed = await (await call(`${W}/sample-data`, { method: "DELETE" })).json();
+  assert.equal(removed.employees, 4); assert.ok(removed.people_punches > 0);
+  assert.equal((await json(`${W}/people`)).employees.length, 0);
+  assert.ok(!store.db.people_punches.some((p) => p.workspace_id === ws.id));
 });

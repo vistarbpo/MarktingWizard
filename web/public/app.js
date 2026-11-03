@@ -91,8 +91,11 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
-const levelFor = (route) => (S.me ? S.me.perms[ROUTE_MODULE[route] || "command"] || "none" : "edit");
+  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", people: "team", access: "admin" };
+// Pages that open for more than one module: the best level among them (each tab checks its own module).
+const ROUTE_ANY = { people: ["team", "payroll"] };
+const LEVEL_RANK = { none: 0, view: 1, edit: 2 };
+const levelFor = (route) => (S.me ? (ROUTE_ANY[route] || [ROUTE_MODULE[route] || "command"]).map((m) => S.me.perms[m] || "none").sort((a, b) => LEVEL_RANK[b] - LEVEL_RANK[a])[0] : "edit");
 const canSee = (route) => levelFor(route) !== "none";
 /* ---------------------------------------------------------------- sidebar menu
    One list drives the menu. A group folds open; the group holding the current page opens itself.

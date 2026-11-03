@@ -15,7 +15,7 @@ npm run sop:md                                           # regenerate docs/SOP.m
 
 - **Deploy:** push to `main` on GitHub `vistarbpo/MarktingWizard`. Hostinger auto-deploys `main` (root dir `web`, entry `server.js`, Node 22, Express). Check a deploy by fetching `https://wizard.dpa.ad/app.css` for a new CSS rule, plus `/healthz`. Other pages need a login.
 - **Env vars** live in hPanel (Websites → wizard.dpa.ad → Node.js → Environment variables), never in git: `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, optional `MWIZ_MODEL`, `DATA_DIR`, and the Store CRM channels (`SMTP_*`, `MAIL_FROM`, `MAIL_REPLY_TO`, `IMAP_*`, `WA_TOKEN`, `WA_PHONE_ID`, `WA_VERIFY_TOKEN`, `WA_APP_SECRET`, `PUBLIC_URL`, `COMPANY_ADDRESS`, `INBOUND_SECRET`) and Creative Studio publishing (`TOKEN_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, optional `META_GRAPH_VERSION`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, optional `LINKEDIN_ORG_ID` and `LINKEDIN_VERSION`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `YOUTUBE_AUDITED`, `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_AUDITED`). Set `TOKEN_KEY` before connecting accounts: without it the token key comes from `DASHBOARD_PASSWORD`, and rotating the password means reconnecting every account. The full list is commented at the top of `web/server.js`.
-- **Data** is not in git: `DATA_DIR` (default `~/marketing-wizard-data`) holds `db.json` (everything except the CRM) and `crm.json` (stores, campaigns, messages; batched writes, flushed on SIGTERM), plus `media/` (Creative Studio uploads and renders, served publicly at `/media/<random>.<ext>`). There are **no backups yet**.
+- **Data** is not in git: `DATA_DIR` (default `~/marketing-wizard-data`) holds `db.json` (everything except the CRM, including employees, punches, leave and payroll runs) and `crm.json` (stores, campaigns, messages; batched writes, flushed on SIGTERM), plus `media/` (Creative Studio uploads and renders, served publicly at `/media/<random>.<ext>`). There are **no backups yet**.
 - Without `ANTHROPIC_API_KEY` the app runs a demo provider (sidebar shows "Demo mode").
 - To stop a local server: `for p in $(pgrep -f "^node server.js"); do kill $p; done`. Don't use `pkill -f "node server.js"`: it kills the shell running it.
 
@@ -58,6 +58,11 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - `outreach.js`: senders (SMTP via nodemailer, WhatsApp Cloud API), the scheduler `tick()`, inbound handling and AI triage, IMAP polling.
   - `crmroutes.js`: CRM HTTP routes.
   - `products.js`: product samples per store for "your products as ads" (CSV, Shopify `/products.json`, schema.org JSON-LD / `og:image` from the store's pages), the SSRF-safe fetcher (`safeGet`, DNS checked on every hop and at connect time) and the background fetch jobs. Tests inject `productOptions: { fetchImpl, lookup }` into `createApp`; never hit the real internet.
+- **Attendance & payroll (India)** (route `people`, docs in `docs/hr-india.md`):
+  - `india-payroll.js`: every statutory rate in one place (FY 2025-26, "verify with your CA"): EPF/EPS/EDLI, ESI, Professional Tax presets (Karnataka, Maharashtra; Delhi, Haryana, UP have none; other states are entered by the company), new/old-regime income tax with 87A, gratuity, salary structure from CTC, due dates. Settings can override each rate.
+  - `people.js`: IST helpers, daily attendance status rules, month grid, leave types and balances (accrual, carry-forward, comp-off ledger), payroll line (proration, PF, ESI, PT, TDS estimate, employer cost), statutory summary, bank CSV, ECR text, payslip HTML.
+  - `peopleroutes.js`: `/api/workspaces/:ws/people/...` (module `team`), `/api/workspaces/:ws/payroll/...` (module `payroll`), self-service `/api/me/people/:ws/...` (own record only), plus `peopleNeeds()` for the Command Center and the sample employees. Tests can fix the clock with `app.locals.peopleClock`.
+  - Collections in `db.json`: `people_employees`, `people_punches`, `people_leave`, `people_leave_ledger`, `people_holidays`, `people_runs`; settings on `ws.people`.
 - **Creative Studio:**
   - `creative.js`: channels and their limits, statuses, pillars, the Saudi season calendar, brand kit, content items and variants, rule-based checks before approval, the email renderer (blocks → table HTML, RTL; the `store_products` block draws each recipient's own products from `vars.contact.products_sample`), AI prompts.
   - `creativeroutes.js`: routes, approvals (approver roles in the brand kit), "download and post" log, and `emailDesign()` which Store CRM uses to send approved designed emails.
@@ -99,6 +104,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - phases 2–3: media library, 8 image templates, reel builder (rendered in the browser), connected accounts by OAuth, publishing to Instagram, Facebook, LinkedIn, YouTube and TikTok, publish log with retries, results every 6 h
   - publishing is **Test mode by default** and auto-publish is off: switch to Live in Studio → Accounts only after the platforms' app reviews (listed in the plan doc, section 8)
   - phase 4a built: "your products as ads" emails and WhatsApp headers (store product samples in the CRM); still planned: content A/B tests and real rendered designs from DPA AD's render API
+- **Attendance & payroll (India):** built for the team employed in India (punching in IST, leave, monthly payroll with PF/ESI/PT/TDS estimates, payslips, bank CSV, statutory dues, post to Finance at a typed INR→SAR rate). New access module `payroll` (Owner, Admin, Finance: edit; others none); attendance and leave admin use `team`. Salaries are stripped from employee records without Payroll view. Approved runs are locked; only an Owner reverses one, with a reason. All rates are FY 2025-26 defaults until the CA confirms them; see `docs/hr-india.md` for what the founder must confirm. No new env vars.
 - **Sales system:** `docs/dpa-ad-sales-system.md`, DPA AD's own funnel targets (editable in Store CRM → Settings). External masterclass notes were only a reference.
 - **Still to do:**
   1. Nightly backups of `DATA_DIR` and a download-backup button.
@@ -112,6 +118,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - create a personal Owner login and rotate `DASHBOARD_PASSWORD`
   - set up the cold-email domain, mailbox, SPF/DKIM/DMARC and warm-up
   - set up WhatsApp Business (Cloud API) and get the templates approved
+  - confirm every payroll rate, the state PT slabs and the leave policy with the CA (`docs/hr-india.md`), add the state and festival holidays, then add the India employees and link their logins
   - import the 30k Salla store list after confirming its source and consent under PDPL
   - remove the sample data
   - enter real finance data and costs
