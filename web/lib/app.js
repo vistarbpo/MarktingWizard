@@ -35,6 +35,8 @@ import { complianceNeeds, mountCompliance, mountCompliancePublic } from "./compl
 import { createSuccess } from "./success.js";
 import { createIntel, intelNeeds } from "./intel.js";
 import { mountIntel } from "./intelroutes.js";
+import { createOkr, okrHome, okrNeeds } from "./okr.js";
+import { mountOkr } from "./okrroutes.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -46,7 +48,10 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+// Command Center need labels → the module a person needs View on to see them.
+const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", "AI Workforce": "workforce" };
+
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -62,6 +67,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const ads = createAds({ store, provider, workforce, crm, studio, cfg: adsConfig(process.env, password), ...adsOptions }); // Paid Ads: insights every 6 h in Live mode
   const success = createSuccess({ store, billing, crm, outreach, ...successOptions }); // Customer Success: health snapshots, churn alerts, renewals, NPS
   const intel = createIntel({ store, ...intelOptions }); // Market intel: weekly checks of watched competitor pages (through products.js safeGet)
+  // Goals & review: the weekly business review is drafted every Monday (Riyadh) with the Command Center needs of the day.
+  const okr = createOkr({ store, crm, provider, workforce, needs: (w) => commandData(w, () => true, null).needs, ...okrOptions });
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -85,7 +92,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -218,6 +225,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountCustomersLite(app, { store, billing, crm });
   mountSuccess(app, { store, success, billing, crm, provider, workforce });
   mountIntel(app, { store, crm, provider, workforce, intel });
+  mountOkr(app, { store, crm, provider, workforce, okr, needModule: (label) => NEED_MODULE[label] || null });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1175,12 +1183,11 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   });
 
   // ---- command center + sample data for every module
-  app.get("/api/workspaces/:ws/command", (req, res) => {
-    const w = ws(req, res); if (!w) return;
+  // The overview, built for one person: `can(module)` says what their role may see; `user` is null for the weekly
+  // business review job (it stores every need and hides the ones a reader can't see when they open the review).
+  function commandData(w, can, user) {
     const d = { ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) };
-    // The overview only shows what this person's role may see in each module.
-    const can = (m) => levelOk(req.perms[m], "view");
-    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel" };
+    const MOD = NEED_MODULE;
     d.needs = [...peopleNeeds(store, w, app.locals.peopleClock ? app.locals.peopleClock() : Date.now()), ...d.needs];
     if (!can("creative")) d.creative = null;
     if (can("ads")) { const a = adsCommand(store, w); d.ads = a.summary; d.needs = [...a.needs, ...d.needs]; d.feed = [...a.feed, ...d.feed].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 14); } else d.ads = null;
@@ -1191,6 +1198,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     }
     if (can("compliance")) d.needs = [...complianceNeeds({ store, backups }).slice(0, 4), ...d.needs];
     if (can("intel")) d.needs = [...intelNeeds(store, w), ...d.needs]; // competitor page changes not reviewed, weekly brief waiting for approval
+    // Goals & review: this quarter's company objectives (metrics the person can't see are left out), stale check-ins, a review waiting.
+    if (can("okr") && user) { d.okr = okrHome(store, crm, w, permsOf(user), okr.now()); d.needs = [...okrNeeds(store, w, { user, now: okr.now() }), ...d.needs]; } else d.okr = null;
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
     billingCommandHook(d, billing, w, can("billing")); // billed MRR and overdue invoices, failed payments, trials ending
     const ok = (label) => !MOD[label] || can(MOD[label]);
@@ -1198,11 +1207,16 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (!can("team")) d.team = { ...d.team, payroll_sar: 0, candidates: 0, hidden: true };
     if (!can("sales")) { d.revenue = { ...d.revenue, open_value: 0, expected_mrr: 0, hidden: true }; d.close = null; }
     if (!can("crm")) d.outreach = null;
-    d.me = { name: req.user.id === "owner" ? "" : req.user.name.split(" ")[0] };
+    d.me = { name: !user || user.id === "owner" ? "" : user.name.split(" ")[0] };
     d.needs = d.needs.filter((n) => ok(n.module));
     d.feed = d.feed.filter((f) => ok(f.module));
     d.work = { ...d.work, modules: d.work.modules.filter((m) => ok(m.module)) };
-    res.json(d);
+    return d;
+  }
+  app.get("/api/workspaces/:ws/command", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    // The overview only shows what this person's role may see in each module.
+    res.json(commandData(w, (m) => levelOk(req.perms[m], "view"), req.user));
   });
   app.post("/api/workspaces/:ws/sample-data", (req, res) => {
     const w = ws(req, res); if (!w) return;

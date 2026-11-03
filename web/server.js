@@ -49,6 +49,7 @@ app.locals.status.start({ url: (process.env.PUBLIC_URL || `http://127.0.0.1:${po
 app.locals.billing.start(); // Billing: hourly run issues due invoices, ends trials, bills overage, sends dunning reminders
 app.locals.ads.start(); // Paid Ads: pulls insights every 6 hours for Live workspaces, then runs the guardrails and the Finance push
 app.locals.success.start(); // Customer Success: hourly (safe to repeat) daily health snapshots, churn alerts, queued surveys inside Saudi hours
+app.locals.okr.start(); // Goals & review: hourly (safe to repeat) drafts the weekly business review from Monday 07:00 Riyadh
 app.locals.intel.start(); // Market intel: every 6 hours, fetches watched competitor pages that are due (each at most once a week, 2 at a time)
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>

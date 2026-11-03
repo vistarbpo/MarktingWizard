@@ -59,6 +59,9 @@ export const AGENTS = [
     job: "Writes job posts, screens candidates against the role, drafts messages.", levels: { 1: "Screens and drafts; a person interviews and decides." } },
   { id: "roas_analyst", name: "AI Results analyst", team: "Customer Success", module: "results", route: "results", max: 1, level: 1, budget: 10,
     job: "Turns ROAS results into case studies (real numbers only).", levels: { 1: "Drafts; a person gets the store's permission and publishes." } },
+  { id: "chief_of_staff", name: "AI Chief of staff", team: "Leadership", module: "okr", route: "okr", max: 1, level: 1, budget: 15,
+    job: "Writes the short narrative of the Monday weekly business review from its metric rows, OKR changes, needs, wins/losses, incidents and runway, citing every row and writing [ADD] where context is missing; suggests OKR grades.",
+    levels: { 1: "Drafts only; an Owner or Admin reads, edits and marks the review reviewed. People grade objectives. The metrics themselves are computed, not written by AI." } },
   { id: "compliance_officer", name: "AI Compliance officer", team: "Leadership", module: "compliance", route: "compliance", max: 1, level: 1, budget: 10,
     job: "Drafts security policies and customer-facing status-page updates, and flags overdue data requests and breach deadlines.",
     levels: { 1: "Drafts and flags; a person edits, approves and publishes." } },
@@ -87,6 +90,7 @@ export function agentFor(method, path) {
   if (seg === "creative") return /\/(plan|ideas)$/.test(p) ? "creative_strategist" : "creative_copywriter";
   if (seg === "crm") return /ai-write/.test(p) ? "crm_sequence_writer" : "crm_triage";
   if (seg === "intel") return "market_analyst";
+  if (seg === "okr") return "chief_of_staff";
   if (seg === "success") return /\/ai\/(expansion|renewal)$/.test(p) ? "success_writer" : "retention_watcher";
   return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }

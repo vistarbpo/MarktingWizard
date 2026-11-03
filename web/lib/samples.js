@@ -8,6 +8,7 @@ import { saudiStarter } from "./ops.js";
 import { periodFor } from "./sop.js";
 import { loadSamplePeople, removeSamplePeople } from "./peopleroutes.js";
 import { loadSampleIntel, removeSampleIntel } from "./intel.js";
+import { loadSampleOkr, removeSampleOkr } from "./okr.js";
 
 const DAY = 864e5;
 const ago = (days, now) => new Date(now - days * DAY).toISOString();
@@ -206,6 +207,7 @@ export function loadSampleData(store, wsId, now = Date.now()) {
   }
 
   Object.assign(counts, loadSampleIntel(store, id, now)); // Market intel: sample competitors and signals
+  Object.assign(counts, loadSampleOkr(store, id, now)); // Goals & review: sample objectives linked to the sample metrics
   store.save();
   return counts;
 }
@@ -236,6 +238,7 @@ export function removeSampleData(store, wsId) {
   for (const r of db.hr_roles) if (mine(r) && r.sample_holder) Object.assign(r, { holder: "", sample_holder: false, status: r.prev_status || "planned" });
   Object.assign(removed, removeSamplePeople(store, id));
   Object.assign(removed, removeSampleIntel(store, id));
+  Object.assign(removed, removeSampleOkr(store, id));
   store.save();
   return removed;
 }
