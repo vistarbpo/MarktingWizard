@@ -109,7 +109,7 @@ function ptDetail(p) {
         ${p.customer_info ? `<span>Customer: <span dir="auto">${esc(p.customer_info.label)}</span></span>` : ""}${p.store_info ? `<span>CRM store: <span dir="auto">${esc(p.store_info.label)}</span></span>` : ""}</div>
       ${p.notes ? `<p class="s-small pt-text" dir="auto">${esc(p.notes)}</p>` : ""}</div>
       ${edit ? `<div class="row gap-8"><button class="btn btn-sm" data-ptact="edit">Edit</button><button class="btn btn-sm btn-ghost btn-danger" data-ptact="delete">Delete</button></div>` : ""}</div></section>`;
-  const tiles = [ptTile("Clicks", f.clicks, `${f.hits} visits in all`), ptTile("Leads", f.leads, `${f.stores} stores, ${f.deals} deals`), ptTile("Trials", f.trials, "Billing customers in trial"), ptTile("Paying", f.paying, `${f.customers} customers referred`),
+  const tiles = [ptTile("Clicks", f.clicks, `${f.hits} visits in all`), ptTile("Leads", f.leads, `${f.stores} stores, ${f.deals} deals`), ptTile("Trials", f.trials, "Billing customers in trial"), ptTile("Paying", f.paying, `${f.customers} customer${f.customers === 1 ? "" : "s"} referred`),
     ...(f.mrr_sar !== undefined ? [ptTile("MRR referred", ptSar(f.mrr_sar), "paying customers")] : [])];
   return `<div class="stack" style="gap:16px">${head}<section class="s-kpis">${tiles.join("")}</section>${ptLinks(p, edit)}${ptAttributed(p)}${p.money ? ptLines(p) : ""}
     ${p.statements.length ? `<section class="card card-pad"><h3 style="margin:0">Statements</h3>${ptStatements(p.statements, false)}</section>` : ""}

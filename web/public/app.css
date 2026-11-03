@@ -1228,7 +1228,7 @@ textarea.mt-fbody { width: 100%; height: auto; min-height: 260px; }
 .pt-fs { border: 0; margin: 0; padding: 0; min-width: 0; }
 .pt-fs legend { font-size: var(--fs-sm); font-weight: 500; margin-bottom: 6px; padding: 0; }
 .pt-agree { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
-.pt-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: var(--s-3); overflow-x: auto; padding-bottom: var(--s-2); }
+.pt-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: var(--s-3); overflow-x: auto; padding-bottom: var(--s-2); }
 .pt-col { min-height: 160px; min-width: 0; }
 .pt-card { cursor: pointer; }
 .pt-name { overflow-wrap: anywhere; }
@@ -1258,7 +1258,7 @@ textarea.pt-dbody { width: 100%; height: auto; min-height: 220px; font-size: var
 .pt-hit { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); padding: 6px 8px; cursor: pointer; font: inherit; color: inherit; }
 .pt-hit:hover { border-color: var(--accent); }
 .pt-chk { align-self: end; }
-@media (min-width: 1500px) { .pt-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
+@media (min-width: 1200px) { .pt-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
 @media (max-width: 760px) {
   .pt-form { grid-template-columns: minmax(0, 1fr); }
   .pt-agree { grid-template-columns: repeat(2, minmax(0, 1fr)); }
