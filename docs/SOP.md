@@ -21,14 +21,15 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 7 | Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat. | Founder | AI Support |
 | 8 | Product: load the starter roadmap and confirm what's Now, Next and Later. | Founder | Product |
 | 9 | Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams. | Founder | Teams & roles |
-| 10 | AI Workforce: give every AI agent a person responsible, check each agent's level and monthly budget. | Founder | AI Workforce |
-| 11 | Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first. | Head of Growth | Store CRM |
-| 12 | Creative Studio: fill the brand kit (colours, Arabic and English fonts, logo, do/don't, hashtags, who approves) and check the content pillars. | Head of Growth | Creative Studio |
-| 13 | Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd "yes". Losing to "we'll keep doing it by hand" is more common than losing to a competitor: log that as the lost reason. | Founder | Sales pipeline |
-| 14 | Make DPA AD easy for AI agents to evaluate: public help center, clear pricing page and API docs (buyers increasingly send an agent to check first). | Founder | AI Support |
-| 15 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
-| 16 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
-| 17 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
+| 10 | Attendance & payroll (India team): fill Settings (work state, shift and grace, weekly offs, leave policy, PF/ESI/PT/TDS options), add the state and festival holidays, then add every employee with joining date, salary (CTC), PF/ESI, tax regime and PAN/UAN, and link each person's login so they can punch in. Check every rate with your CA first. | Founder | Attendance & payroll |
+| 11 | AI Workforce: give every AI agent a person responsible, check each agent's level and monthly budget. | Founder | AI Workforce |
+| 12 | Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first. | Head of Growth | Store CRM |
+| 13 | Creative Studio: fill the brand kit (colours, Arabic and English fonts, logo, do/don't, hashtags, who approves) and check the content pillars. | Head of Growth | Creative Studio |
+| 14 | Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd "yes". Losing to "we'll keep doing it by hand" is more common than losing to a competitor: log that as the lost reason. | Founder | Sales pipeline |
+| 15 | Make DPA AD easy for AI agents to evaluate: public help center, clear pricing page and API docs (buyers increasingly send an agent to check first). | Founder | AI Support |
+| 16 | Operations: load the Saudi starter calendar and confirm every date, import your tool stack from Finance, and add who owns each login. | Founder | Operations |
+| 17 | Run Pricing & Packaging Strategy, verify competitor prices, and decide the launch price. | Founder | Playbooks → Pricing & Packaging Strategy |
+| 18 | Review every launch-kit output in the Library; replace each [ADD …] placeholder and (verify) mark with real facts. | Founder | Library |
 
 ## Weekly cycle
 
@@ -74,8 +75,9 @@ _Generated from `web/lib/sop.js` with `npm run sop:md`. Edit that file, not this
 | 11 | Refresh Competitor Battlecards with this month's competitor notes. | Sales | Playbooks → Competitor Battlecards |
 | 12 | ROAS results: import each beta and paying store's ad results, write an AI case study for every clear win, and log Merchant ROAS to KPIs. | Customer Success | ROAS results |
 | 13 | Finance: add the month-end bank balance, paste the bank statement for AI to categorise, then run the AI monthly finance report and act on its decisions. | Founder | Finance |
-| 14 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
-| 15 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
+| 14 | Attendance & payroll: regularize missing punch-outs, approve pending leave, then run last month's payroll, check the warnings, approve it, pay from the bank CSV and mark it paid. Deposit TDS by the 7th and PF/ESI by the 15th, and PT per your state (verify each date with the CA); post the run to Finance. | Founder | Attendance & payroll |
+| 15 | Clear Team & hiring: every candidate screened by AI, interviews booked, decisions logged, rejections sent. | Founder | Team & hiring |
+| 16 | Update the Brief with anything that changed: pricing, features, markets, proof points. | Founder | Brief |
 
 ## Quarterly strategy
 

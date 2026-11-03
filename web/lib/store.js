@@ -31,7 +31,7 @@ export const SEED_BRIEF = {
   extra_notes: "",
 };
 
-const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_income: [], finance_cash: [], finance_reports: [], ops_tasks: [], ops_deadlines: [], ops_vendors: [], ops_incidents: [], ops_reports: [], product_items: [], product_feedback: [], product_releases: [], product_docs: [], roas_rows: [], roas_batches: [], creative_items: [], users: [], roles: [], teams: [], audit: [] });
+const EMPTY = () => ({ version: 1, seq: 0, workspaces: [], notes: [], kpis: [], kpi_values: [], assets: [], sop_checks: [], deals: [], deal_activities: [], hr_roles: [], hr_candidates: [], hr_activities: [], support_articles: [], support_tickets: [], finance_expenses: [], finance_income: [], finance_cash: [], finance_reports: [], ops_tasks: [], ops_deadlines: [], ops_vendors: [], ops_incidents: [], ops_reports: [], product_items: [], product_feedback: [], product_releases: [], product_docs: [], roas_rows: [], roas_batches: [], creative_items: [], people_employees: [], people_punches: [], people_leave: [], people_leave_ledger: [], people_holidays: [], people_runs: [], users: [], roles: [], teams: [], audit: [] });
 
 export class Store {
   constructor(dataDir) {
@@ -397,7 +397,7 @@ export class Store {
     this.db.kpi_values = this.db.kpi_values.filter((v) => !kpiIds.has(v.kpi_id));
     const dealIds = new Set(this.db.deals.filter((d) => d.workspace_id === id).map((d) => d.id));
     this.db.deal_activities = this.db.deal_activities.filter((a) => !dealIds.has(a.deal_id));
-    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets", "finance_expenses", "finance_income", "finance_cash", "finance_reports", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "ops_reports", "product_items", "product_feedback", "product_releases", "product_docs", "roas_rows", "roas_batches", "creative_items"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
+    for (const c of ["notes", "kpis", "assets", "sop_checks", "deals", "hr_roles", "hr_candidates", "hr_activities", "support_articles", "support_tickets", "finance_expenses", "finance_income", "finance_cash", "finance_reports", "ops_tasks", "ops_deadlines", "ops_vendors", "ops_incidents", "ops_reports", "product_items", "product_feedback", "product_releases", "product_docs", "roas_rows", "roas_batches", "creative_items", "people_employees", "people_punches", "people_leave", "people_leave_ledger", "people_holidays", "people_runs"]) this.db[c] = this.db[c].filter((x) => x.workspace_id !== id);
     this.save();
     return true;
   }

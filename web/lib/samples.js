@@ -6,6 +6,7 @@ import { SAMPLE_TEAM, SUGGESTED_ORG } from "./hr.js";
 import { STARTER_ROADMAP } from "./product.js";
 import { saudiStarter } from "./ops.js";
 import { periodFor } from "./sop.js";
+import { loadSamplePeople, removeSamplePeople } from "./peopleroutes.js";
 
 const DAY = 864e5;
 const ago = (days, now) => new Date(now - days * DAY).toISOString();
@@ -14,7 +15,7 @@ const S = (name) => `Sample · ${name}`;
 
 export function hasSampleData(store, wsId) {
   const id = String(wsId);
-  return ["deals", "support_tickets", "finance_expenses", "ops_tasks", "product_feedback", "hr_candidates", "notes"]
+  return ["deals", "support_tickets", "finance_expenses", "ops_tasks", "product_feedback", "hr_candidates", "notes", "people_employees"]
     .some((c) => store.db[c].some((x) => x.workspace_id === id && x.sample));
 }
 
@@ -122,6 +123,9 @@ export function loadSampleData(store, wsId, now = Date.now()) {
   }
   counts.roles = added.length;
 
+  // ---- Attendance & payroll: sample employees in India, a month of punches, a pending leave request
+  if (!store.db.people_employees.some((e) => e.workspace_id === id && e.sample)) counts.employees = loadSamplePeople(store, id, now).employees;
+
   // ---- Finance
   counts.expenses = 0;
   for (const [vendor, category, amount_sar, recurring, vat_sar, age] of [
@@ -225,6 +229,7 @@ export function removeSampleData(store, wsId) {
   for (const c of db.hr_candidates) if (roleIds.has(c.role_id)) c.role_id = null;
   removed.roles = drop("hr_roles");
   for (const r of db.hr_roles) if (mine(r) && r.sample_holder) Object.assign(r, { holder: "", sample_holder: false, status: r.prev_status || "planned" });
+  Object.assign(removed, removeSamplePeople(store, id));
   store.save();
   return removed;
 }
