@@ -47,6 +47,8 @@ import { createHelp, helpForSupport, helpNeeds, loadSampleHelp, removeSampleHelp
 import { mountHelp, mountHelpPublic } from "./helpcenterroutes.js";
 import { changelogNeeds, createChangelog, loadSampleChangelog, removeSampleChangelog } from "./changelog.js";
 import { mountChangelog, mountChangelogPublic } from "./changelogroutes.js";
+import { createInvestors, investorsNeeds, loadSampleInvestors, removeSampleInvestors } from "./investors.js";
+import { mountInvestors, mountInvestorsPublic } from "./investorsroutes.js";
 import { publicBase } from "./media.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
@@ -60,9 +62,9 @@ const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
 // Command Center need labels → the module a person needs View on to see them.
-const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", Changelog: "product", "AI Workforce": "workforce" };
+const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", Changelog: "product", Investors: "investors", "AI Workforce": "workforce" };
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, changelogOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, changelogOptions = {}, investorsOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -84,6 +86,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const partners = createPartners({ store, provider, workforce, ...partnersOptions });
   const help = createHelp({ store, provider, workforce, ...helpOptions }); // Help center: public /help site; AI Help writer drafts only
   const changelog = createChangelog({ store, provider, workforce, ...changelogOptions }); // Changelog: public /changelog site and feeds; AI Release notes writer drafts only
+  const investors = createInvestors({ store, provider, workforce, ...investorsOptions }); // Investor room: metrics pack, data room, share links; AI Investor relations drafts only
   const legal = createLegal({ store, provider, workforce, ...legalOptions }); // Legal & documents: vault, renewals, templates; AI Legal assistant drafts only // Partners & referrals: links, attribution, commissions; AI Partnerships manager drafts only
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
@@ -108,7 +111,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help; app.locals.changelog = changelog;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help; app.locals.changelog = changelog; app.locals.investors = investors;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -210,6 +213,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountPartnersPublic(app, { store, partners, env }); // referral links /r/:code and the partner portal /p/:token
   mountHelpPublic(app, { store, help, env }); // the public help site /help (published articles only)
   mountChangelogPublic(app, { store, env }); // the public changelog /changelog, RSS and JSON Feed (published entries only)
+  mountInvestorsPublic(app, { store, investors, env }); // investor share links /i/<token> (expiry, passcode, allowed items, every view logged)
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -222,12 +226,14 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (req.path.startsWith("/api/")) {
       const mod = moduleFor(req.method, req.path);
       const need = req.method === "GET" ? "view" : "edit";
+      // The Investor room is invisible to roles without it: 404, not 403.
+      if (mod === "investors" && !levelOk(req.perms[mod], "view")) return res.status(404).json({ detail: "Not found" });
       if (mod && !levelOk(req.perms[mod], need)) {
         const name = MODULES.find((m) => m.id === mod)?.name || mod;
         return res.status(403).json({ detail: `Your role (${store.db.roles.find((r) => r.id === user.role_id)?.name || user.role_id}) can't ${need === "view" ? "see" : "change"} ${name}. Ask an Owner or Admin.` });
       }
       if (req.method !== "GET") res.on("finish", () => {
-        if (res.statusCode < 400 && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/assistant")) store.logAudit({ user_id: user.id, user_name: user.name, method: req.method, path: req.path.slice(0, 200), module: mod || "", summary: (req.headers["x-mwiz-via"] === "assistant" ? "(via Ask DPA AD) " : "") + describe(req.method, req.path) });
+        if (res.statusCode < 400 && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/assistant")) store.logAudit({ user_id: user.id, user_name: user.name, method: req.method, path: req.path.slice(0, 200), module: mod || "", summary: (req.headers["x-mwiz-via"] === "assistant" ? "(via Ask DPA AD) " : "") + (res.locals.audit || describe(req.method, req.path)) });
       });
     }
     next();
@@ -250,6 +256,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountLegal(app, { store, crm, legal, env });
   mountHelp(app, { store, help, env });
   mountChangelog(app, { store, crm, outreach, changelog, env });
+  mountInvestors(app, { store, investors, workforce, env });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1237,6 +1244,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (can("okr") && user) { d.okr = okrHome(store, crm, w, permsOf(user), okr.now()); d.needs = [...okrNeeds(store, w, { user, now: okr.now() }), ...d.needs]; } else d.okr = null;
     if (can("meetings") && user) d.needs = [...meetingsNeeds(store, w, { user, now: meetings.now() }), ...d.needs]; // overdue meeting action items, notes waiting for review
     if (can("legal")) d.needs = [...legalNeeds(store, w, { user, now: legal.now() }), ...d.needs]; // expiring within 30 days, expired, notice deadlines within 14 days, overdue obligations (restricted only for Owner/Admin)
+    if (can("investors")) d.needs = [...investorsNeeds(store, w, { now: investors.now() }), ...d.needs]; // data room viewed today, share links expiring within 3 days, next steps overdue
     if (can("product")) d.needs = [...changelogNeeds(store, w, { now: changelog.now() }), ...d.needs]; // shipped releases with no changelog entry after 3 days, entries in review for 3+ days
     if (can("helpcenter")) d.needs = [...helpNeeds(store, w, { now: help.now() }), ...d.needs]; // articles not reviewed in 180 days, 3+ "not helpful" in 30 days, ticket topics (5+) with no article
     if (can("partners")) d.needs = [...partnersNeeds(store, crm, w, { now: partners.now() }), ...d.needs]; // statements to approve, approved and unpaid, quiet signed partners
@@ -1268,9 +1276,10 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     counts.help_articles = loadSampleHelp(store, w.id, help.now()).articles; // three published help articles (AR + EN) and one draft
     counts.changelog_entries = loadSampleChangelog(store, w.id, changelog.now()).entries; // three published changelog entries and one draft for the sample release
     counts.legal_documents = loadSampleLegal(store, w, legal.now()).documents; // an NDA draft and a vendor contract expiring in 20 days
+    counts.investors = loadSampleInvestors(store, w, { crm, agentsActive: workforceSummary(store, workforce).totals.active, now: investors.now() }).investors; // two sample investors and a snapshot frozen from the sample data (labelled sample); last, so it sees the other samples
     res.status(201).json(counts);
   });
-  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleHelp(store, w.id), ...removeSampleChangelog(store, w.id), ...removeSampleData(store, w.id) }); });
+  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleHelp(store, w.id), ...removeSampleChangelog(store, w.id), ...removeSampleInvestors(store, w.id), ...removeSampleData(store, w.id) }); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));

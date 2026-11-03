@@ -29,6 +29,7 @@ export const MODULES = [
   { id: "admin", name: "Teams & roles (people, access)" },
   { id: "compliance", name: "Security & compliance (backups, PDPL, status page)" },
   { id: "legal", name: "Legal & documents (vault, renewals, templates, signatures)" },
+  { id: "investors", name: "Investor room (investors, round, metrics pack, data room, share links)" },
 ];
 export const MODULE_IDS = MODULES.map((m) => m.id);
 export const LEVELS = ["none", "view", "edit"];
@@ -37,12 +38,12 @@ const rank = { none: 0, view: 1, edit: 2 };
 const all = (lvl) => Object.fromEntries(MODULE_IDS.map((m) => [m, lvl]));
 export const DEFAULT_ROLES = [
   { id: "owner", name: "Owner", locked: true, description: "Everything, including people, roles and billing decisions.", perms: all("edit") },
-  { id: "admin", name: "Admin", description: "Runs the dashboard day to day and manages people.", perms: all("edit") },
-  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none", compliance: "view", billing: "view", legal: "view" } },
-  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none", billing: "none", ads: "view", partners: "view", legal: "none" } },
-  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit", billing: "edit", ads: "view", success: "view", okr: "view", meetings: "view", partners: "edit", legal: "view" } },
+  { id: "admin", name: "Admin", description: "Runs the dashboard day to day and manages people.", perms: { ...all("edit"), investors: "view" } },
+  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none", compliance: "view", billing: "view", legal: "view", investors: "none" } },
+  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none", billing: "none", ads: "view", partners: "view", legal: "none", investors: "none" } },
+  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit", billing: "edit", ads: "view", success: "view", okr: "view", meetings: "view", partners: "edit", legal: "view", investors: "none" } },
   { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view", ads: "view", intel: "view", okr: "view", meetings: "edit", helpcenter: "edit" } },
-  { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none", payroll: "none", meetings: "none", legal: "none" } },
+  { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none", payroll: "none", meetings: "none", legal: "none", investors: "none" } },
 ];
 
 export const STARTER_TEAMS = [
@@ -80,7 +81,7 @@ export function moduleFor(method, path) {
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
     deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team", people: "team", payroll: "payroll", billing: "billing", success: "success", customers: "support",
-    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", intel: "intel", okr: "okr", meetings: "meetings", partners: "partners", legal: "legal", helpcenter: "helpcenter", changelog: "product", "sample-data": "admin" })[seg] || "admin";
+    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", intel: "intel", okr: "okr", meetings: "meetings", partners: "partners", legal: "legal", helpcenter: "helpcenter", changelog: "product", investors: "investors", "sample-data": "admin" })[seg] || "admin";
 }
 
 // One short line for the activity log.

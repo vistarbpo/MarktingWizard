@@ -7,7 +7,7 @@
 //      BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_KEY, BACKUP_S3_SECRET, BACKUP_S3_REGION (default us-east-1),
 //      BACKUP_S3_PREFIX (default "marketing-wizard/"), BACKUP_S3_PATH_STYLE (1/0; default 1 except on amazonaws.com),
 //      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15), BACKUP_MEDIA (0 to leave media out), BACKUP_MEDIA_MAX_MB (default 200),
-//      BACKUP_LEGAL_MAX_MB (default 500: Legal & documents files, always included up to this size).
+//      BACKUP_LEGAL_MAX_MB (default 500: Legal & documents files and the Investor room's uploaded data-room files, always included up to this size).
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -183,7 +183,7 @@ export function createBackups({ store, crm, env = process.env, cfg = backupConfi
     return removed;
   }
 
-  // Legal & documents files (DATA_DIR/legal): contracts and certificates, so they are in every backup, with their own cap.
+  // Legal & documents files (DATA_DIR/legal): contracts and certificates, plus the Investor room's uploaded data-room files (same private folder), so they are in every backup, with their own cap.
   async function legalEntries() {
     const ldir = path.join(store.dir, "legal");
     if (!fs.existsSync(ldir)) return { entries: [], note: "" };

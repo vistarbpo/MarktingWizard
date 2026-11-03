@@ -1,5 +1,5 @@
 // The shared shell of DPA AD's public pages before the login wall: the Help center (/help, helpcenterroutes.js) and
-// the Changelog (/changelog, changelogroutes.js). Self-contained HTML: no scripts at all (the CSP has no script-src,
+// the Changelog (/changelog, changelogroutes.js) and the Investor room share links (/i/<token>, investorsroutes.js). Self-contained HTML: no scripts at all (the CSP has no script-src,
 // so default-src 'none' blocks every script), the only style block carries a per-response nonce, no tracking and no
 // external fonts. Brand: the workspace's company name and the Creative Studio brand kit's primary and accent colours.
 import crypto from "node:crypto";
@@ -44,15 +44,15 @@ a.chip:hover{border-color:var(--p)}.chip.on{background:var(--p);border-color:var
 .pager{display:flex;justify-content:space-between;gap:12px}.m0{margin:0}.mt8{margin-top:8px}.mt12{margin-top:12px}.entry .muted{margin:0}`;
 
 // One page. `nav` is a list of { href, text, current } shown next to the language switch (the cross-links between
-// /help and /changelog); `hero` is optional HTML under the header (the help search form).
-export function publicPage({ w, lang, nonce, title = "", section, homeHref, switchHref, nav = [], hero = "", body, desc = "", noindex = false, alternate = [] }) {
+// /help and /changelog); `hero` is optional HTML under the header (the help search form); `css` adds page rules (the Investor room).
+export function publicPage({ w, lang, nonce, title = "", section, homeHref, switchHref, nav = [], hero = "", body, desc = "", noindex = false, alternate = [], css = "" }) {
   const { company, primary, accent, website } = brandOf(w);
   const other = lang === "ar" ? "en" : "ar";
   return `<!doctype html><html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${h(title ? `${title} · ` : "")}${h(company)} ${h(section)}</title>${desc ? `<meta name="description" content="${h(desc.slice(0, 160))}">` : ""}${noindex ? `<meta name="robots" content="noindex">` : ""}${alternate.map((a) => `<link rel="alternate" type="${h(a.type)}" title="${h(a.title)}" href="${h(a.href)}">`).join("")}
 <style nonce="${nonce}">:root{color-scheme:light dark;--p:${primary};--a:${accent};--bg:#f7f7f5;--card:#fff;--text:#16181d;--muted:#5d636e;--border:#e3e4e8;--soft:#eef2ff}
 @media(prefers-color-scheme:dark){:root{--bg:#111316;--card:#1a1d22;--text:#eceef2;--muted:#a2a8b3;--border:#2c3038;--soft:#1f2533}}
-${CSS}</style></head><body>
+${CSS}${css}</style></head><body>
 <header><div class="wrap"><div class="top"><a class="brand" href="${h(homeHref)}">${h(company)} <span>· ${h(section)}</span></a><nav class="links" aria-label="${lang === "ar" ? "روابط" : "Links"}">${nav.map((n) => `<a href="${h(n.href)}"${n.current ? ' aria-current="page"' : ""}>${h(n.text)}</a>`).join("")}<a class="lang" href="${h(switchHref)}" hreflang="${other}" lang="${other}">${other === "en" ? "English" : "العربية"}</a></nav></div>
 ${hero}</div></header>
 <main class="wrap">${body}</main><footer class="wrap">© ${h(company)}${website ? ` · <a href="${h(website)}" rel="noopener">${h(String(website).replace(/^https?:\/\//, ""))}</a>` : ""}</footer></body></html>`;

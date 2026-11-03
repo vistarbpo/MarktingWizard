@@ -92,6 +92,9 @@ export const AGENTS = [
   { id: "release_writer", name: "AI Release notes writer", team: "Product", module: "product", route: "changelog", max: 1, level: 1, budget: 10,
     job: "Writes customer-facing changelog entries (What's new) in Saudi Arabic and English from a shipped release and its roadmap items only: benefit-led, no invented features, numbers, dates or customer names, [ADD] for gaps. Translates entries AR↔EN.",
     levels: { 1: "Drafts only; notes with numbers that aren't in the release or its items, HTML, or a customer or competitor name are replaced by a factual draft. A different person reviews and publishes every entry; requesters are told only when a person sends each email through the Store CRM." } },
+  { id: "investor_relations", name: "AI Investor relations", team: "Leadership", module: "investors", route: "investors", max: 1, level: 1, budget: 10,
+    job: "Drafts the monthly investor update (highlights and asks) from a frozen metrics snapshot, the month's goals and weekly reviews, changelog entries, releases and hires, citing a source for every bullet. Never writes lowlights or numbers that aren't in its sources.",
+    levels: { 1: "Drafts only; a draft with a number that isn't in the sources it cites, an unknown source or HTML is replaced by a factual draft with [ADD]. The founder writes the lowlights and a person approves every update; nothing is sent by the AI." } },
 ];
 export const AGENT_IDS = AGENTS.map((a) => a.id);
 export const agentDef = (id) => AGENTS.find((a) => a.id === id);
@@ -111,6 +114,7 @@ export function agentFor(method, path) {
   if (seg === "legal") return "legal_assistant";
   if (seg === "helpcenter") return "help_writer";
   if (seg === "changelog") return "release_writer";
+  if (seg === "investors") return "investor_relations";
   if (seg === "success") return /\/ai\/(expansion|renewal)$/.test(p) ? "success_writer" : "retention_watcher";
   return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }
