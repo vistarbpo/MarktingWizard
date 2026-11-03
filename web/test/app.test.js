@@ -1973,3 +1973,462 @@ test("auto-publish is the AI Publisher's level in AI Workforce (one switch, two 
   const acc = await json(`/api/workspaces/${ws.id}/creative/accounts`);
   assert.equal(acc.can_auto_publish, false); assert.equal(acc.settings.auto_publish, false);
 });
+
+// ---------------------------------------------------------------- Paid Ads
+async function adsApp({ env = {}, routes = [], provider: prov } = {}) {
+  const { adsConfig } = await import("../lib/adsapi.js");
+  const { socialConfig } = await import("../lib/social.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-ads-"));
+  const st = new Store(d), fetchImpl = mockFetch(routes);
+  const allEnv = { PUBLIC_URL: "https://wiz.test", META_APP_ID: "mapp", META_APP_SECRET: "msecret", SNAP_CLIENT_ID: "sid", SNAP_CLIENT_SECRET: "ssec", TIKTOK_ADS_APP_ID: "tapp", TIKTOK_ADS_SECRET: "tsec", ADS_LEAD_SECRET: "lead-secret-123", ...env };
+  const aiProv = prov || { name: "fake", model: "fake", async generate() { return "no json here"; } };
+  const app = createApp({ store: st, provider: aiProv, password: "pw-ads", adsOptions: { cfg: adsConfig(allEnv, "pw-ads"), fetchImpl, log: { error() {} } },
+    studioOptions: { cfg: socialConfig(allEnv, "pw-ads"), fetchImpl, sleep: async () => {}, pollEvery: 0, pollMax: 5, log: { error() {} } } });
+  const srv = app.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (form) => (await fetch(b + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(form) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-ads" });
+  const reqAs = (c) => (p, opts = {}) => fetch(b + p, { redirect: "manual", ...opts, headers: { "Content-Type": "application/json", cookie: c, ...(opts.headers || {}) } });
+  const jAs = (c) => async (p, body, method) => { const r = await reqAs(c)(p, { method: method || (body !== undefined ? "POST" : "GET"), body: body !== undefined ? JSON.stringify(body) : undefined }); return { status: r.status, body: r.status === 204 ? null : await r.json().catch(() => null) }; };
+  const j = jAs(ck);
+  const userAs = async (role_id, email) => { await j("/api/admin/users", { name: role_id, email, password: "ads-pass-123", role_id }); const c = await login({ email, password: "ads-pass-123" }); const f = jAs(c); return (p, body, method) => f(p, body, method).then((r) => r.status); };
+  const [w] = st.listWorkspaces();
+  const close = () => { srv.close(); app.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); };
+  return { st, app, ads: app.locals.ads, fetchImpl, b, ck, req: reqAs(ck), j, userAs, w, P: `/api/workspaces/${w.id}/ads`, close };
+}
+const isoDay = (k = 0) => new Date(Date.now() + 3 * 3600e3 + k * 864e5).toISOString().slice(0, 10);
+function connectAds(ads, wsId, p, acct) {
+  return ads.saveConnection(wsId, p, { name: "Test", tokens: p === "meta" ? { user: "U-ADS" } : { access: "A-TOK", refresh: "R-TOK", advertiser_ids: [acct.id] }, accounts: [acct], scopes: ["ads_read", "ads_management", "business_management"], expires_at: new Date(Date.now() + 30 * 864e5).toISOString() }, "test");
+}
+
+test("Paid Ads: insights from Meta, Snapchat, TikTok and Google normalise to one row shape (mocked APIs)", async () => {
+  const A = await import("../lib/adsapi.js");
+  const cfg = A.adsConfig({ META_APP_ID: "m", META_APP_SECRET: "s", ADS_GOOGLE: "1", GOOGLE_CLIENT_ID: "g", GOOGLE_CLIENT_SECRET: "gs", GOOGLE_ADS_DEVELOPER_TOKEN: "dev" }, "pw");
+  const f = mockFetch([
+    ["GET", /graph\.facebook\.com\/v[\d.]+\/act_1\/insights/, (u, o, n) => (n === 1
+      ? { json: { data: [{ date_start: "2026-11-01", campaign_id: "C1", campaign_name: "Riyadh fashion", adset_id: "S1", adset_name: "Owners", ad_id: "A1", ad_name: "Reel [cs:7]", spend: "120.50", impressions: "10000", clicks: "300", inline_link_clicks: "150", reach: "8000", frequency: "1.25",
+        actions: [{ action_type: "complete_registration", value: "4" }, { action_type: "offsite_conversion.fb_pixel_complete_registration", value: "4" }, { action_type: "lead", value: "2" }] }], paging: { next: "https://graph.facebook.com/v23.0/act_1/insights?after=X" } } }
+      : { json: { data: [{ date_start: "2026-11-02", campaign_id: "C1", campaign_name: "Riyadh fashion", adset_id: "S1", adset_name: "Owners", ad_id: "A1", ad_name: "Reel [cs:7]", spend: "80", impressions: "5000", clicks: "100", reach: "4000", frequency: "1.25", actions: [] }] } })],
+    ["GET", /adsapi\.snapchat\.com\/v1\/adaccounts\/SN1\/stats/, () => ({ json: { request_status: "SUCCESS", timeseries_stats: [{ timeseries_stat: { breakdown_stats: { ad: [{ id: "SA1", timeseries: [{ start_time: "2026-11-01T00:00:00.000+03:00", stats: { spend: 25500000, impressions: 4000, swipes: 40, uniques: 3500, frequency: 1.14, conversion_sign_ups: 3, conversion_purchases: 0 } }] }] } } }] } })],
+    ["GET", /adsapi\.snapchat\.com\/v1\/adaccounts\/SN1\/ads$/, () => ({ json: { ads: [{ ad: { id: "SA1", name: "Snap ad", ad_squad_id: "SQ1" } }] } })],
+    ["GET", /adsapi\.snapchat\.com\/v1\/adaccounts\/SN1\/adsquads$/, () => ({ json: { adsquads: [{ adsquad: { id: "SQ1", name: "Squad", campaign_id: "SC1" } }] } })],
+    ["GET", /adsapi\.snapchat\.com\/v1\/adaccounts\/SN1\/campaigns$/, () => ({ json: { campaigns: [{ campaign: { id: "SC1", name: "Snap camp" } }] } })],
+    ["GET", /business-api\.tiktok\.com\/open_api\/v1\.3\/report\/integrated\/get/, () => ({ json: { code: 0, data: { page_info: { total_page: 1 }, list: [{ dimensions: { ad_id: "TA1", stat_time_day: "2026-11-01 00:00:00" }, metrics: { campaign_id: "TC1", campaign_name: "TT camp", adgroup_id: "TG1", adgroup_name: "TT group", ad_name: "TT ad", spend: "40.00", impressions: "9000", clicks: "90", reach: "7000", frequency: "1.29", registration: "2", complete_payment: "1" } }] } } })],
+    ["POST", /googleads\.googleapis\.com\/v21\/customers\/123\/googleAds:searchStream/, () => ({ json: [{ results: [{ campaign: { id: "G1", name: "Search" }, adGroup: { id: "GG1", name: "Brand" }, adGroupAd: { ad: { id: "GA1", name: "" } }, segments: { date: "2026-11-01" }, metrics: { costMicros: "15000000", impressions: "500", clicks: "50", conversions: 2.5 } }] }] })],
+  ]);
+  const meta = await A.fetchInsights(cfg, "meta", { user: "U" }, { id: "act_1" }, { since: "2026-11-01", until: "2026-11-02" }, f);
+  assert.equal(meta.length, 2); // followed paging.next
+  assert.deepEqual({ ...meta[0] }, { channel: "Meta", date: "2026-11-01", campaign_id: "C1", campaign_name: "Riyadh fashion", adset_id: "S1", adset_name: "Owners", ad_id: "A1", ad_name: "Reel [cs:7]", spend: 120.5, impressions: 10000, clicks: 150, reach: 8000, frequency: 1.25, leads: 2, signups: 4, purchases: 0 });
+  assert.ok(f.calls[0].url.includes("level=ad") && f.calls[0].url.includes("time_increment=1"));
+  const snap = await A.fetchInsights(cfg, "snap", { access: "A" }, { id: "SN1" }, { since: "2026-11-01", until: "2026-11-01" }, f);
+  assert.deepEqual([snap[0].spend, snap[0].clicks, snap[0].signups, snap[0].campaign_name, snap[0].adset_name, snap[0].ad_name, snap[0].date], [25.5, 40, 3, "Snap camp", "Squad", "Snap ad", "2026-11-01"]); // micro-currency → units
+  assert.equal(f.calls.find((c) => /stats/.test(c.url)).headers.Authorization, "Bearer A");
+  const tt = await A.fetchInsights(cfg, "tiktok", { access: "T" }, { id: "ADV1" }, { since: "2026-11-01", until: "2026-11-01" }, f);
+  assert.deepEqual([tt[0].channel, tt[0].spend, tt[0].signups, tt[0].purchases, tt[0].adset_id, tt[0].date], ["TikTok", 40, 2, 1, "TG1", "2026-11-01"]);
+  assert.equal(f.calls.find((c) => /tiktok/.test(c.url)).headers["Access-Token"], "T");
+  const g = await A.fetchInsights(cfg, "google", { access: "GT" }, { id: "123" }, { since: "2026-11-01", until: "2026-11-01" }, f);
+  assert.deepEqual([g[0].spend, g[0].signups, g[0].channel], [15, 2.5, "Google"]);
+  assert.equal(f.calls.at(-1).headers["developer-token"], "dev");
+  // TikTok reports errors with HTTP 200 and a non-zero code.
+  const bad = mockFetch([["GET", /tiktok/, () => ({ json: { code: 40001, message: "Access token invalid" } })]]);
+  await assert.rejects(A.fetchInsights(cfg, "tiktok", { access: "T" }, { id: "ADV1" }, { since: "2026-11-01", until: "2026-11-01" }, bad), /Access token invalid/);
+});
+
+test("Paid Ads: CSV import from each Ads Manager, re-import replaces, API rows win over CSV for the same day", async () => {
+  const { parseAdsInsightsCsv, effectiveRows } = await import("../lib/ads.js");
+  const meta = parseAdsInsightsCsv("Day,Campaign name,Ad set name,Ad name,Amount spent (SAR),Impressions,Link clicks,Reach,Results\n2026-11-01,Riyadh fashion,Owners,Reel,\"1,200.50\",10000,150,8000,6\nTotal,,,,1200.5,10000,150,,6", { result: "signups" });
+  assert.equal(meta.channel, "Meta"); assert.equal(meta.rows.length, 1);
+  assert.deepEqual([meta.rows[0].spend, meta.rows[0].signups, meta.rows[0].clicks, meta.rows[0].adset_name, meta.rows[0].currency], [1200.5, 6, 150, "Owners", "SAR"]);
+  const snap = parseAdsInsightsCsv("Date,Campaign Name,Ad Squad Name,Spend,Impressions,Swipe Ups,Sign Ups\n2026-11-01,Snap camp,Squad,50,4000,40,3", { currency: "USD" });
+  assert.equal(snap.channel, "Snapchat"); assert.equal(snap.rows[0].signups, 3); assert.equal(snap.currency, "USD");
+  const tt = parseAdsInsightsCsv("stat_time_day,Campaign name,Ad group name,Cost,Impressions,Clicks,Complete payment\n2026-11-01,TT,Group,40,9000,90,2");
+  assert.equal(tt.channel, "TikTok"); assert.equal(tt.rows[0].purchases, 2);
+  assert.match(parseAdsInsightsCsv("Campaign,Impressions\nX,10").error, /spend/);
+  assert.match(parseAdsInsightsCsv("Name,Spend\nX,10").error, /Campaign name/);
+  assert.deepEqual(effectiveRows([{ channel: "Meta", date: "2026-11-01", source: "csv" }, { channel: "Meta", date: "2026-11-01", source: "api" }, { channel: "Meta", date: "2026-11-02", source: "csv" }]).map((r) => r.source), ["api", "csv"]);
+
+  const t = await adsApp();
+  try {
+    const csv = `Day,Campaign name,Ad set name,Ad name,Amount spent,Impressions,Link clicks,Results\n${isoDay(-1)},Riyadh fashion,Owners,Reel,100,10000,150,4`;
+    const prev = await t.j(`${t.P}/import/parse`, { text: csv });
+    assert.equal(prev.status, 200); assert.equal(prev.body.channel, "Meta"); assert.equal(prev.body.totals.spend, 100);
+    const imp = await t.j(`${t.P}/import`, { text: csv });
+    assert.equal(imp.status, 201); assert.equal(imp.body.added, 1);
+    const again = await t.j(`${t.P}/import`, { text: csv.replace(",100,", ",120,") });
+    assert.equal(again.body.added, 0); assert.equal(again.body.updated, 1);
+    const ov = await t.j(t.P);
+    assert.equal(ov.body.has_data, true);
+    assert.equal(ov.body.trend.find((d) => d.date === isoDay(-1)).spend_sar, 120);
+    // A USD file needs no typed rate (pegged at 3.75); EUR does.
+    await t.j(`${t.P}/import`, { text: `Day,Campaign name,Amount spent,Impressions\n${isoDay(-1)},Euro camp,10,100`, channel: "TikTok", currency: "EUR" });
+    assert.deepEqual((await t.j(t.P)).body.fx_missing, ["EUR"]);
+    const batches = (await t.j(`${t.P}/accounts`)).body.batches;
+    assert.equal(batches.length, 3);
+    assert.equal((await t.j(`${t.P}/import/${batches[0].id}`, undefined, "DELETE")).status, 204);
+    assert.deepEqual((await t.j(t.P)).body.fx_missing, []);
+  } finally { t.close(); }
+});
+
+test("Paid Ads: pacing maths and the projected month-end", async () => {
+  const { pacing, budgetPacing, adsSettings } = await import("../lib/ads.js");
+  const on = pacing({ budget: 3000, spent: 1000, day: 10, days: 30 });
+  assert.deepEqual([on.status, on.projected, on.expected, on.pct, on.daily_target], ["on_track", 3000, 1000, 33.3, 100]);
+  const over = pacing({ budget: 3000, spent: 1500, day: 10, days: 30 });
+  assert.deepEqual([over.status, over.projected, over.projected_pct], ["over", 4500, 150]);
+  assert.equal(pacing({ budget: 3000, spent: 3000, day: 20, days: 30 }).status, "over"); // budget used up early
+  assert.equal(pacing({ budget: 3000, spent: 500, day: 10, days: 30 }).status, "under");
+  assert.equal(pacing({ budget: 3000, spent: 10, day: 1, days: 30 }).status, "on_track"); // too early to call "under"
+  assert.equal(pacing({ budget: 3000, spent: 1050, day: 10, days: 30, tolerance: 10 }).status, "on_track"); // 5% over projection is inside 10%
+  assert.equal(pacing({ budget: 0, spent: 100, day: 10, days: 30 }).status, "no_budget");
+  // Real month: 10 Nov 2026 12:00 Riyadh, total budget from the channel budgets.
+  const now = new Date("2026-11-10T09:00:00Z");
+  const s = adsSettings({ ads: { budgets: { Meta: 3000, Snapchat: 0 } } });
+  const rows = [{ channel: "Meta", date: "2026-11-05", spend_sar: 2000, signups: 4 }, { channel: "Meta", date: "2026-10-30", spend_sar: 900, signups: 1 }, { channel: "Snapchat", date: "2026-11-06", spend_sar: 300, signups: 1 }];
+  const p = budgetPacing(rows, s, now);
+  const m = p.channels.find((c) => c.channel === "Meta");
+  assert.equal(p.month, "2026-11"); assert.equal(m.spent, 2000); assert.equal(m.status, "over"); assert.equal(m.results, 4);
+  assert.equal(Math.round(m.projected), Math.round((2000 / 9.5) * 30));
+  assert.equal(p.channels.find((c) => c.channel === "Snapchat").status, "no_budget");
+  assert.equal(p.total.budget, 3000); assert.equal(p.total.spent, 2300);
+});
+
+test("Paid Ads: guardrails log in Test mode, need a person at level 1, act at level 2 in Live", async () => {
+  const { evaluateRules, saveRows } = await import("../lib/ads.js");
+  const y = isoDay(-1);
+  const rows = [
+    { channel: "Meta", source: "api", account_id: "act_1", date: y, campaign_id: "C1", campaign_name: "C", adset_id: "S1", adset_name: "No results", spend_sar: 400, impressions: 1000, clicks: 10, signups: 0 },
+    { channel: "Meta", source: "api", account_id: "act_1", date: y, campaign_id: "C1", campaign_name: "C", adset_id: "S2", adset_name: "Working", spend_sar: 400, impressions: 1000, clicks: 10, signups: 8 },
+    { channel: "Meta", source: "csv", date: y, campaign_id: "csv:c", campaign_name: "C", adset_id: "csv:s3", adset_name: "From CSV", spend_sar: 500, signups: 0 },
+  ];
+  const rules = [{ id: "r1", name: "No results", kind: "pause_cpa", channel: "all", max_cpa_sar: null, min_spend_sar: 300, window_days: 7, enabled: true },
+    { id: "r2", name: "CPA", kind: "pause_cpa", channel: "Meta", max_cpa_sar: 40, min_spend_sar: 200, window_days: 7, enabled: true },
+    { id: "r3", name: "Cap", kind: "cap_daily", channel: "all", cap_sar: 450, enabled: true }, { id: "r4", kind: "cap_daily", cap_sar: 1, enabled: false }];
+  const test1 = evaluateRules({ rules, rows, mode: "test", level: 2 });
+  assert.ok(test1.every((a) => a.decision === "logged"));
+  assert.deepEqual(test1.filter((a) => a.rule_id === "r1").map((a) => a.adset_name).sort(), ["From CSV", "No results"]);
+  assert.deepEqual(test1.filter((a) => a.rule_id === "r2").map((a) => a.adset_name).sort(), ["From CSV", "No results", "Working"]); // Working: 400 / 8 = SAR 50 per signup > 40
+  assert.equal(evaluateRules({ rules: [{ ...rules[1], max_cpa_sar: 60 }], rows: [rows[1]], mode: "test" }).length, 0);
+  assert.deepEqual(test1.filter((a) => a.rule_id === "r3").map((a) => [a.adset_name, a.value_sar]), [["From CSV", 450]]);
+  const live1 = evaluateRules({ rules: [rules[0]], rows, mode: "live", level: 1 });
+  assert.ok(live1.length === 2 && live1.every((a) => a.decision === "needs_person"));
+  const live2 = evaluateRules({ rules: [rules[0]], rows, mode: "live", level: 2 });
+  assert.equal(live2.find((a) => a.adset_id === "S1").decision, "apply");
+  assert.equal(live2.find((a) => a.adset_id === "csv:s3").decision, "needs_person"); // nothing to act on through the API
+  assert.equal(evaluateRules({ rules: [rules[0]], rows, mode: "live", level: 2, done: (k) => k.includes("S1") }).length, 1); // no repeats
+
+  // Through the app: Live + level 2 pauses through the Meta API; level 1 leaves a "needs a person" item.
+  const t = await adsApp({ routes: [["POST", /graph\.facebook\.com\/v[\d.]+\/S1$/, () => ({ json: { success: true } })]] });
+  try {
+    connectAds(t.ads, t.w.id, "meta", { id: "act_1", name: "DPA AD", currency: "SAR", timezone: "Asia/Riyadh", status: "active", active: true });
+    saveRows(t.st, t.w.id, rows.slice(0, 1).map((r) => ({ ...r, currency: "SAR", spend: 400 })), { source: "api" });
+    const rl = (await t.j(`${t.P}/rules`)).body; // seeds the starter rules
+    assert.equal(rl.rules.length, 3); assert.equal(rl.rules.filter((r) => r.enabled).length, 1); assert.equal(rl.pacer_level, 1);
+    const tm = (await t.j(`${t.P}/rules/evaluate`, {})).body;
+    assert.equal(tm.logged, 1); assert.equal(t.fetchImpl.calls.length, 0); // Test mode: nothing sent
+    t.st.db.ads_actions.length = 0;
+    await t.j(`${t.P}/settings`, { mode: "live" }, "PUT");
+    const l1 = (await t.j(`${t.P}/rules/evaluate`, {})).body;
+    assert.equal(l1.needs_person, 1); assert.equal(t.fetchImpl.calls.length, 0);
+    const cmd = await t.j(`/api/workspaces/${t.w.id}/command`);
+    assert.ok(cmd.body.needs.some((n) => n.module === "Paid Ads" && /Guardrail/.test(n.text)));
+    const open = (await t.j(`${t.P}/rules`)).body.actions.find((a) => a.status === "open");
+    const ap = await t.j(`${t.P}/actions/${open.id}/apply`, {});
+    assert.equal(ap.status, 200); assert.equal(ap.body.status, "done");
+    assert.match(t.fetchImpl.calls[0].body, /status=PAUSED/);
+    t.st.db.ads_actions.length = 0;
+    await t.j("/api/workforce/agents/ads_pacer", { level: 2 }, "PUT");
+    const l2 = (await t.j(`${t.P}/rules/evaluate`, {})).body;
+    assert.equal(l2.applied, 1); assert.equal(t.fetchImpl.calls.length, 2);
+    const ev = (await t.j("/api/workforce/agents/ads_pacer")).body.events;
+    assert.ok(ev.some((e) => e.outcome === "auto")); assert.ok(ev.some((e) => e.outcome === "accepted"));
+    assert.equal((await t.j(`${t.P}/rules/evaluate`, {})).body.applied, 0); // not again within 7 days
+  } finally { t.close(); }
+});
+
+test("Paid Ads: UTM builder and parsing", async () => {
+  const { buildUtmUrl, parseUtm, channelFromSource, slug } = await import("../lib/ads.js");
+  const r = buildUtmUrl("https://dpa.ad/start?ref=x&utm_source=old", { source: "Meta", medium: "paid_social", campaign: "Riyadh Fashion Nov", content: "Reel 1" });
+  assert.equal(r.url, "https://dpa.ad/start?ref=x&utm_source=meta&utm_medium=paid_social&utm_campaign=riyadh-fashion-nov&utm_content=reel-1");
+  assert.deepEqual(parseUtm(r.url), { source: "meta", medium: "paid_social", campaign: "riyadh-fashion-nov", content: "reel-1" });
+  assert.match(buildUtmUrl("dpa.ad", { source: "meta", campaign: "x" }).error, /https/);
+  assert.match(buildUtmUrl("https://dpa.ad", { source: "meta" }).error, /campaign/);
+  assert.equal(parseUtm("https://dpa.ad/"), null);
+  assert.deepEqual(["facebook", "ig", "snapchat", "TikTok", "google", "newsletter"].map(channelFromSource), ["Meta", "Meta", "Snapchat", "TikTok", "Google", null]);
+  assert.equal(slug("عروض رمضان 2027"), "عروض-رمضان-2027");
+  const t = await adsApp();
+  try {
+    const u = await t.j(`${t.P}/utm`, { channel: "Snapchat", campaign: "Jeddah beauty", save: true, label: "Snap story" });
+    assert.equal(u.status, 200);
+    assert.equal(u.body.url, "https://dpa.ad/?utm_source=snapchat&utm_medium=paid_social&utm_campaign=jeddah-beauty");
+    assert.equal((await t.j(`${t.P}/links`)).body.length, 1);
+  } finally { t.close(); }
+});
+
+test("Paid Ads: attribution matches CRM stores and Sales deals by UTM to cost per lead, trial and paying store", async () => {
+  const { attribution } = await import("../lib/ads.js");
+  const month = isoDay(0).slice(0, 7), at = `${month}-02T10:00:00Z`;
+  const contacts = [
+    { id: "c1", store_name: "Abaya One", stage: "engaged", created_at: at, utm: { source: "meta", campaign: "riyadh-fashion" } },
+    { id: "c2", store_name: "Oud Two", stage: "onboarding", created_at: at, landing_url: "https://dpa.ad/?utm_source=facebook&utm_campaign=riyadh-fashion" },
+    { id: "c3", store_name: "Linked", stage: "qualified", created_at: at, deal_id: "d1", utm: { source: "snapchat", campaign: "snap-camp" } },
+    { id: "c4", store_name: "No UTM", stage: "engaged", created_at: at },
+  ];
+  const deals = [{ id: "d1", name: "Linked", stage: "paying", created_at: at }, { id: "d2", name: "Deal only", stage: "trial", created_at: at, utm: { source: "tiktok", campaign: "tt" } }, { id: "d3", name: "Old", stage: "paying", created_at: "2020-01-01T00:00:00Z", utm: { source: "meta" } }];
+  const rows = [{ channel: "Meta", date: `${month}-02`, campaign_id: "C1", campaign_name: "Riyadh Fashion", spend_sar: 600, signups: 2 }, { channel: "Snapchat", date: `${month}-02`, campaign_id: "S1", campaign_name: "Snap camp", spend_sar: 300, signups: 1 }];
+  const a = attribution({ contacts, deals, rows, month });
+  const meta = a.channels.find((c) => c.channel === "Meta"), snap = a.channels.find((c) => c.channel === "Snapchat"), tt = a.channels.find((c) => c.channel === "TikTok");
+  assert.deepEqual([meta.leads, meta.trials, meta.paying, meta.cost_per_lead, meta.cost_per_trial, meta.cost_per_paying], [2, 1, 0, 300, 600, null]);
+  assert.deepEqual([snap.leads, snap.trials, snap.paying, snap.cost_per_paying], [1, 1, 1, 300]); // the deal counts once, with its CRM store
+  assert.deepEqual([tt.leads, tt.trials, tt.spend_sar, tt.cost_per_lead], [1, 1, 0, 0]);
+  assert.equal(a.total.leads, 4);
+  assert.equal(a.campaigns.find((c) => c.campaign_name === "Riyadh Fashion").leads, 2);
+  assert.ok(a.unmatched.some((u) => u.name === "Deal only"));
+
+  // The lead hook stores the UTM on the CRM store; a person can set it on a deal; both feed the report.
+  const t = await adsApp();
+  try {
+    assert.equal((await fetch(`${t.b}/hooks/ads/lead/wrong-secret-xx`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 403);
+    const lead = await fetch(`${t.b}/hooks/ads/lead/lead-secret-123`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ store_name: "Hook Store", email: "owner@hook.sa", url: "https://dpa.ad/?utm_source=tiktok&utm_medium=paid_social&utm_campaign=tt-nov", signup: true }) });
+    assert.equal(lead.status, 201);
+    const c = t.app.locals.crm.contacts(t.w.id).find((x) => x.email === "owner@hook.sa");
+    assert.deepEqual([c.utm.source, c.utm.campaign, c.stage, c.tags.includes("ads")], ["tiktok", "tt-nov", "onboarding", true]);
+    const d = t.st.addDeal(t.w.id, { name: "Manual deal", stage: "paying" });
+    assert.equal((await t.j(`${t.P}/attribution/deals/${d.id}`, { url: "https://dpa.ad/?utm_source=ig&utm_campaign=x" }, "PUT")).status, 200);
+    const rep = (await t.j(`${t.P}/attribution`)).body;
+    assert.equal(rep.channels.find((x) => x.channel === "TikTok").trials, 1);
+    assert.equal(rep.channels.find((x) => x.channel === "Meta").paying, 1);
+  } finally { t.close(); }
+});
+
+test("Paid Ads: ad spend goes to Finance as monthly marketing expenses per channel, without duplicates", async () => {
+  const t = await adsApp();
+  try {
+    const m = isoDay(0).slice(0, 7);
+    const csv = `Day,Campaign name,Amount spent,Impressions\n${m}-01,A,100,10\n${m}-02,A,50,10`;
+    await t.j(`${t.P}/import`, { text: csv, channel: "Meta" });
+    await t.j(`${t.P}/import`, { text: `Day,Campaign name,Spend,Impressions\n${m}-01,S,40,10`, channel: "Snapchat", currency: "USD" });
+    const ads = () => t.st.listExpenses(t.w.id).filter((e) => e.source === "ads");
+    assert.deepEqual(ads().map((e) => [e.vendor, e.amount_sar, e.category, e.date]).sort(), [["Meta Ads", 150, "marketing", `${m}-01`], ["Snapchat Ads", 150, "marketing", `${m}-01`]]);
+    await t.j(`${t.P}/import`, { text: csv, channel: "Meta" }); // same file again
+    assert.deepEqual((await t.j(`${t.P}/finance/sync`, {})).body, { added: 0, updated: 0, removed: 0 });
+    assert.equal(ads().length, 2);
+    await t.j(`${t.P}/import`, { text: csv.replace(",50,", ",70,"), channel: "Meta" });
+    assert.equal(ads().find((e) => e.vendor === "Meta Ads").amount_sar, 170);
+    const fin = (await t.j(`/api/workspaces/${t.w.id}/finance`)).body;
+    assert.ok(JSON.stringify(fin).includes("Meta Ads"));
+    const batch = (await t.j(`${t.P}/accounts`)).body.batches.find((b) => b.channel === "Snapchat");
+    await t.j(`${t.P}/import/${batch.id}`, undefined, "DELETE");
+    assert.deepEqual(ads().map((e) => e.vendor), ["Meta Ads"]);
+  } finally { t.close(); }
+});
+
+test("Paid Ads: plans are drafted, approved by a person, created PAUSED (payloads mocked), activated only by an approver", async () => {
+  const planJson = { name: "Riyadh fashion trials", summary: "s", campaigns: [{ channel: "Meta", name: "Riyadh fashion Nov", objective: "signups", budget_pct: 75, schedule: { days: "Sat-Thu", hours: "19:00-01:00" }, placements: ["Instagram Reels"],
+    ad_sets: [{ name: "Owners", budget_pct: 60, audience: { summary: "Salla owners", cities: ["Riyadh"], age_min: 24, age_max: 50, interests: ["Salla"], job_titles: ["Business Owner"] } }, { name: "Marketers", budget_pct: 40, audience: { interests: ["Digital marketing"] } }],
+    ads: [{ name: "Reel", creative_item_id: "", adset_index: 0, primary_text_ar: "إعلانات مصممة لمتجرك", headline_ar: "جرّب مجاناً", cta: "SIGN_UP" }] },
+    { channel: "TikTok", name: "TT Nov", budget_pct: 25, ad_sets: [{ name: "All", budget_pct: 100, audience: {} }], ads: [] }, { channel: "X", name: "not allowed" }] };
+  const prov = { name: "fake", model: "fake", async generate({ prompt }) { if (prompt.includes("AI Media buyer")) return "Here:\n" + JSON.stringify(planJson); return "{}"; } };
+  const routes = [
+    ["GET", /\/search\?/, (u) => ({ json: { data: [{ id: u.includes("adworkposition") ? "W1" : "I1", name: "x" }] } })],
+    ["POST", /\/act_1\/campaigns$/, () => ({ json: { id: "MC1" } })],
+    ["POST", /\/act_1\/adsets$/, (u, o, n) => ({ json: { id: `MS${n}` } })],
+    ["POST", /\/act_1\/adcreatives$/, () => ({ json: { id: "CR1" } })],
+    ["POST", /\/act_1\/ads$/, () => ({ json: { id: "MA1" } })],
+    ["POST", /business-api\.tiktok\.com\/open_api\/v1\.3\/campaign\/create/, () => ({ json: { code: 0, data: { campaign_id: "TC9" } } })],
+    ["POST", /business-api\.tiktok\.com\/open_api\/v1\.3\/adgroup\/create/, () => ({ json: { code: 0, data: { adgroup_id: "TG9" } } })],
+    ["POST", /graph\.facebook\.com\/v[\d.]+\/M[CSA]\d$/, () => ({ json: { success: true } })],
+  ];
+  const t = await adsApp({ routes, provider: prov });
+  try {
+    // An approved Studio item with an image, so the Meta ad gets a creative.
+    const media = t.st.addOps("creative_media", t.w.id, { file: "abc.png", kind: "image", ext: "png", name: "reel cover" });
+    const item = t.st.addOps("creative_items", t.w.id, { title: "Before/after reel", status: "approved", channels: ["ig_reel"], variants: { ig_reel: { caption_ar: "قبل وبعد", media: [media.id] } }, comments: [], history: [], published: {} });
+    planJson.campaigns[0].ads[0].creative_item_id = item.id;
+    assert.equal((await t.j(`${t.P}/plans`, { goal: "x", budget_sar: 0, channels: ["Meta"] })).status, 422);
+    const start = isoDay(1), end = isoDay(10);
+    const r = await t.j(`${t.P}/plans`, { goal: "20 trials from Riyadh fashion stores", budget_sar: 8000, channels: ["Meta", "TikTok"], start_date: start, end_date: end });
+    assert.equal(r.status, 201);
+    const p = r.body;
+    assert.equal(p.status, "draft"); assert.equal(p.campaigns.length, 2); // X dropped
+    const mc = p.campaigns[0];
+    assert.equal(mc.budget_sar, 6000); assert.equal(p.campaigns[1].budget_sar, 2000); // from the person's budget
+    assert.equal(mc.ad_sets[0].daily_budget_sar, 360); // 6000 × 60% / 10 days
+    assert.match(mc.ads[0].name, new RegExp(`\\[cs:${item.id}\\]$`));
+    assert.equal(mc.ads[0].link, "https://dpa.ad/?utm_source=meta&utm_medium=paid_social&utm_campaign=riyadh-fashion-nov&utm_content=reel");
+    assert.ok(t.st.db.agent_runs.some((x) => x.agent_id === "ads_media_buyer"));
+    // A member (view) can't approve or create; a team lead can approve.
+    const member = await t.userAs("member", "member@dpa.ad");
+    assert.equal(await member(`${t.P}/plans/${p.id}/approve`, {}), 403);
+    assert.equal(await member(`${t.P}/plans`), 200);
+    const lead = await t.userAs("manager", "lead@dpa.ad");
+    assert.equal(await lead(`${t.P}/plans/${p.id}/approve`, {}), 200);
+    // Test mode: the exact payloads are stored, nothing is sent, all PAUSED / DISABLE.
+    const tm = (await t.j(`${t.P}/plans/${p.id}/create`, {})).body;
+    assert.equal(t.fetchImpl.calls.length, 0);
+    const pl = tm.campaigns[0].platform.payloads;
+    assert.equal(pl.campaign.status, "PAUSED"); assert.ok(pl.adsets.every((s) => s.status === "PAUSED")); assert.ok(pl.ads.every((a) => a.status === "PAUSED"));
+    assert.equal(pl.adsets[0].daily_budget, 36000); // SAR 360 in halalas
+    assert.equal(tm.campaigns[1].platform.payloads.campaign.operation_status, "DISABLE");
+    assert.equal(tm.status, "approved");
+    // Live: Meta and TikTok calls, campaign created paused, never activated.
+    connectAds(t.ads, t.w.id, "meta", { id: "act_1", name: "DPA AD", currency: "SAR", timezone: "Asia/Riyadh", status: "active", active: true });
+    connectAds(t.ads, t.w.id, "tiktok", { id: "ADV1", name: "DPA AD TT", currency: "USD", timezone: "Asia/Riyadh", status: "enable", active: true });
+    await t.j(`${t.P}/settings`, { mode: "live", meta_page_id: "PG1", meta_pixel_id: "PX1" }, "PUT");
+    const lv = (await t.j(`${t.P}/plans/${p.id}/create`, {})).body;
+    assert.equal(lv.status, "created");
+    assert.deepEqual([lv.campaigns[0].platform.campaign_id, lv.campaigns[0].platform.adset_ids, lv.campaigns[0].platform.ad_ids, lv.campaigns[0].platform.status], ["MC1", ["MS1", "MS2"], ["MA1"], "PAUSED"]);
+    const sent = t.fetchImpl.calls.filter((c) => c.method === "POST").map((c) => ({ url: c.url, body: c.body }));
+    const camp = new URLSearchParams(sent.find((c) => /act_1\/campaigns$/.test(c.url)).body);
+    assert.equal(camp.get("status"), "PAUSED"); assert.equal(camp.get("objective"), "OUTCOME_LEADS");
+    const set1 = new URLSearchParams(sent.find((c) => /act_1\/adsets$/.test(c.url)).body);
+    assert.equal(set1.get("status"), "PAUSED"); assert.equal(set1.get("campaign_id"), "MC1"); assert.equal(set1.get("daily_budget"), "36000");
+    assert.deepEqual(JSON.parse(set1.get("promoted_object")), { pixel_id: "PX1", custom_event_type: "COMPLETE_REGISTRATION" });
+    assert.deepEqual(JSON.parse(set1.get("targeting")).flexible_spec, [{ interests: [{ id: "I1", name: "Salla" }], work_positions: [{ id: "W1", name: "Business Owner" }] }]);
+    const cr = JSON.parse(new URLSearchParams(sent.find((c) => /adcreatives$/.test(c.url)).body).get("object_story_spec"));
+    assert.equal(cr.page_id, "PG1"); assert.equal(cr.link_data.picture, "https://wiz.test/media/abc.png"); assert.equal(cr.link_data.message, "إعلانات مصممة لمتجرك");
+    assert.equal(new URLSearchParams(sent.find((c) => /act_1\/ads$/.test(c.url)).body).get("status"), "PAUSED");
+    const ttc = JSON.parse(sent.find((c) => /campaign\/create/.test(c.url)).body);
+    assert.equal(ttc.operation_status, "DISABLE"); assert.equal(ttc.advertiser_id, "ADV1");
+    assert.equal(JSON.parse(sent.find((c) => /adgroup\/create/.test(c.url)).body).budget, 53.33); // SAR 2000 / 10 days / 3.75
+    assert.ok(!sent.some((c) => /ACTIVE|ENABLE/.test(c.body || "")), "nothing activated automatically");
+    // Activate: approver only, explicit confirm.
+    assert.equal(await member(`${t.P}/plans/${p.id}/activate`, { confirm: true }), 403);
+    assert.equal((await t.j(`${t.P}/plans/${p.id}/activate`, {})).status, 422);
+    const act = (await t.j(`${t.P}/plans/${p.id}/activate`, { confirm: true, channel: "Meta" })).body;
+    assert.equal(act.status, "active"); assert.equal(act.campaigns[0].platform.status, "ACTIVE"); assert.equal(act.campaigns[1].platform.status, "PAUSED"); // only the channel asked for
+    assert.ok(t.fetchImpl.calls.some((c) => /MC1$/.test(c.url) && /status=ACTIVE/.test(c.body)));
+    // Outcome: approved unchanged → accepted.
+    const ev = (await t.j("/api/workforce/agents/ads_media_buyer")).body.events;
+    assert.equal(ev[0].outcome, "accepted");
+  } finally { t.close(); }
+});
+
+test("Paid Ads: plan outcomes (edited, rejected), the starter plan without AI, and creative rotation into Studio ideas", async () => {
+  const t = await adsApp();
+  try {
+    const p = (await t.j(`${t.P}/plans`, { goal: "Trials", budget_sar: 3000, channels: ["Meta", "Snapchat"] })).body;
+    assert.equal(p.by_ai, false); assert.match(p.note, /starter structure/); assert.equal(p.campaigns.length, 2);
+    assert.equal((await t.j(`${t.P}/plans/${p.id}/approve`, {})).status, 422); // [ADD] left in
+  } finally { t.close(); }
+  const ai = { name: "fake", model: "fake", async generate({ prompt }) {
+    if (prompt.includes("AI Media buyer")) return JSON.stringify({ name: "P", campaigns: [{ channel: "Meta", name: "M", budget_pct: 100, ad_sets: [{ name: "A", budget_pct: 100, audience: {} }], ads: [{ name: "Ad", primary_text_ar: "نص", headline_ar: "عنوان" }] }] });
+    if (prompt.includes("AI Creative rotator")) return JSON.stringify({ ideas: [{ title: "New hook reel", brief: "b", why: "w" }] });
+    return "{}";
+  } };
+  const t2 = await adsApp({ provider: ai });
+  try {
+    const a = (await t2.j(`${t2.P}/plans`, { goal: "g", budget_sar: 1000, channels: ["Meta"] })).body;
+    const edited = { ...a, campaigns: a.campaigns.map((c) => ({ ...c, ads: c.ads.map((x) => ({ ...x, headline_ar: "عنوان جديد" })) })) };
+    assert.equal((await t2.j(`${t2.P}/plans/${a.id}`, edited, "PUT")).status, 200);
+    assert.equal((await t2.j(`${t2.P}/plans/${a.id}/approve`, {})).status, 200);
+    const b = (await t2.j(`${t2.P}/plans`, { goal: "g2", budget_sar: 1000, channels: ["Meta"] })).body;
+    assert.equal((await t2.j(`${t2.P}/plans/${b.id}/reject`, { reason: "wrong audience" })).status, 200);
+    const ev = (await t2.j("/api/workforce/agents/ads_media_buyer")).body.events.map((e) => e.outcome);
+    assert.deepEqual(ev.slice(0, 2), ["rejected", "edited"]);
+    // Creative rotation: fatigue = frequency up and CTR down week on week; ranked by cost per result.
+    const { saveRows } = await import("../lib/ads.js");
+    const item = t2.st.addOps("creative_items", t2.w.id, { title: "Winner reel", status: "published", channels: [], variants: {}, comments: [], history: [], published: {} });
+    const rows = [];
+    for (let k = 1; k <= 14; k++) {
+      const recent = k <= 7;
+      rows.push({ channel: "Meta", date: isoDay(-k), currency: "SAR", campaign_id: "C", campaign_name: "C", adset_id: "S", adset_name: "S", ad_id: "A1", ad_name: `Tired [cs:${item.id}]`, spend: 50, impressions: 2000, clicks: recent ? 10 : 30, reach: recent ? 800 : 1500, signups: 1 });
+      rows.push({ channel: "Meta", date: isoDay(-k), currency: "SAR", campaign_id: "C", campaign_name: "C", adset_id: "S", adset_name: "S", ad_id: "A2", ad_name: "Fresh", spend: 50, impressions: 2000, clicks: 30, reach: 1500, signups: 0 });
+    }
+    saveRows(t2.st, t2.w.id, rows, { source: "api" });
+    const cr = (await t2.j(`${t2.P}/creatives`)).body;
+    assert.deepEqual(cr.fatigued.map((x) => x.ad_id), ["A1"]);
+    assert.equal(cr.ads[0].ad_id, "A1"); // has a cost per result; A2 has none
+    assert.equal(cr.studio[0].title, "Winner reel");
+    assert.ok(cr.suggestions.some((s) => s.key.startsWith("fatigue:")));
+    const sug = (await t2.j(`${t2.P}/creatives/suggest`, {})).body;
+    const aiIdea = sug.suggestions.find((s) => s.key.startsWith("ai:"));
+    assert.equal(aiIdea.title, "New hook reel");
+    const idea = await t2.j(`${t2.P}/creatives/ideas`, aiIdea);
+    assert.equal(idea.status, 201); assert.equal(idea.body.status, "idea"); assert.equal(idea.body.source, "ads_rotator");
+    assert.ok(!(await t2.j(`${t2.P}/creatives`)).body.suggestions.some((s) => s.key === aiIdea.key));
+    await t2.j(`${t2.P}/creatives/dismiss`, { key: cr.suggestions[0].key });
+    const rev = (await t2.j("/api/workforce/agents/ads_rotator")).body.events.map((e) => e.outcome);
+    assert.deepEqual(rev.slice(0, 2), ["rejected", "accepted"]);
+  } finally { t2.close(); }
+});
+
+test("Paid Ads: permissions per role, approver-only budgets and Live mode, OAuth with sealed tokens", async () => {
+  const { MODULES, DEFAULT_ROLES, moduleFor } = await import("../lib/access.js");
+  assert.ok(MODULES.some((m) => m.id === "ads" && m.name === "Paid Ads"));
+  assert.equal(moduleFor("GET", "/api/workspaces/1/ads/plans"), "ads");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.ads])), { owner: "edit", admin: "edit", manager: "edit", member: "view", finance: "view", creative: "view", viewer: "view" });
+  const t = await adsApp({ routes: [
+    ["GET", /oauth\/access_token\?client_id=/, () => ({ json: { access_token: "SHORT" } })],
+    ["GET", /oauth\/access_token\?grant_type=fb_exchange_token/, () => ({ json: { access_token: "LONG-USER", expires_in: 5184000 } })],
+    ["GET", /\/me\?fields=id%2Cname/, () => ({ json: { id: "U1", name: "Founder" } })],
+    ["GET", /\/me\/permissions/, () => ({ json: { data: [{ permission: "ads_read", status: "granted" }, { permission: "ads_management", status: "granted" }] } })],
+    ["GET", /\/me\/adaccounts/, () => ({ json: { data: [{ id: "act_8", name: "Old", currency: "SAR", account_status: 2 }, { id: "act_9", name: "DPA AD", currency: "USD", timezone_name: "Asia/Riyadh", account_status: 1 }] } })],
+  ] });
+  try {
+    for (const role of ["member", "creative", "finance", "viewer"]) {
+      const as = await t.userAs(role, `${role}@dpa.ad`);
+      assert.equal(await as(t.P), 200, role);
+      assert.equal(await as(`${t.P}/utm`, { campaign: "x", channel: "Meta" }), 403, role);
+    }
+    const lead = await t.userAs("manager", "lead2@dpa.ad");
+    assert.equal(await lead(`${t.P}/settings`, { budgets: { Meta: 5000 } }, "PUT"), 200);
+    // A custom role with Edit on Paid Ads but not an approver: can work, can't change budgets, rules or go Live.
+    const role = (await t.j("/api/admin/roles", { name: "Ads editor", perms: { ads: "edit", command: "view" } })).body;
+    await t.j("/api/admin/users", { name: "Editor", email: "ed@dpa.ad", password: "ads-pass-123", role_id: role.id });
+    const edCk = (await fetch(t.b + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "ed@dpa.ad", password: "ads-pass-123" }) })).headers.get("set-cookie").split(";")[0];
+    const ed = async (p, body, method) => (await fetch(t.b + p, { method: method || "POST", headers: { "Content-Type": "application/json", cookie: edCk }, body: JSON.stringify(body) })).status;
+    assert.equal(await ed(`${t.P}/settings`, { budgets: { Meta: 1 } }, "PUT"), 403);
+    assert.equal(await ed(`${t.P}/settings`, { mode: "live" }, "PUT"), 403);
+    assert.equal(await ed(`${t.P}/settings`, { meta_pixel_id: "PX" }, "PUT"), 200);
+    assert.equal(await ed(`${t.P}/rules`, { kind: "cap_daily", cap_sar: 100 }), 403);
+    assert.equal(await ed(`${t.P}/utm`, { campaign: "x", channel: "Meta" }), 200);
+    assert.equal((await t.j(`${t.P}/settings`, {}, "PUT")).body.budgets.Meta, 5000);
+
+    // OAuth: start redirects to Meta with the ads scopes; the callback stores a sealed token and lists ad accounts.
+    const st = await t.req(`/oauth/ads/meta/start?ws=${t.w.id}`);
+    assert.equal(st.status, 302);
+    const loc = new URL(st.headers.get("location"));
+    assert.equal(loc.searchParams.get("scope"), "ads_read,ads_management,business_management");
+    assert.equal(loc.searchParams.get("redirect_uri"), "https://wiz.test/oauth/ads/meta/callback");
+    const nonce = /mwiz_ads_oauth=([^;]+)/.exec(st.headers.get("set-cookie"))[1];
+    const cb = await t.req(`/oauth/ads/meta/callback?code=C&state=${encodeURIComponent(loc.searchParams.get("state"))}`, { headers: { cookie: `${t.ck}; mwiz_ads_oauth=${nonce}` } });
+    assert.equal(cb.status, 302); assert.match(cb.headers.get("location"), /\/ads\/accounts$/);
+    assert.equal((await t.req("/oauth/ads/meta/callback?code=C&state=bad")).status, 403);
+    const acc = (await t.j(`${t.P}/accounts`)).body;
+    const meta = acc.platforms.find((x) => x.id === "meta");
+    assert.equal(meta.connection.account.id, "act_9"); // the active one is picked
+    assert.deepEqual(meta.connection.accounts.map((a) => [a.currency, a.timezone, a.status]), [["SAR", "", "disabled"], ["USD", "Asia/Riyadh", "active"]]);
+    assert.deepEqual(meta.connection.missing_scopes, ["business_management"]);
+    assert.equal(meta.review_done, false);
+    assert.match(acc.notice.text, /Meta connected: 2 ad accounts/);
+    assert.ok(!JSON.stringify(acc).includes("LONG-USER")); assert.ok(!JSON.stringify(t.st.db.ads_accounts).includes("LONG-USER")); // sealed at rest
+    assert.ok(!acc.platforms.some((x) => x.id === "google")); // behind ADS_GOOGLE=1
+    assert.equal((await t.req(`/oauth/ads/google/start?ws=${t.w.id}`)).status, 404);
+    assert.equal((await t.j(t.P)).body.mode, "test"); // Test mode by default
+  } finally { t.close(); }
+});
+
+test("Paid Ads: Meta reuses Creative Studio's login when it has the ads permissions; scheduled pulls only in Live", async () => {
+  const t = await adsApp({ routes: [
+    ["GET", /\/me\?fields=id%2Cname/, () => ({ json: { id: "U1", name: "Founder" } })],
+    ["GET", /\/me\/permissions/, (u) => ({ json: { data: u.includes("NO-ADS") ? [{ permission: "pages_show_list", status: "granted" }] : [{ permission: "ads_read", status: "granted" }] } })],
+    ["GET", /\/me\/adaccounts/, () => ({ json: { data: [{ id: "act_5", name: "DPA AD", currency: "SAR", timezone_name: "Asia/Riyadh", account_status: 1 }] } })],
+    ["GET", /act_5\/insights/, () => ({ json: { data: [{ date_start: isoDay(-1), campaign_id: "C", campaign_name: "C", adset_id: "S", adset_name: "S", ad_id: "A", ad_name: "A", spend: "10", impressions: "100", clicks: "1", actions: [] }] } })],
+  ] });
+  try {
+    assert.equal((await t.j(`${t.P}/accounts/meta/reuse`, {})).status, 422); // no Studio login yet
+    const studio = t.app.locals.studio;
+    studio.saveAccount(t.w.id, "meta", { name: "DPA AD", tokens: { user: "NO-ADS", pages: {} }, targets: [{ id: "P1", page_id: "P1", page_name: "DPA AD", ig_id: "" }], selected: "P1", scopes: [] }, "test");
+    assert.match((await t.j(`${t.P}/accounts/meta/reuse`, {})).body.detail, /doesn't include ads permissions/);
+    studio.saveAccount(t.w.id, "meta", { name: "DPA AD", tokens: { user: "WITH-ADS", pages: {} }, targets: [{ id: "P1", page_id: "P1", page_name: "DPA AD", ig_id: "" }], selected: "P1", scopes: [] }, "test");
+    const r = await t.j(`${t.P}/accounts/meta/reuse`, {});
+    assert.equal(r.status, 200); assert.equal(r.body.via, "studio"); assert.equal(r.body.account.id, "act_5");
+    assert.deepEqual(await t.ads.pullAll(), []); // Test mode: the 6-hour schedule pulls nothing
+    assert.equal((await t.j(`${t.P}/pull`, {})).body.pulled[0].added, 1); // a person can still pull (read-only)
+    await t.j(`${t.P}/settings`, { mode: "live" }, "PUT");
+    const all = await t.ads.pullAll();
+    assert.equal(all.length, 1); assert.equal(all[0].pulled[0].updated, 1);
+    assert.equal(t.st.listExpenses(t.w.id).filter((e) => e.source === "ads").length, 1);
+  } finally { t.close(); }
+});

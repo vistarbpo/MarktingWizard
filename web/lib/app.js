@@ -22,6 +22,9 @@ import { createProducts } from "./products.js";
 import { createPublisher } from "./publisher.js";
 import { socialConfig } from "./social.js";
 import { mountStudio, mountStudioPublic } from "./studioroutes.js";
+import { createAds, mountAds, mountAdsPublic } from "./adsroutes.js";
+import { adsConfig } from "./adsapi.js";
+import { adsCommand } from "./ads.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -33,7 +36,7 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {} }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, adsOptions = {} }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -43,6 +46,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const products = createProducts({ crm, ...productOptions }); // product samples per store (fetch jobs)
   const studio = createPublisher({ store, provider, cfg: socialConfig(process.env, password),
     publisherLevel: () => workforce.level("creative_publisher"), setPublisherLevel: (on, by) => workforce.set("creative_publisher", { level: on ? 2 : 1, paused: false }, by), ...studioOptions }); // Creative Studio publishing
+  const ads = createAds({ store, provider, workforce, crm, studio, cfg: adsConfig(process.env, password), ...adsOptions }); // Paid Ads: insights every 6 h in Live mode
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -66,7 +70,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.ads = ads;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -161,6 +165,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
 
   mountCrmPublic(app, { crm, outreach });
   mountStudioPublic(app, { store, studio });
+  mountAdsPublic(app, { store, crm, ads });
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -187,6 +192,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountCrm(app, { store, crm, outreach, provider, workforce, products });
   mountCreative(app, { store, provider, workforce, crm });
   mountStudio(app, { store, provider, studio });
+  mountAds(app, { store, ads, crm });
   mountWorkforce(app, { store, workforce });
 
   // ---- Ask DPA AD: the assistant on every page
@@ -1152,6 +1158,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const can = (m) => levelOk(req.perms[m], "view");
     const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative" };
     if (!can("creative")) d.creative = null;
+    if (can("ads")) { const a = adsCommand(store, w); d.ads = a.summary; d.needs = [...a.needs, ...d.needs]; d.feed = [...a.feed, ...d.feed].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 14); } else d.ads = null;
     if (can("workforce")) {
       const wsum = workforceSummary(store, workforce);
       d.workforce = { agents: wsum.totals.active, autonomous: wsum.totals.autonomous, people: wsum.totals.people, cost_month: wsum.totals.cost_month, budget_month: wsum.totals.budget_month, quality: wsum.totals.quality };

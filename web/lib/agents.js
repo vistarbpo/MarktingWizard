@@ -51,6 +51,15 @@ export const AGENTS = [
     job: "Writes job posts, screens candidates against the role, drafts messages.", levels: { 1: "Screens and drafts; a person interviews and decides." } },
   { id: "roas_analyst", name: "AI Results analyst", team: "Customer Success", module: "results", route: "results", max: 1, level: 1, budget: 10,
     job: "Turns ROAS results into case studies (real numbers only).", levels: { 1: "Drafts; a person gets the store's permission and publishes." } },
+  { id: "ads_media_buyer", name: "AI Media buyer", team: "Marketing", module: "ads", route: "ads", max: 1, level: 1, budget: 30,
+    job: "Drafts DPA AD's own paid campaigns from a goal: objective, audiences, placements, budget split, Saudi schedule, approved Studio creatives, Arabic copy and UTMs.",
+    levels: { 1: "Drafts plans; a person approves; campaigns are created paused and a person activates them." } },
+  { id: "ads_pacer", name: "AI Budget pacer", team: "Marketing", module: "ads", route: "ads", max: 2, level: 1, budget: 5,
+    job: "Watches spend against the monthly budgets and runs the guardrail rules after every insights pull.",
+    levels: { 1: "Alerts: over-pace budgets and guardrail hits go to a person.", 2: "Applies guardrail rules itself in Live mode (pause an ad set, cap its daily budget); everything is logged." } },
+  { id: "ads_rotator", name: "AI Creative rotator", team: "Marketing", module: "ads", route: "ads", max: 1, level: 1, budget: 10,
+    job: "Ranks ads and Creative Studio content by CTR and cost per result, flags fatigue and suggests new Studio ideas.",
+    levels: { 1: "Suggests; a person turns a suggestion into a Studio idea." } },
 ];
 export const AGENT_IDS = AGENTS.map((a) => a.id);
 export const agentDef = (id) => AGENTS.find((a) => a.id === id);
