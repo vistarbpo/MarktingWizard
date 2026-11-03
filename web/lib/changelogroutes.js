@@ -82,11 +82,11 @@ ${items.map((x) => `<item><title>${xml(x.title)}</title><link>${xml(x.url)}</lin
     const keep = (extra) => Object.fromEntries(Object.entries({ type, tag, ...extra }).filter(([, v]) => v));
     const usedTags = TAGS.filter((x) => all.some((e) => (e.tags || []).includes(x.id)));
     const filters = all.length ? `<section class="card"><div class="chips" aria-label="${h(c.t.types)}"><a class="chip${type ? "" : " on"}" href="${h(c.q("/changelog", keep({ type: "" })))}">${h(c.t.all)}</a>${TYPES.filter((x) => all.some((e) => e.type === x.id)).map((x) => `<a class="chip${type === x.id ? " on" : ""}" href="${h(c.q("/changelog", keep({ type: x.id })))}">${h(x[c.lang])}</a>`).join("")}</div>
-      ${usedTags.length ? `<div class="chips" style="margin-top:8px" aria-label="${h(c.t.tags)}">${usedTags.map((x) => `<a class="chip${tag === x.id ? " on" : ""}" href="${h(c.q("/changelog", keep({ tag: tag === x.id ? "" : x.id })))}">${h(x[c.lang])}</a>`).join("")}</div>` : ""}</section>` : "";
+      ${usedTags.length ? `<div class="chips mt8" aria-label="${h(c.t.tags)}">${usedTags.map((x) => `<a class="chip${tag === x.id ? " on" : ""}" href="${h(c.q("/changelog", keep({ tag: tag === x.id ? "" : x.id })))}">${h(x[c.lang])}</a>`).join("")}</div>` : ""}</section>` : "";
     const cards = shown.map((e) => { const l = langFor(e, c.lang); return `<article class="card entry">${when(e, c)}<h2 dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}"><a href="${h(c.q(`/changelog/${e.slug}`))}">${h(e[`title_${l}`])}</a></h2>${chips(e, c)}
-      ${e.image ? `<img class="hero-img" src="${h(e.image)}" alt="" loading="lazy">` : ""}<p class="muted" dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}" style="margin:0">${h(excerpt(e[`body_${l}`], 220))}</p><a href="${h(c.q(`/changelog/${e.slug}`))}">${h(c.t.read)}</a></article>`; }).join("");
+      ${e.image ? `<img class="hero-img" src="${h(e.image)}" alt="" loading="lazy">` : ""}<p class="muted" dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}">${h(excerpt(e[`body_${l}`], 220))}</p><a href="${h(c.q(`/changelog/${e.slug}`))}">${h(c.t.read)}</a></article>`; }).join("");
     const pager = list.length > PAGE ? `<nav class="pager">${pg > 1 ? `<a href="${h(c.q("/changelog", keep({ page: pg - 1 > 1 ? String(pg - 1) : "" })))}">${h(c.t.newer)}</a>` : "<span></span>"}${pg * PAGE < list.length ? `<a href="${h(c.q("/changelog", keep({ page: String(pg + 1) })))}">${h(c.t.older)}</a>` : ""}</nav>` : "";
-    const body = `<section><h1 class="t">${h(c.t.section)}</h1><p class="muted" style="margin:0">${h(c.t.lead)} <a href="${h(c.q("/changelog/rss.xml"))}">${h(c.t.rss)}</a> · <a href="${h(c.q("/changelog/feed.json"))}">${h(c.t.feed)}</a></p></section>${filters}
+    const body = `<section><h1 class="t">${h(c.t.section)}</h1><p class="muted m0">${h(c.t.lead)} <a href="${h(c.q("/changelog/rss.xml"))}">${h(c.t.rss)}</a> · <a href="${h(c.q("/changelog/feed.json"))}">${h(c.t.feed)}</a></p></section>${filters}
       ${cards || `<p class="muted">${h(all.length ? c.t.noneFiltered : c.t.none)}</p>`}${pager}`;
     const path = `/changelog${Object.keys(keep({ page: pg > 1 ? String(pg) : "" })).length ? `?${new URLSearchParams(keep({ page: pg > 1 ? String(pg) : "" }))}` : ""}`;
     sendPublic(res, page(c, { body, path, noindex: !!(type || tag || pg > 1), desc: c.t.lead }), 200, { nonce: c.nonce });
@@ -99,8 +99,8 @@ ${items.map((x) => `<item><title>${xml(x.title)}</title><link>${xml(x.url)}</lin
     const body = `<article><div class="crumb"><a href="${h(c.q("/changelog"))}">${h(c.t.section)}</a></div>
       <h1 dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}">${h(e[`title_${l}`])}</h1><div class="row">${when(e, c)}${chips(e, c)}</div>
       ${l !== c.lang ? `<p class="note">${h(T[l === "ar" ? "en" : "ar"].onlyOther)}</p>` : ""}
-      ${e.image ? `<img class="hero-img" src="${h(e.image)}" alt="" style="margin-top:12px">` : ""}
-      <div class="body card" style="margin-top:12px" dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}">${renderMarkdown(e[`body_${l}`])}</div></article>
+      ${e.image ? `<img class="hero-img mt12" src="${h(e.image)}" alt="">` : ""}
+      <div class="body card mt12" dir="${l === "ar" ? "rtl" : "ltr"}" lang="${l}">${renderMarkdown(e[`body_${l}`])}</div></article>
       <p><a href="${h(c.q("/changelog"))}">${h(c.t.back)}</a> · <a href="${h(c.q("/help"))}">${h(c.t.help)}</a></p>`;
     sendPublic(res, page(c, { title: e[`title_${l}`], body, path: `/changelog/${e.slug}`, desc: plainText(e[`body_${l}`]).slice(0, 160) }), 200, { nonce: c.nonce });
   });

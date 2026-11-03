@@ -6424,7 +6424,7 @@ test("changelog public site: Arabic by default and ?lang=en, only published entr
     assert.equal(home.status, 200);
     assert.match(home.text, /<html lang="ar" dir="rtl">/); assert.match(home.text, /ما الجديد/);
     assert.ok(home.text.indexOf("إصلاح الأسعار") < home.text.indexOf("قوالب فيديو لسناب"), "newest first");
-    assert.doesNotMatch(home.text, /Secret draft/); assert.doesNotMatch(home.text, /<script/i);
+    assert.doesNotMatch(home.text, /Secret draft/); assert.doesNotMatch(home.text, /<script/i); assert.doesNotMatch(home.text, /\sstyle="/, "no inline style attributes (the CSP blocks them)");
     assert.match(home.text, /<time class="when" datetime="2026-11-01">/);
     assert.match(home.text, /href="\/help"/, "links to the help center");
     assert.match(home.text, /type="application\/rss\+xml"[^>]*href="\/changelog\/rss.xml"/);
@@ -6441,7 +6441,7 @@ test("changelog public site: Arabic by default and ?lang=en, only published entr
     assert.match((await k.pub("/changelog?tag=google")).text, /ما فيه تحديثات بهذا الفلتر/);
     assert.equal((await k.pub("/changelog?type=bogus")).status, 404); assert.equal((await k.pub("/changelog?tag=bogus")).status, 404);
     const art = await k.pub(`/changelog/${live.slug}`);
-    assert.equal(art.status, 200); assert.match(art.text, /<h2>الجديد<\/h2>/); assert.match(art.text, /<li>اختر قالب الفيديو<\/li>/); assert.match(art.text, /سناب شات/);
+    assert.equal(art.status, 200); assert.doesNotMatch(art.text, /\sstyle="/); assert.match(art.text, /<h2>الجديد<\/h2>/); assert.match(art.text, /<li>اختر قالب الفيديو<\/li>/); assert.match(art.text, /سناب شات/);
     assert.match((await k.pub(`/changelog/${live.slug}?lang=en`)).text, /<h2>What&#39;s new<\/h2>/);
     assert.match((await k.pub(`/changelog/${fix.slug}?lang=en`)).text, /We fixed &lt;b&gt;prices&lt;\/b&gt; &amp; more/, "body HTML is escaped");
     assert.match((await k.pub(`/changelog/${enOnly.slug}`)).text, /متوفر بالإنجليزي فقط/);

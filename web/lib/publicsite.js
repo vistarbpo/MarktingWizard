@@ -41,7 +41,7 @@ main>*+*{margin-top:16px}.body>:first-child{margin-top:0}.body>:last-child{margi
 .chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-block;font-size:13px;line-height:1.4;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--card);color:var(--text);text-decoration:none;white-space:nowrap}
 a.chip:hover{border-color:var(--p)}.chip.on{background:var(--p);border-color:var(--p);color:#fff}.kind{font-weight:600;color:#fff;background:var(--p);border-color:var(--p)}.kind.fixed{background:#1d8a5a;border-color:#1d8a5a}.kind.improved{background:var(--a);border-color:var(--a)}.kind.announcement{background:#6d4fd8;border-color:#6d4fd8}
 .entry{display:grid;gap:8px}.entry h2{font-size:19px;line-height:1.35;margin:0}.entry h2 a{color:var(--text);text-decoration:none}.entry h2 a:hover{color:var(--p)}.when{color:var(--muted);font-size:14px}.hero-img{display:block;width:100%;height:auto;border-radius:12px;margin:4px 0}
-.pager{display:flex;justify-content:space-between;gap:12px}`;
+.pager{display:flex;justify-content:space-between;gap:12px}.m0{margin:0}.mt8{margin-top:8px}.mt12{margin-top:12px}.entry .muted{margin:0}`;
 
 // One page. `nav` is a list of { href, text, current } shown next to the language switch (the cross-links between
 // /help and /changelog); `hero` is optional HTML under the header (the help search form).

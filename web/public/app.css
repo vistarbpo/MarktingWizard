@@ -1364,7 +1364,8 @@ textarea.hc-body { width: 100%; height: auto; min-height: 200px; font-size: var(
 .cl-new summary { cursor: pointer; }
 .cl-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); align-items: start; }
 .cl-wide { grid-column: 1 / -1; }
-.cl-tags { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.cl-tags { border: 0; margin: 0; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.cl-tags .chip { flex: 0 0 auto; width: auto; }
 .cl-tags legend { padding: 0; margin-bottom: 6px; font-weight: 500; }
 select.cl-multi { height: auto; min-height: 96px; padding: 6px; background-image: none; }
 textarea.cl-body { width: 100%; height: auto; min-height: 140px; font-size: var(--fs-sm); }
