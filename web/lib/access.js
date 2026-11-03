@@ -15,6 +15,7 @@ export const MODULES = [
   { id: "support", name: "AI Support" },
   { id: "results", name: "ROAS results" },
   { id: "finance", name: "Finance" },
+  { id: "billing", name: "Billing & customers" },
   { id: "ops", name: "Operations" },
   { id: "team", name: "Team & hiring" },
   { id: "admin", name: "Teams & roles (people, access)" },
@@ -27,15 +28,15 @@ const all = (lvl) => Object.fromEntries(MODULE_IDS.map((m) => [m, lvl]));
 export const DEFAULT_ROLES = [
   { id: "owner", name: "Owner", locked: true, description: "Everything, including people, roles and billing decisions.", perms: all("edit") },
   { id: "admin", name: "Admin", description: "Runs the dashboard day to day and manages people.", perms: all("edit") },
-  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view" } },
-  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view" } },
-  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view" } },
+  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", billing: "view", admin: "none", workforce: "view" } },
+  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", billing: "none", admin: "none", workforce: "view" } },
+  { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", billing: "edit", ops: "view" } },
   { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view" } },
   { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none" } },
 ];
 
 export const STARTER_TEAMS = [
-  { name: "Leadership", modules: ["command", "sop", "finance", "team", "admin"], description: "Strategy, money, people and the SOP." },
+  { name: "Leadership", modules: ["command", "sop", "finance", "billing", "team", "admin"], description: "Strategy, money, people and the SOP." },
   { name: "Growth & Sales", modules: ["marketing", "sales", "results"], description: "Marketing, the pipeline and proving ROAS." },
   { name: "Customer Success", modules: ["support", "results"], description: "AI Support escalations, onboarding and case studies." },
   { name: "Product & Engineering", modules: ["product", "ops"], description: "Roadmap, releases, incidents and the tool stack." },
@@ -67,7 +68,7 @@ export function moduleFor(method, path) {
   const seg = p[3];
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
-    deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team",
+    deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", billing: "billing", customers: "support", ops: "ops", hr: "team",
     sop: "sop", command: "command", crm: "crm", creative: "creative", "sample-data": "admin" })[seg] || "admin";
 }
 

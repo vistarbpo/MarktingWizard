@@ -884,3 +884,23 @@ details > summary { cursor: pointer; }
 .cp-card code { overflow-wrap: anywhere; word-break: break-word; }
 .cp-card details > div { display: flex; flex-direction: column; }
 .cm-dialog input[type=file] { min-width: 0; max-width: 100%; } .cm-dialog { overflow-x: hidden; }
+
+/* ---------------------------------------------------------------- Billing & customers */
+.bl-drawer { width: min(720px, 100%); }
+.bl-drawer > * { flex-shrink: 0; }
+.bl-table tr.clickable { cursor: pointer; }
+.bl-table tr.clickable:hover td { background: var(--surface-2); }
+.bl-acts { white-space: nowrap; }
+.bl-acts .btn + .btn { margin-left: 4px; }
+.bl-factors { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.bl-factors li { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+.bl-factors .meter { grid-column: 1 / -1; }
+.bl-onb { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--text-2); }
+.bl-onb li.on { color: var(--good); }
+.bl-conn { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 4px 16px; color: var(--text-2); }
+.bl-prorate { border-color: var(--accent); }
+.bl-draft { border-color: var(--warn); }
+@media (max-width: 640px) {
+  .bl-acts { white-space: normal; }
+  .bl-acts .btn { margin: 2px 0; }
+}

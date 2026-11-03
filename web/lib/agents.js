@@ -43,6 +43,8 @@ export const AGENTS = [
     job: "Runs the playbooks: positioning, ICP, messaging, landing pages, ads, GTM plans.", levels: { 1: "Writes; a person decides." } },
   { id: "finance_cfo", name: "AI CFO", team: "Finance", module: "finance", route: "finance", max: 1, level: 1, budget: 20,
     job: "Monthly reports, cost reviews, investor updates, sorting bank-statement lines.", levels: { 1: "Drafts and sorts; a person approves payments and filings." } },
+  { id: "billing_assistant", name: "AI Billing assistant", team: "Finance", module: "billing", route: "billing", max: 1, level: 1, budget: 10,
+    job: "Drafts payment reminders for overdue invoices and plain-language explanations of invoices, in Arabic and English.", levels: { 1: "Drafts; a person edits, approves and sends. The day 1/3/7 reminders themselves are fixed templates." } },
   { id: "ops_planner", name: "AI Operations planner", team: "Operations", module: "ops", route: "ops", max: 1, level: 1, budget: 20,
     job: "Turns goals into tasks, writes incident summaries and weekly ops reports.", levels: { 1: "Plans; a person assigns and closes." } },
   { id: "product_analyst", name: "AI Product analyst", team: "Product", module: "product", route: "product", max: 1, level: 1, budget: 20,
@@ -62,7 +64,7 @@ export function agentFor(method, path) {
   const seg = p.split("/").filter(Boolean)[3] || "";
   if (seg === "creative") return /\/(plan|ideas)$/.test(p) ? "creative_strategist" : "creative_copywriter";
   if (seg === "crm") return /ai-write/.test(p) ? "crm_sequence_writer" : "crm_triage";
-  return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
+  return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }
 
 // Prices per million tokens (Anthropic API list prices). Unknown models are charged at the default model's rate.

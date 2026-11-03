@@ -14,7 +14,7 @@ npm run sop:md                                           # regenerate docs/SOP.m
 ```
 
 - **Deploy:** push to `main` on GitHub `vistarbpo/MarktingWizard`. Hostinger auto-deploys `main` (root dir `web`, entry `server.js`, Node 22, Express). Check a deploy by fetching `https://wizard.dpa.ad/app.css` for a new CSS rule, plus `/healthz`. Other pages need a login.
-- **Env vars** live in hPanel (Websites → wizard.dpa.ad → Node.js → Environment variables), never in git: `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, optional `MWIZ_MODEL`, `DATA_DIR`, and the Store CRM channels (`SMTP_*`, `MAIL_FROM`, `MAIL_REPLY_TO`, `IMAP_*`, `WA_TOKEN`, `WA_PHONE_ID`, `WA_VERIFY_TOKEN`, `WA_APP_SECRET`, `PUBLIC_URL`, `COMPANY_ADDRESS`, `INBOUND_SECRET`) and Creative Studio publishing (`TOKEN_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, optional `META_GRAPH_VERSION`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, optional `LINKEDIN_ORG_ID` and `LINKEDIN_VERSION`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `YOUTUBE_AUDITED`, `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_AUDITED`). Set `TOKEN_KEY` before connecting accounts: without it the token key comes from `DASHBOARD_PASSWORD`, and rotating the password means reconnecting every account. The full list is commented at the top of `web/server.js`.
+- **Env vars** live in hPanel (Websites → wizard.dpa.ad → Node.js → Environment variables), never in git: `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, optional `MWIZ_MODEL`, `DATA_DIR`, and the Store CRM channels (`SMTP_*`, `MAIL_FROM`, `MAIL_REPLY_TO`, `IMAP_*`, `WA_TOKEN`, `WA_PHONE_ID`, `WA_VERIFY_TOKEN`, `WA_APP_SECRET`, `PUBLIC_URL`, `COMPANY_ADDRESS`, `INBOUND_SECRET`) and Creative Studio publishing (`TOKEN_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, optional `META_GRAPH_VERSION`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, optional `LINKEDIN_ORG_ID` and `LINKEDIN_VERSION`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `YOUTUBE_AUDITED`, `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_AUDITED`) and Billing (`MOYASAR_SECRET_KEY`, `MOYASAR_WEBHOOK_SECRET`, `BILLING_USAGE_TOKEN`, optional `ZATCA_ENV`, `ZATCA_CSID`, `ZATCA_CSID_SECRET`). Set `TOKEN_KEY` before connecting accounts: without it the token key comes from `DASHBOARD_PASSWORD`, and rotating the password means reconnecting every account. The full list is commented at the top of `web/server.js`.
 - **Data** is not in git: `DATA_DIR` (default `~/marketing-wizard-data`) holds `db.json` (everything except the CRM) and `crm.json` (stores, campaigns, messages; batched writes, flushed on SIGTERM), plus `media/` (Creative Studio uploads and renders, served publicly at `/media/<random>.<ext>`). There are **no backups yet**.
 - Without `ANTHROPIC_API_KEY` the app runs a demo provider (sidebar shows "Demo mode").
 - To stop a local server: `for p in $(pgrep -f "^node server.js"); do kill $p; done`. Don't use `pkill -f "node server.js"`: it kills the shell running it.
@@ -23,10 +23,10 @@ npm run sop:md                                           # regenerate docs/SOP.m
 
 Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
 
-- `web/server.js`: entry. Creates `Store`, provider (Claude via `@anthropic-ai/sdk`, or demo) and the app, and starts the CRM scheduler.
+- `web/server.js`: entry. Creates `Store`, provider (Claude via `@anthropic-ai/sdk`, or demo) and the app, and starts the CRM, Creative Studio and billing schedulers.
 - `web/lib/app.js`: `createApp({ store, provider, password, crm, outreachOptions })` holds all routes. Order:
   1. login
-  2. public routes (support chat, CRM unsubscribe and webhooks)
+  2. public routes (support chat, CRM unsubscribe and webhooks, `/hooks/moyasar`, `/hooks/billing/usage`)
   3. auth middleware (session, per-module permission, audit log)
   4. API routes
 
@@ -37,7 +37,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   | File | Module |
   |---|---|
   | `sales.js` | Plans, stages, next actions, close rate, AI tasks |
-  | `finance.js` | Snapshot, unit economics, LTV:CAC, VAT |
+  | `finance.js` | Snapshot, unit economics, LTV:CAC, VAT (MRR and output VAT from Billing when customers exist) |
   | `pricing.js` | Cost-per-store calculator and render limits |
   | `hr.js` | Team & hiring |
   | `support.js` | AI support |
@@ -66,6 +66,11 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - `publisher.js`: `createPublisher()` (`app.locals.studio`, started in `server.js`): scheduler every minute, results every 6 h, comments every 15 min. Test mode by default; `canAutoPublish(ws)` is the one auto-publish check (off by default); only approved or scheduled items publish; 3 tries then stop; `creative_publish_log`, `social_accounts`.
   - `studioroutes.js`: `mountStudioPublic` (`/media/*`, `/hooks/meta`) before the login wall; `mountStudio` (media, accounts, `/oauth/<provider>/start|callback`, publish now, retry, results, and support replies on comment/DM tickets sent back through Meta).
   - Browser side: `studio-render.js` (8 canvas templates, reel encoder: WebCodecs H.264 + AAC, `mp4-muxer@5.1.3` from jsDelivr), `studio-media.js` (Assets tab, attach, template designer, reel builder), `studio-publish.js` (Accounts, Publishing, Results). Rendering is in the browser because Hostinger can't run Chrome or ffmpeg. AAC audio encoding needs Chrome/Edge on Windows or Mac (Linux Chrome has none).
+- **Billing & customers** (route `billing`, module `billing`; rules and sources in `docs/billing-zatca.md`):
+  - `billing.js`: pure maths (plan prices read from `PLANS`, yearly = 10 × monthly, `proration()`, `overage()`, `invoiceTotals()`, `dunningState()`, `healthScore()`, `mrrMetrics()`, payout CSV `parsePayouts()`/`reconcilePayouts()`, AI prompts) and `createBilling()`, the engine (`app.locals.billing`): customers with an event log (each event records the MRR after it), invoices and credit notes (sequential numbers, 15% VAT when Finance says VAT-registered, issued = immutable, void via credit note), payments → Finance income (`entry: "billing"`), the hourly billing run `tick()`/`runWorkspace()` (trials, renewals, overage in arrears, dunning day 1/3/7, pause after N days), the Moyasar webhook handler. Collections `billing_customers`, `billing_invoices`, `billing_payments`, `billing_usage`, `billing_log`, `billing_drafts` (created on start; settings on `ws.billing`).
+  - `zatca.js`: phase 1 TLV QR, UBL 2.1 XML, invoice hash and PIH chain, ICV, clearance/reporting adapter (Test mode; Live blocked until XAdES signing is built). `qr.js`: dependency-free QR encoder to SVG. `moyasar.js`: payment-link API and webhook secret check (`// verify against current docs`).
+  - `billingroutes.js`: `createBillingService()` (wires Moyasar, ZATCA and the CRM's SMTP sender; tests pass `billingOptions: { env, senders, fetchImpl, now }` to `createApp`), `mountBillingPublic`, `mountBilling` (`/api/workspaces/:ws/billing/...`), the printable Arabic/English invoice (`/invoices/:id/print`, `/xml`), `mountCustomersLite` (`/api/workspaces/:ws/customers`: customer 360 without money, module `support`), and `billingCommandHook()` (Command Center prefers billed MRR when customers exist; adds overdue, failed payments, trials ending). `financeSnapshot({ billing })` takes `billingForFinance()` so Finance MRR and output VAT come from subscriptions and invoices.
+  - `public/billing.js`: tabs Overview, Customers (+360 drawer), Invoices, Payments (+payout import), Dunning (+AI drafts), Settings; `blCreateButton()` adds "Create customer in Billing" to the Sales deal drawer (stage Paying) and the CRM store drawer (Onboarding/Active).
 - **AI Workforce:** `agents.js` (agent registry `AGENTS`, autonomy levels, prices, the `Workforce` class: `wrap(provider)` attributes every AI call to an agent via AsyncLocalStorage, enforces pause and monthly budget, records tokens and cost; `event()` logs outcomes and auto-demotes; `level(id)` is what modules check before acting alone), `agentroutes.js` (`/api/workforce`). `agentFor()` maps API paths to agents. New AI features must register an agent and record outcomes. Plan: `docs/ai-workforce-plan.md`.
 - **Ask DPA AD** (`assistant.js` + `public/assistant.js`): Claude with tools (`TOOLS`) that call the app's own API over HTTP with the user's cookie, so permissions, validation and the audit log apply. Write tools pause for a Confirm card (`/api/assistant/confirm`); the thread lives in memory. Add a tool by adding an entry to `TOOLS` (with `module`, `write`, `risk`, `preview` for writes). Tests inject `assistantClient`.
 - `web/public/`: one script per module sharing globals from `app.js` (`S`, `$`, `api`, `esc`, `md`, `toast`, `fmtDate`, `ROUTES`, `render`, `levelFor`). Each file registers `ROUTES.<route> = { title, crumb, render }` and ends with `if (S.route === "<route>" && S.ws) render();`. New modules need a nav link and a `<script>` tag in `index.html`, plus an entry in `ROUTE_MODULE` in `app.js`.
@@ -89,6 +94,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
 
 ## Decisions and open items
 
+- **Billing** (`docs/billing-zatca.md`) is built in **Test mode**: invoices are numbered and carry VAT and the ZATCA QR, but no card links, ZATCA calls or emails happen until Billing → Settings is switched to Live. ZATCA phase 2 (XAdES signing, C14N, clearance) is prepared, not connected. Decisions to confirm: overage per started 1,000, downgrade credit vs change at period end, VAT on app-store and non-Saudi sales.
 - **Pricing is a draft** until real costs are in (Finance → Pricing):
   - Starter $199, Growth $449, Scale $1,299, Enterprise from $4,000, by SKU count; yearly billing at 2 months free.
   - Draft render limits: Scale 15,000/month then $10 per extra 1,000; Enterprise 50,000/month then $8 per extra 1,000.
@@ -108,6 +114,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   5. Password-reset email and two-step login.
   6. Move to MySQL if the CRM grows past a few hundred thousand messages.
   7. Live end-to-end test of each platform's publishing once the developer apps exist (every API call is only tested with mocks so far).
+  8. Billing: ZATCA phase 2 signing (XAdES, CSID key) and validation with the ZATCA SDK; a live Moyasar test payment; the real Salla/Zid payout CSV columns; `deleteWorkspace` doesn't remove `billing_*` records yet.
 - **The owner's own to-dos:**
   - create a personal Owner login and rotate `DASHBOARD_PASSWORD`
   - set up the cold-email domain, mailbox, SPF/DKIM/DMARC and warm-up
@@ -117,3 +124,4 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - enter real finance data and costs
   - finalize pricing
   - switch the CRM to Live after a week in Test mode
+  - Billing: enter the legal name, VAT and CR numbers, address and bank details (Billing → Settings); open a Moyasar account, set `MOYASAR_SECRET_KEY` and the webhook (`https://wizard.dpa.ad/hooks/moyasar`, secret in `MOYASAR_WEBHOOK_SECRET`); confirm the rules in `docs/billing-zatca.md` with the accountant; ZATCA onboarding on the Fatoora portal before DPA AD's phase 2 wave

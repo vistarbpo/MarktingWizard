@@ -40,7 +40,8 @@ const addMonths = (y, m, n) => { const d = new Date(Date.UTC(y, m - 1 + n, 1)); 
 // Monthly cost of a recurring expense, in SAR.
 const monthlyOf = (e) => (e.recurring === "monthly" ? e.amount_sar : e.recurring === "yearly" ? e.amount_sar / 12 : 0);
 
-export function financeSnapshot({ expenses, income = [], cash, deals, roles, settings, now = new Date() }) {
+// `billing` (from Billing & customers, when customers exist) makes MRR and output VAT come from subscriptions and invoices.
+export function financeSnapshot({ expenses, income = [], cash, deals, roles, settings, now = new Date(), billing = null }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}), budgets: { ...DEFAULT_SETTINGS.budgets, ...(settings?.budgets || {}) } };
   const thisMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const lastMonth = addMonths(now.getUTCFullYear(), now.getUTCMonth() + 1, -1);
@@ -55,13 +56,17 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   const salesMrr = paying.reduce((a, d) => a + planFor(d.skus).usd * SAR_PER_USD, 0);
   const activeRecurring = income.filter((i) => isRevenue(i) && i.recurring !== "one-off" && !i.ended_at);
   const billedMrr = activeRecurring.reduce((a, i) => a + monthlyOf(i), 0);
-  const mrrSar = billedMrr > 0 ? billedMrr : salesMrr;
-  const mrrSource = billedMrr > 0 ? "billed" : salesMrr > 0 ? "estimated" : "none";
-  const inMonth = (month, rev) => income.filter((i) => ym(i.date) === month && i.recurring === "one-off" && isRevenue(i) === rev).reduce((a, i) => a + i.amount_sar, 0);
+  const fromBilling = !!(billing && billing.customers > 0);
+  const mrrSar = fromBilling ? billing.mrr_sar : billedMrr > 0 ? billedMrr : salesMrr;
+  const mrrSource = fromBilling ? "billing" : billedMrr > 0 ? "billed" : salesMrr > 0 ? "estimated" : "none";
+  // Paid subscription invoices are already in billing MRR: don't count that cash again as one-off revenue.
+  const counted = (i) => !(fromBilling && i.entry === "billing" && i.type === "subscription");
+  const payingCount = fromBilling ? billing.customers : paying.length;
+  const inMonth = (month, rev) => income.filter((i) => ym(i.date) === month && i.recurring === "one-off" && isRevenue(i) === rev && counted(i)).reduce((a, i) => a + i.amount_sar, 0);
   const oneOffRevenueMonth = inMonth(thisMonth, true);
   const capitalMonth = inMonth(thisMonth, false);
   const yearAgo = new Date(now.getTime() - 365 * 864e5).toISOString().slice(0, 10);
-  const oneOffRevenue12m = income.filter((i) => i.recurring === "one-off" && isRevenue(i) && i.date >= yearAgo).reduce((a, i) => a + i.amount_sar, 0);
+  const oneOffRevenue12m = income.filter((i) => i.recurring === "one-off" && isRevenue(i) && counted(i) && i.date >= yearAgo).reduce((a, i) => a + i.amount_sar, 0);
 
   // Costs: recurring run-rate, and actual spend this month and last month by category.
   const recurring = expenses.filter((e) => e.recurring !== "one-off");
@@ -102,7 +107,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   // Unit economics.
   const newPaying30 = paying.filter((d) => Date.parse(d.stage_changed_at || d.created_at) >= now.getTime() - 30 * 864e5).length;
   const mktSpend = byCategory.find((c) => c.id === "marketing").month;
-  const arpaSar = paying.length ? mrrSar / paying.length : null;
+  const arpaSar = payingCount ? mrrSar / payingCount : null;
   const cac = newPaying30 ? mktSpend / newPaying30 : null;
   const payback = cac && arpaSar && grossMargin > 0 ? cac / (arpaSar * grossMargin) : null;
   // Lifetime value = monthly gross profit per store ÷ monthly churn. Healthy LTV:CAC is 3:1 or better.
@@ -120,7 +125,9 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   const qMonthsElapsed = now.getUTCMonth() - q * 3 + 1;
   const qIncome = income.filter((i) => isRevenue(i) && ym(i.date) >= qStart && ym(i.date) <= thisMonth);
   const loggedOutputVat = qIncome.reduce((a, i) => a + (Number(i.vat_sar) || 0), 0);
-  const outputVat = s.vat_registered ? (qIncome.length ? loggedOutputVat : mrrSar * qMonthsElapsed * VAT_RATE) : 0;
+  // With Billing, output VAT is what the issued invoices charged (plus VAT on income logged by hand).
+  const manualVat = qIncome.filter((i) => i.entry !== "billing").reduce((a, i) => a + (Number(i.vat_sar) || 0), 0);
+  const outputVat = s.vat_registered ? (fromBilling ? billing.output_vat_sar + manualVat : qIncome.length ? loggedOutputVat : mrrSar * qMonthsElapsed * VAT_RATE) : 0;
   const annualRevenue = mrrSar * 12 + oneOffRevenue12m;
   const qEnd = new Date(Date.UTC(now.getUTCFullYear(), q * 3 + 3, 0));
   const vatDue = new Date(Date.UTC(qEnd.getUTCFullYear(), qEnd.getUTCMonth() + 2, 0)); // end of the month after the quarter
@@ -134,7 +141,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   for (const c of byCategory.filter((x) => x.over)) needs.push({ text: `${c.name} is over budget this month (SAR ${c.month.toLocaleString("en-US")} of ${c.budget.toLocaleString("en-US")})`, tab: "expenses" });
   if (s.vat_registered) needs.push({ text: `File the Q${q + 1} VAT return with ZATCA by ${vatDue.toISOString().slice(0, 10)}`, tab: "reports", soft: true });
   else if (annualRevenue >= VAT_VOLUNTARY_SAR) needs.push({ text: `Revenue run-rate SAR ${Math.round(annualRevenue).toLocaleString("en-US")}/yr: check VAT registration with your accountant`, tab: "reports" });
-  if (paying.length && !billedMrr) needs.push({ text: `Sales shows ${paying.length} paying store${paying.length === 1 ? "" : "s"} but no subscription income is logged: add it under Income`, tab: "income" });
+  if (paying.length && !billedMrr && !fromBilling) needs.push({ text: `Sales shows ${paying.length} paying store${paying.length === 1 ? "" : "s"} but no subscription income is logged: add it under Income`, tab: "income" });
   if (ltvCac !== null && ltvCac < 3) needs.push({ text: `LTV:CAC is ${ltvCac.toFixed(1)}:1 (healthy is 3:1): lower the cost to win a store or raise revenue per store before spending more on ads`, tab: "overview" });
   const unreviewed = expenses.filter((e) => e.source === "ai_import" && !e.reviewed).length;
   if (unreviewed) needs.push({ text: `${unreviewed} AI-imported expense${unreviewed === 1 ? "" : "s"} to review`, tab: "expenses" });
@@ -142,7 +149,7 @@ export function financeSnapshot({ expenses, income = [], cash, deals, roles, set
   return {
     settings: s, month: thisMonth, last_month: lastMonth,
     cash: { balance_sar: cashSar, as_of: latestCash?.date || null, history: cashSorted.slice(-12) },
-    revenue: { mrr_sar: Math.round(mrrSar), mrr_usd: Math.round(mrrSar / SAR_PER_USD), paying: paying.length, source: mrrSource, billed_mrr_sar: Math.round(billedMrr), sales_mrr_sar: Math.round(salesMrr), one_off_month_sar: Math.round(oneOffRevenueMonth), capital_month_sar: Math.round(capitalMonth), recurring_count: activeRecurring.length },
+    revenue: { mrr_sar: Math.round(mrrSar), mrr_usd: Math.round(mrrSar / SAR_PER_USD), paying: payingCount, billing_customers: fromBilling ? billing.customers : 0, source: mrrSource, billed_mrr_sar: Math.round(billedMrr), sales_mrr_sar: Math.round(salesMrr), one_off_month_sar: Math.round(oneOffRevenueMonth), capital_month_sar: Math.round(capitalMonth), recurring_count: activeRecurring.length },
     costs: { run_rate_sar: Math.round(runRate), month_burn_sar: Math.round(monthBurn), net_burn_sar: Math.round(netBurn), by_category: byCategory, last_month_one_off_sar: Math.round(spentIn(lastMonth)) },
     runway_months: runway === null ? null : Math.round(runway * 10) / 10,
     gross_margin: grossMargin === null ? null : Math.round(grossMargin * 1000) / 10,

@@ -419,6 +419,7 @@ async function crmOpen(id) {
     ${d.deal ? `<span>Deal</span><span><a href="#/${S.ws.id}/pipeline">${esc(d.deal.name)} · ${esc(d.deal.stage)}</a></span>` : ""}
   </div></div>
   ${crmProductsHtml(c, edit)}
+  ${["onboarding", "active"].includes(c.stage) && typeof blCreateButton === "function" ? `<div>${blCreateButton("crm", c.id)}</div>` : ""}
   ${["onboarding", "active"].includes(c.stage) ? `<div class="card" style="padding:12px 16px"><span class="eyebrow">Onboarding checklist</span><div class="stack" style="margin-top:8px">${CRM.meta.onboarding.map((o) => `<label class="row gap-8" style="font-size:13px"><input type="checkbox" data-onb="${o.id}" ${c.onboarding?.[o.id] ? "checked" : ""} ${edit ? "" : "disabled"}> ${esc(o.name)}</label>`).join("")}</div><p class="subtle" style="font-size:12px;margin-top:6px">All ticked moves the store to Active customer.</p></div>` : ""}
   ${edit ? `<div class="row gap-8"><button class="btn btn-primary btn-sm" data-caction="save-store">Save</button></div>` : ""}
   ${d.enrollments.length ? `<div><span class="eyebrow">Campaigns</span><div class="row gap-8" style="flex-wrap:wrap;margin-top:6px">${d.enrollments.map((e) => `<span class="badge ${e.status === "active" ? "accent" : e.status === "replied" ? "good" : ""}">${esc(e.campaign)} · step ${Math.min(e.step + 1, 99)} · ${e.status}</span>`).join("")}</div></div>` : ""}

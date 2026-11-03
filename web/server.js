@@ -12,6 +12,10 @@
 //      LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_ORG_ID (company page, once approved), LINKEDIN_VERSION
 //      GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, YOUTUBE_AUDITED=1 (after Google's audit; until then uploads are private)
 //      TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_AUDITED=1 (after TikTok's audit; until then posts are SELF_ONLY)
+// Billing & customers (optional; Test mode by default: no card links, no ZATCA calls, reminders logged not sent):
+//      MOYASAR_SECRET_KEY (card payment links), MOYASAR_WEBHOOK_SECRET (shared secret on the /hooks/moyasar webhook)
+//      BILLING_USAGE_TOKEN (Bearer token for the product to POST renders to /hooks/billing/usage)
+//      ZATCA_ENV (sandbox | simulation | production), ZATCA_CSID, ZATCA_CSID_SECRET (after ZATCA onboarding; Live also needs signing)
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./lib/app.js";
@@ -28,6 +32,7 @@ const port = process.env.PORT || 3000;
 const app = createApp({ store, provider, password });
 app.locals.outreach.start(); // Store CRM: sends due messages every minute, reads the mailbox every 3 minutes
 app.locals.studio.start(); // Creative Studio: publishes due posts every minute, comments every 15 minutes, results every 6 hours
+app.locals.billing.start(); // Billing: hourly run issues due invoices, ends trials, bills overage, sends dunning reminders
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>
   console.log(`Marketing Wizard listening on ${port} (provider ${provider.name}, login ${password ? "on" : "NOT SET"})`));

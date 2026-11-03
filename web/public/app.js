@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
+  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", ops: "ops", team: "team", access: "admin" };
 const levelFor = (route) => (S.me ? S.me.perms[ROUTE_MODULE[route] || "command"] || "none" : "edit");
 const canSee = (route) => levelFor(route) !== "none";
 function applyAccess() {

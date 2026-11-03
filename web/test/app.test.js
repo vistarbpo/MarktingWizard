@@ -1973,3 +1973,341 @@ test("auto-publish is the AI Publisher's level in AI Workforce (one switch, two 
   const acc = await json(`/api/workspaces/${ws.id}/creative/accounts`);
   assert.equal(acc.can_auto_publish, false); assert.equal(acc.settings.auto_publish, false);
 });
+
+// ================================================================ Billing & customers, ZATCA, Moyasar
+// A private store + billing engine on a fake clock (no network: gateway and ZATCA adapters are mocked).
+async function billingKit({ vat = true, senders = null, mode = "test" } = {}) {
+  const { createBilling } = await import("../lib/billing.js");
+  const { createMoyasar } = await import("../lib/moyasar.js");
+  const { createZatca } = await import("../lib/zatca.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-bill-")), st = new Store(d);
+  const calls = [];
+  const fetchImpl = async (url, o) => { calls.push({ url, o }); return { ok: true, status: 200, json: async () => ({ id: "inv_live_1", url: "https://checkout.moyasar.com/x", status: "initiated" }) }; };
+  const clock = { t: new Date("2026-11-01T07:00:00Z") }; // 10:00 in Riyadh
+  const b = createBilling({ store: st, senders, emailReady: () => !!senders, gateway: createMoyasar({ cfg: { secret: "sk_test_x", webhook_secret: "", ready: true, public_url: "https://x" }, fetchImpl }),
+    zatca: createZatca({ cfg: { env: "sandbox", csid: "", secret: "", signing_ready: false }, fetchImpl }), log: { error() {} }, now: () => clock.t });
+  const w = st.listWorkspaces()[0];
+  if (vat) w.finance = { vat_registered: true };
+  b.setSettings(w, { legal_name: "DPA AD Co", vat_number: "310122393500003", cr_number: "1010101010", mode, address: { street: "King Fahd Rd", building: "1234", district: "Olaya", city: "Riyadh", postal_code: "12211" } });
+  return { b, st, w, clock, calls, at: (iso) => { clock.t = new Date(iso); }, done: () => fs.rmSync(d, { recursive: true, force: true }) };
+}
+const r2Num = (n) => Math.round(n * 100) / 100;
+
+test("billing: yearly price, proration maths and plan changes", async () => {
+  const { periodPrice, mrrSar, proration, planTable } = await import("../lib/billing.js");
+  const { PLANS } = await import("../lib/sales.js");
+  const growth = PLANS.find((p) => p.name === "Growth");
+  assert.equal(periodPrice({ plan: "Growth", cycle: "yearly", currency: "USD" }), growth.usd * 10); // yearly = 10 × monthly
+  assert.equal(periodPrice({ plan: "Growth", cycle: "yearly", currency: "SAR" }), 16837.5);
+  assert.equal(mrrSar({ plan: "Growth", cycle: "yearly", status: "active" }), 1403.13); // a twelfth of the yearly price
+  assert.equal(mrrSar({ plan: "Growth", cycle: "monthly", status: "trial" }), 0);
+  assert.equal(periodPrice({ plan: "Enterprise", cycle: "monthly", currency: "USD", custom_price_usd: 6000 }), 6000);
+  assert.equal(planTable().find((p) => p.name === "Scale").yearly_usd, 12990);
+  // Growth → Scale halfway through a 30-day month: credit 15/30 of Growth, charge 15/30 of Scale.
+  const c = { plan: "Growth", cycle: "monthly", currency: "SAR", status: "active", period_start: "2026-11-01", period_end: "2026-12-01" };
+  const up = proration(c, "Scale", "2026-11-16");
+  assert.deepEqual([up.total_days, up.remaining_days, up.credit, up.charge, up.net, up.direction], [30, 15, 841.88, 2435.63, 1593.75, "upgrade"]);
+  const down = proration({ ...c, plan: "Scale" }, "Growth", "2026-11-16");
+  assert.equal(down.net, -1593.75); assert.equal(down.direction, "downgrade");
+  assert.equal(proration({ ...c, status: "trial" }, "Scale", "2026-11-16").net, 0);
+
+  const k = await billingKit();
+  const cust = k.b.addCustomer(k.w, { store_name: "Ward", plan: "Growth", status: "active", start_date: "2026-11-01" });
+  await k.b.runWorkspace(k.w);
+  k.at("2026-11-16T07:00:00Z");
+  const r = await k.b.changePlan(k.w, cust, "Scale");
+  assert.equal(r.invoice.lines[0].kind, "proration"); assert.equal(r.invoice.totals.taxable, 1593.75); assert.equal(r.invoice.status, "issued");
+  const r3 = await k.b.changePlan(k.w, cust, "Growth");
+  assert.equal(r3.invoice, null); assert.equal(cust.credit_balance, 1593.75); // downgrade → account credit
+  // The credit comes off the next invoice.
+  k.at("2026-12-01T07:00:00Z");
+  await k.b.runWorkspace(k.w);
+  const dec = k.b.invoices(k.w.id).find((i) => i.period_start === "2026-12-01");
+  assert.equal(dec.totals.discount, 1593.75); assert.equal(dec.totals.taxable, r2Num(1683.75 - 1593.75)); assert.equal(cust.credit_balance, 0);
+  k.done();
+});
+
+test("billing: VAT 15%, sequential numbers, render overage in arrears, void and credit-note rules", async () => {
+  const k = await billingKit();
+  const c = k.b.addCustomer(k.w, { store_name: "Oud House", plan: "Scale", status: "active", start_date: "2026-11-01", owner_email: "o@oud.sa", domain: "oud.sa" });
+  await k.b.runWorkspace(k.w);
+  const [nov] = k.b.invoices(k.w.id);
+  assert.equal(nov.number, "INV-000001"); assert.equal(nov.zatca_type, "simplified");
+  assert.deepEqual(nov.totals, { subtotal: 4871.25, discount: 0, taxable: 4871.25, vat: 730.69, total: 5601.94 }); // 15% VAT
+  assert.equal(nov.due_date, "2026-11-08");
+  await k.b.runWorkspace(k.w); // idempotent: no second invoice for the same period
+  assert.equal(k.b.invoices(k.w.id).length, 1);
+  k.b.recordPayment(k.w, nov, { amount: 5601.94, method: "bank_transfer" });
+  // 17,250 renders on Scale (15,000 included): 2,250 extra → 3 blocks of 1,000 at $10 = $30, billed on the next invoice.
+  k.b.setUsage(k.w, c, "2026-11", 17250);
+  k.at("2026-12-01T07:00:00Z");
+  await k.b.runWorkspace(k.w);
+  const dec = k.b.invoices(k.w.id).find((i) => i.number === "INV-000002");
+  const ov = dec.lines.find((l) => l.kind === "overage");
+  assert.equal(ov.qty, 3); assert.equal(ov.unit_price, 37.5); assert.equal(ov.net, 112.5);
+  assert.equal(dec.totals.taxable, 4983.75); assert.equal(dec.totals.vat, 747.56); assert.equal(dec.totals.total, 5731.31);
+  k.at("2027-01-01T07:00:00Z"); k.b.recordPayment(k.w, dec, {});
+  await k.b.runWorkspace(k.w);
+  assert.ok(!k.b.invoices(k.w.id).find((i) => i.number === "INV-000003").lines.some((l) => l.kind === "overage")); // November is billed once only
+
+  // A draft can be edited; issued never. Void needs a reason; an issued invoice is voided with a credit note.
+  const manual = k.b.draft(k.w, c, { lines: [{ kind: "setup", description: "Onboarding", qty: 1, unit_price: 1000 }] });
+  assert.equal(manual.number, null);
+  await assert.rejects(k.b.voidInvoice(k.w, manual, ""), /reason/);
+  await k.b.issue(k.w, manual);
+  assert.equal(manual.number, "INV-000004");
+  await assert.rejects(k.b.issue(k.w, manual), /Only drafts/);
+  const v = await k.b.voidInvoice(k.w, manual, "Agreed to waive setup");
+  assert.equal(manual.status, "void"); assert.equal(v.credit.kind, "credit_note"); assert.equal(v.credit.number, "CN-000001");
+  assert.equal(v.credit.totals.total, 1150); assert.equal(v.credit.credit_of_number, "INV-000004");
+  await assert.rejects(k.b.voidInvoice(k.w, dec, "x"), /Paid invoices can't be voided/);
+  await assert.rejects(k.b.creditNote(k.w, dec, { amount: 99999, reason: "x" }), /Credit must be between/);
+  const cn = await k.b.creditNote(k.w, dec, { amount: 112.5, reason: "Render bug" });
+  assert.equal(cn.credit.number, "CN-000002"); assert.equal(cn.credit.totals.vat, 16.88);
+  assert.ok(k.st.listOps("finance_income", k.w.id).some((i) => i.amount_sar < 0 && /CN-000002/.test(i.note))); // refund owed shows in Finance
+  // Not VAT-registered: no VAT and no ZATCA data.
+  k.w.finance.vat_registered = false;
+  const plain = k.b.draft(k.w, c, { lines: [{ kind: "other", description: "Design", qty: 2, unit_price: 100, discount: 20 }], discount: 30 });
+  await k.b.issue(k.w, plain);
+  assert.deepEqual(plain.totals, { subtotal: 180, discount: 30, taxable: 150, vat: 0, total: 150 }); assert.equal(plain.zatca, undefined);
+  k.done();
+});
+
+test("ZATCA: phase 1 TLV QR byte layout, UBL XML fields and the invoice hash chain", async () => {
+  const { tlv, qrBase64, decodeTlv, INITIAL_PIH, ublXml, invoiceHash } = await import("../lib/zatca.js");
+  const { qrMatrix, qrSvg } = await import("../lib/qr.js");
+  // The example in ZATCA's QR guide.
+  const b64 = qrBase64({ seller: "Bobs Records", vat_number: "310122393500003", timestamp: "2022-04-25T15:30:00Z", total: 1000, vat: 150 });
+  assert.equal(b64, "AQxCb2JzIFJlY29yZHMCDzMxMDEyMjM5MzUwMDAwMwMUMjAyMi0wNC0yNVQxNTozMDowMFoEBzEwMDAuMDAFBjE1MC4wMA==");
+  const bytes = Buffer.from(b64, "base64");
+  assert.deepEqual([...bytes.subarray(0, 2)], [1, 12]); assert.equal(bytes.subarray(2, 14).toString(), "Bobs Records");
+  assert.deepEqual([...bytes.subarray(14, 16)], [2, 15]);
+  assert.deepEqual(decodeTlv(b64), { 1: "Bobs Records", 2: "310122393500003", 3: "2022-04-25T15:30:00Z", 4: "1000.00", 5: "150.00" });
+  assert.equal(tlv(["متجر"])[1], 8); // length is in UTF-8 bytes, not characters
+  assert.equal(INITIAL_PIH, "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZjNmQ2OTZjNzljMmRiYzIzOWRkNGU5MWI0NjcyOWQ3M2EyN2ZiNTdlOQ==");
+  assert.equal(qrMatrix(b64).length, 41); assert.match(qrSvg(b64), /^<svg[^>]+viewBox="0 0 49 49"/);
+
+  const k = await billingKit();
+  const b2c = k.b.addCustomer(k.w, { store_name: "Ward", plan: "Starter", status: "active", start_date: "2026-11-01" });
+  const b2b = k.b.addCustomer(k.w, { store_name: "Big Co", legal_name: "Big Co LLC", plan: "Growth", status: "active", start_date: "2026-11-01", vat_number: "300000000000003", billing_address: { street: "Tahlia", building: "2", district: "Rawdah", city: "Jeddah", postal_code: "23432" } });
+  await k.b.runWorkspace(k.w);
+  const [first, second] = k.b.invoices(k.w.id).sort((a, b) => a.zatca.icv - b.zatca.icv);
+  assert.equal(first.zatca.pih, INITIAL_PIH); assert.equal(second.zatca.pih, first.zatca.hash); // each invoice carries the previous hash
+  assert.deepEqual([first.zatca.icv, second.zatca.icv], [1, 2]);
+  assert.equal(k.b.settings(k.w).last_hash, second.zatca.hash);
+  const std = [first, second].find((i) => i.customer_id === b2b.id);
+  assert.equal(std.zatca_type, "standard");
+  const xml = ublXml(std, { seller: std.seller, buyer: std.buyer, uuid: std.zatca.uuid, icv: std.zatca.icv, pih: std.zatca.pih, qr: std.zatca.qr });
+  for (const re of [/<cbc:ProfileID>reporting:1\.0<\/cbc:ProfileID>/, new RegExp(`<cbc:UUID>${std.zatca.uuid}</cbc:UUID>`), /<cbc:InvoiceTypeCode name="0100000">388<\/cbc:InvoiceTypeCode>/,
+    /<cbc:DocumentCurrencyCode>SAR<\/cbc:DocumentCurrencyCode>/, /<cbc:TaxCurrencyCode>SAR<\/cbc:TaxCurrencyCode>/, new RegExp(`<cbc:ID>ICV</cbc:ID><cbc:UUID>${std.zatca.icv}</cbc:UUID>`),
+    /<cbc:ID>PIH<\/cbc:ID>/, /<cbc:CompanyID>310122393500003<\/cbc:CompanyID>/, /<cbc:CompanyID>300000000000003<\/cbc:CompanyID>/, /<cbc:ID schemeID="CRN">1010101010<\/cbc:ID>/,
+    /<cbc:TaxAmount currencyID="SAR">252\.56<\/cbc:TaxAmount>/, /<cbc:TaxInclusiveAmount currencyID="SAR">1936\.31<\/cbc:TaxInclusiveAmount>/, /<cbc:Percent>15<\/cbc:Percent>/, /<cbc:ActualDeliveryDate>2026-11-01/])
+    assert.match(xml, re);
+  assert.equal(invoiceHash(xml), std.zatca.hash); // regenerating gives the same hash
+  assert.notEqual(invoiceHash(xml.replace("1936.31", "1936.32")), std.zatca.hash);
+  assert.equal(invoiceHash(xml.replace(/<cbc:ID>QR<\/cbc:ID><cac:Attachment>[\s\S]*?<\/cac:Attachment>/, "<cbc:ID>QR</cbc:ID><cac:Attachment>other</cac:Attachment>")), std.zatca.hash); // the QR is outside the hash
+  const simp = [first, second].find((i) => i.customer_id === b2c.id);
+  assert.match(ublXml(simp, { ...simp.zatca, seller: simp.seller, buyer: simp.buyer }), /<cbc:InvoiceTypeCode name="0200000">388/);
+  assert.equal(decodeTlv(simp.zatca.qr)[5], "111.94"); // 15% VAT on SAR 746.25 (Starter)
+  assert.equal(std.zatca.submission.status, "test"); assert.equal(k.calls.length, 0); // Test mode: nothing sent to ZATCA or Moyasar
+  // The credit note uses type 381, references the invoice and continues the chain.
+  const lastHash = k.b.settings(k.w).last_hash;
+  const cn = (await k.b.creditNote(k.w, std, { amount: 100, reason: "Goodwill" })).credit;
+  const cnx = ublXml(cn, { ...cn.zatca, seller: cn.seller, buyer: cn.buyer });
+  assert.match(cnx, /<cbc:InvoiceTypeCode name="0100000">381/); assert.match(cnx, new RegExp(`<cac:InvoiceDocumentReference><cbc:ID>${std.number}</cbc:ID>`));
+  assert.equal(cn.zatca.pih, lastHash); assert.equal(cn.zatca.icv, 3);
+  k.done();
+});
+
+test("billing: dunning on day 1, 3 and 7 in Test mode, pause after N days, recovery on payment", async () => {
+  const sent = [];
+  const k = await billingKit({ senders: { email: async (m) => { sent.push(m); return { provider_id: "m1" }; } } });
+  const c = k.b.addCustomer(k.w, { store_name: "Late Co", plan: "Growth", status: "active", start_date: "2026-11-01", owner_email: "late@co.sa" });
+  await k.b.runWorkspace(k.w);
+  const [inv] = k.b.invoices(k.w.id);
+  assert.equal(inv.due_date, "2026-11-08");
+  const dunning = () => k.st.listOps("billing_log", k.w.id).filter((l) => l.kind === "dunning");
+  k.at("2026-11-08T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(dunning().length, 0); assert.equal(c.status, "active");
+  k.at("2026-11-09T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(c.status, "past_due"); assert.equal(dunning().length, 1); assert.equal(dunning()[0].status, "test"); assert.match(dunning()[0].text, /INV-000001/);
+  await k.b.runWorkspace(k.w); assert.equal(dunning().length, 1); // no repeat the same day
+  k.at("2026-11-11T07:00:00Z"); await k.b.runWorkspace(k.w);
+  k.at("2026-11-15T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.deepEqual(inv.reminders.map((r) => r.step), [1, 3, 7]); assert.match(dunning()[2].subject, /Final reminder/);
+  assert.equal(sent.length, 0); // Test mode: logged, never sent
+  k.at("2026-11-22T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(c.status, "paused"); assert.equal(c.paused_reason, "dunning");
+  k.b.recordPayment(k.w, inv, {});
+  assert.equal(c.status, "active"); assert.ok(c.events.some((e) => e.type === "recovered"));
+  // Live mode with email connected: the invoice email and reminders are sent (outside 09:00–21:00 Riyadh reminders wait).
+  k.b.setSettings(k.w, { mode: "live" });
+  k.at("2026-12-01T07:00:00Z"); await k.b.runWorkspace(k.w);
+  const dec = k.b.invoices(k.w.id).find((i) => i.period_start === "2026-12-01");
+  assert.equal(sent.length, 1); assert.match(sent[0].subject, /INV-000002/);
+  assert.equal(dec.payment_link.mode, "live"); assert.equal(k.calls.length, 1); assert.match(k.calls[0].url, /api\.moyasar\.com\/v1\/invoices$/);
+  assert.equal(JSON.parse(k.calls[0].o.body).amount, Math.round(dec.totals.total * 100)); // halalas
+  k.at("2026-12-09T20:00:00Z"); await k.b.runWorkspace(k.w); // 23:00 in Riyadh
+  assert.equal(sent.length, 1);
+  k.at("2026-12-10T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(sent.length, 2); assert.equal(sent[1].to, "late@co.sa");
+  // Trials convert on their end date; cancel at period end stops renewal.
+  const t = k.b.addCustomer(k.w, { store_name: "Trial Co", plan: "Starter", status: "trial", trial_end: "2026-12-20" });
+  k.b.recordPayment(k.w, dec, {});
+  k.b.setStatus(k.w, c, "cancel");
+  assert.equal(c.cancel_at_period_end, true);
+  k.at("2026-12-20T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(t.status, "active"); assert.ok(k.b.invoices(k.w.id).some((i) => i.customer_id === t.id && i.period_start === "2026-12-20"));
+  k.at("2027-01-01T07:00:00Z"); await k.b.runWorkspace(k.w);
+  assert.equal(c.status, "cancelled"); assert.ok(!k.b.invoices(k.w.id).some((i) => i.customer_id === c.id && i.period_start === "2027-01-01"));
+  k.done();
+});
+
+test("billing: MRR movements, NRR and logo churn from subscription events", async () => {
+  const { mrrMetrics } = await import("../lib/billing.js");
+  const ev = (...xs) => xs.map(([date, mrr_sar]) => ({ date, mrr_sar }));
+  const cs = [
+    { events: ev(["2025-11-15", 1000]) },                        // steady
+    { events: ev(["2026-01-05", 500], ["2026-11-10", 800]) },     // expansion +300 in November
+    { events: ev(["2026-02-01", 400], ["2026-11-20", 0]) },       // churned 400
+    { events: ev(["2026-11-03", 200]) },                          // new 200
+    { events: ev(["2026-03-01", 1000], ["2026-11-15", 700]) },    // contraction 300
+    { events: ev(["2026-04-01", 300], ["2026-06-01", 0], ["2026-11-02", 300]) }, // reactivation
+  ];
+  const m = mrrMetrics(cs, "2026-11-25");
+  const nov = m.this_month;
+  assert.deepEqual([nov.start, nov.new, nov.expansion, nov.contraction, nov.churned, nov.reactivation, nov.end], [2900, 200, 300, 300, 400, 300, 3000]);
+  assert.equal(nov.nrr_pct, 86.2); // (2900 + 300 − 300 − 400) ÷ 2900
+  assert.equal(nov.logo_churn_pct, 25); assert.equal(nov.logos_new, 1);
+  assert.equal(m.months.length, 12); assert.equal(m.months[0].month, "2025-12");
+  assert.equal(m.nrr_12m_pct, 100); // the one store paying 12 months ago still pays the same
+  assert.equal(m.months.find((x) => x.month === "2026-06").churned, 300);
+});
+
+test("billing HTTP: customers, payments create Finance income, payouts reconcile, command center, health", async () => {
+  const ws = await (await post("/api/workspaces", { company_name: "Bill Co" })).json();
+  const B = `/api/workspaces/${ws.id}/billing`;
+  assert.equal((await post(`${B}/customers`, { store_name: "" })).status, 422);
+  assert.equal((await post(`${B}/customers`, { store_name: "X", vat_number: "123" })).status, 422);
+  const today = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+  const c = await (await post(`${B}/customers`, { store_name: "متجر الورد", domain: "https://ward.sa/", plan: "Growth", owner_email: "owner@ward.sa", platform: "Salla", start_date: today })).json();
+  assert.equal(c.domain, "ward.sa"); assert.equal(c.mrr_sar, 1683.75); assert.equal(c.open_invoices, 1); // first period invoiced at once
+  const [inv] = await json(`${B}/invoices?customer=${c.id}`);
+  assert.equal(inv.status, "issued"); assert.equal(inv.totals.vat, 0); // this workspace isn't VAT-registered
+  assert.equal((await call(`${B}/invoices/${inv.id}`, { method: "PUT", body: JSON.stringify({ discount: 10 }) })).status, 409);
+  const html = await (await call(`${B}/invoices/${inv.id}/print`)).text();
+  assert.match(html, /فاتورة/); assert.match(html, /Invoice/); assert.match(html, /متجر الورد/);
+  // Payout CSV (Arabic headers): one row pays the invoice, one matches nobody.
+  const csv = "تاريخ التحويل,اسم المتجر,رابط المتجر,المبلغ,العمولة\n2026-11-02,متجر الورد,https://ward.sa,1683.75,50\n2026-11-02,Unknown,unknown.sa,100,0";
+  const parsed = await (await post(`${B}/payouts/parse`, { text: csv, platform: "Salla" })).json();
+  assert.deepEqual(parsed.rows.map((r) => r.match), ["invoice", "none"]); assert.equal(parsed.rows[0].invoice_id, inv.id);
+  const applied = await (await post(`${B}/payouts/apply`, { rows: parsed.rows })).json();
+  assert.deepEqual([applied.applied, applied.skipped, applied.fees_sar], [1, 1, 50]);
+  const paid = await json(`${B}/invoices/${inv.id}`);
+  assert.equal(paid.status, "paid"); assert.equal(paid.payments[0].method, "app_store");
+  const fin = await json(`/api/workspaces/${ws.id}/finance`);
+  const inc = fin.income.filter((i) => i.entry === "billing");
+  assert.equal(inc.length, 1); assert.equal(inc[0].type, "subscription"); assert.equal(inc[0].amount_sar, 1683.75);
+  assert.equal(fin.snapshot.revenue.source, "billing"); assert.equal(fin.snapshot.revenue.mrr_sar, 1684); assert.equal(fin.snapshot.revenue.one_off_month_sar, 0); // not counted twice
+  assert.ok(fin.expenses.some((e) => /app-store fee/.test(e.vendor) && e.amount_sar === 50));
+  // Manual payment on a second invoice; paying a paid invoice is refused.
+  const inv2 = await (await post(`${B}/customers/${c.id}/invoices`, { lines: [{ kind: "setup", description: "Onboarding", qty: 1, unit_price: 500 }], issue: true })).json();
+  assert.match(inv2.number, /^INV-00000\d$/);
+  assert.equal((await post(`${B}/invoices/${inv2.id}/payments`, { amount: 500, method: "bank_transfer", reference: "TRX-1" })).status, 201);
+  assert.equal((await post(`${B}/invoices/${inv2.id}/payments`, { amount: 1 })).status, 409);
+  assert.ok((await json(`/api/workspaces/${ws.id}/finance`)).income.some((i) => i.type === "setup" && i.amount_sar === 500));
+  // Proration preview before confirming.
+  const prev = await (await post(`${B}/customers/${c.id}/plan/preview`, { plan: "Scale" })).json();
+  assert.equal(prev.direction, "upgrade"); assert.ok(prev.explain.length > 20);
+  assert.equal((await post(`${B}/customers/${c.id}/plan`, { plan: "Scale" })).status, 422); // must confirm
+  // Usage, 360 and the health score with reasons.
+  await post(`${B}/customers/${c.id}/usage`, { renders: 1200 });
+  await post(`/api/workspaces/${ws.id}/support/tickets`, { channel: "Email", customer_name: "Owner", contact: "owner@ward.sa", message: "الإعلانات ما ظهرت" });
+  const d = await json(`${B}/customers/${c.id}`);
+  assert.equal(d.tickets.length, 1); assert.equal(d.usage_month.renders, 1200);
+  assert.equal(d.customer.health.factors.length, 5); assert.ok(d.customer.health.factors.every((f) => f.why && f.points <= f.max));
+  assert.equal(d.customer.health.factors.find((f) => f.id === "tickets").points, 10);
+  // Command Center: billed MRR, and trials ending this week.
+  await post(`${B}/customers`, { store_name: "Trial Store", plan: "Starter", status: "trial", start_date: today, trial_end: new Date(Date.parse(today) + 3 * 864e5).toISOString().slice(0, 10) });
+  const cmd = await json(`/api/workspaces/${ws.id}/command`);
+  assert.equal(cmd.revenue.paying_mrr, 449); assert.equal(cmd.revenue.source, "billing");
+  assert.ok(cmd.needs.some((n) => n.module === "Billing" && /trial ends/.test(n.text)));
+  const ov = await json(B);
+  assert.equal(ov.metrics.paying, 1); assert.equal(ov.metrics.trials, 1); assert.equal(ov.counts.trial, 1);
+  // A Sales deal moving to paying becomes a customer once.
+  const deal = await (await post(`/api/workspaces/${ws.id}/deals`, { name: "Deal Store", skus: 800, stage: "paying", platform: "Zid" })).json();
+  assert.ok((await json(B)).suggestions.some((s) => s.kind === "deal" && s.id === deal.id));
+  const fromDeal = await (await post(`${B}/customers/from-deal/${deal.id}`, {})).json();
+  assert.equal(fromDeal.plan, "Growth"); assert.equal(fromDeal.deal_id, deal.id);
+  assert.equal((await post(`${B}/customers/from-deal/${deal.id}`, {})).status, 409);
+});
+
+test("billing: Moyasar webhook secret, card payment marks paid, AI Billing assistant drafts need approval", async () => {
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-moy-")), st2 = new Store(d2);
+  const fake = { name: "fake", model: "fake", async generate() { return "Subject: تذكير بالفاتورة\nمرحباً، نذكركم بالفاتورة.\n### English\nHi, a reminder."; } };
+  const app2 = createApp({ store: st2, provider: fake, password: "pw-bill", billingOptions: { env: { MOYASAR_WEBHOOK_SECRET: "whsec_1", BILLING_USAGE_TOKEN: "usage-tok" }, senders: { email: async () => ({}) } } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const ck = (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-bill" }) })).headers.get("set-cookie").split(";")[0];
+  const j = (p, b, m) => fetch(b2 + p, { method: m || (b ? "POST" : "GET"), headers: { "Content-Type": "application/json", cookie: ck }, body: b && JSON.stringify(b) });
+  const [w] = await (await j("/api/workspaces")).json();
+  const B = `/api/workspaces/${w.id}/billing`;
+  const c = await (await j(`${B}/customers`, { store_name: "Card Co", plan: "Starter", domain: "card.sa" })).json();
+  const [inv] = await (await j(`${B}/invoices`)).json();
+  assert.equal(inv.payment_link.mode, "test");
+  const hook = (body) => fetch(b2 + "/hooks/moyasar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const ev = { id: "evt_1", type: "payment_paid", live: false, data: { id: "pay_1", status: "paid", amount: Math.round(inv.totals.total * 100), currency: "SAR", invoice_id: inv.payment_link.id, metadata: {} } };
+  assert.equal((await hook(ev)).status, 401); // no secret
+  assert.equal((await hook({ ...ev, secret_token: "whsec_2" })).status, 401); // wrong secret
+  assert.equal((await (await j(`${B}/invoices/${inv.id}`)).json()).status, "issued");
+  assert.equal((await hook({ ...ev, secret_token: "whsec_1" })).status, 200);
+  const paid = await (await j(`${B}/invoices/${inv.id}`)).json();
+  assert.equal(paid.status, "paid"); assert.equal(paid.payments[0].provider_id, "pay_1");
+  await hook({ ...ev, secret_token: "whsec_1" }); // replayed event: no second payment
+  assert.equal((await (await j(`${B}/payments`)).json()).length, 1);
+  assert.ok(st2.listOps("finance_income", w.id).some((i) => i.invoice_id === inv.id));
+  // Usage API for the product.
+  assert.equal((await fetch(b2 + "/hooks/billing/usage", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer nope" }, body: JSON.stringify({ domain: "card.sa", renders: 10 }) })).status, 401);
+  const u = await (await fetch(b2 + "/hooks/billing/usage", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer usage-tok" }, body: JSON.stringify({ domain: "card.sa", renders: 10, mode: "add" }) })).json();
+  assert.equal(u.renders, 10); assert.equal(u.customer_id, c.id);
+  // Failed card payment (simulated, Test mode) starts dunning; AI drafts a reminder; approving logs it and scores the agent.
+  const inv2 = await (await j(`${B}/customers/${c.id}/invoices`, { lines: [{ description: "Extra", qty: 1, unit_price: 100 }], issue: true })).json();
+  await j(`${B}/invoices/${inv2.id}/simulate-card`, { outcome: "failed" });
+  assert.ok((await (await j(`${B}/payments`)).json()).some((p) => p.status === "failed"));
+  assert.ok((await (await j(B)).json()).needs.some((n) => n.kind === "failed"));
+  const draft = await (await j(`${B}/invoices/${inv2.id}/ai/reminder`, {})).json();
+  assert.equal(draft.status, "draft"); assert.equal(draft.subject, "تذكير بالفاتورة"); assert.doesNotMatch(draft.text, /Subject:/);
+  const ap = await (await j(`${B}/drafts/${draft.id}/approve`, {})).json();
+  assert.equal(ap.status, "approved"); assert.equal(ap.email.status, "test");
+  assert.equal((await j(`${B}/drafts/${draft.id}/approve`, {})).status, 409);
+  const agent = await (await j("/api/workforce/agents/billing_assistant")).json();
+  assert.ok(agent.runs.length >= 1); assert.ok(agent.events.some((e) => e.outcome === "accepted"));
+  const ex = await (await j(`${B}/invoices/${inv2.id}/ai/explain`, {})).json();
+  await j(`${B}/drafts/${ex.id}/reject`, {});
+  assert.ok((await (await j("/api/workforce/agents/billing_assistant")).json()).events.some((e) => e.outcome === "rejected"));
+  srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
+});
+
+test("billing permissions: Owner/Admin/Finance edit, Team lead and Viewer view, Member and Creative none", async () => {
+  const { DEFAULT_ROLES } = await import("../lib/access.js");
+  const perm = Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.billing]));
+  assert.deepEqual(perm, { owner: "edit", admin: "edit", manager: "view", member: "none", finance: "edit", creative: "none", viewer: "view" });
+  const [ws] = await json("/api/workspaces");
+  const B = `/api/workspaces/${ws.id}/billing`;
+  const login = async (role) => {
+    const email = `bill-${role}@dpa.ad`;
+    await post("/api/admin/users", { name: `Bill ${role}`, email, password: `bill-${role}-pass`, role_id: role });
+    return (await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email, password: `bill-${role}-pass` }) })).headers.get("set-cookie").split(";")[0];
+  };
+  const as = (ck, p, m = "GET", body) => fetch(base + p, { method: m, headers: { cookie: ck, "Content-Type": "application/json" }, body: body && JSON.stringify(body) }).then((r) => r.status);
+  const [mem, lead, fin, view, cre] = await Promise.all(["member", "manager", "finance", "viewer", "creative"].map(login));
+  assert.equal(await as(mem, B), 403); assert.equal(await as(cre, B), 403);
+  assert.equal(await as(lead, B), 200); assert.equal(await as(lead, `${B}/settings`, "PUT", {}), 403);
+  assert.equal(await as(view, B), 200); assert.equal(await as(view, `${B}/run`, "POST", {}), 403);
+  assert.equal(await as(fin, B), 200); assert.equal(await as(fin, `${B}/settings`, "PUT", { terms_days: 7 }), 200);
+  // Customer 360 without money: Team members (AI Support access) yes, Creative no.
+  assert.equal(await as(mem, `/api/workspaces/${ws.id}/customers`), 200); assert.equal(await as(cre, `/api/workspaces/${ws.id}/customers`), 403);
+  // The Command Center leaves billing out for people who can't see it.
+  const cmd = await (await fetch(base + `/api/workspaces/${ws.id}/command`, { headers: { cookie: mem } })).json();
+  assert.ok(!cmd.needs.some((n) => n.module === "Billing")); assert.equal(cmd.billing, undefined);
+});
