@@ -901,7 +901,7 @@ details > summary { cursor: pointer; }
 .nav-sec.open > .nav-items { display: flex; }
 .nav-items a { padding: 6px 10px; font-weight: 450; }
 .nav-top + .nav-sec, .nav-sec + .nav-top { margin-top: 0; }
-.nav > a:nth-child(2) { margin-bottom: 8px; }
+.nav > a:nth-child(2):not(:has(+ a[data-route="okr"])), .nav > a[data-route="okr"]:nth-child(-n+3) { margin-bottom: 8px; } /* gap after Home, SOP (and Goals & review) */
 .brand { font-size: var(--fs-sm); }
 .ws-switch .eyebrow { display: none; }
 #whoami { padding: 0 var(--s-1) var(--s-1); }
@@ -1136,6 +1136,7 @@ details > summary { cursor: pointer; }
 .okr-kr.okr-stale { border-left: 3px solid var(--warn); padding-left: 8px; }
 .okr-kr-main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(90px, 0.8fr) auto; gap: 8px 12px; align-items: center; }
 .okr-kr-prog { display: flex; align-items: center; gap: 6px; }
+.okr-kr-prog .num { white-space: nowrap; min-width: 44px; text-align: right; }
 .okr-kr-act { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: center; }
 .okr-hist ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
 .okr-retro { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--good-soft); }

@@ -102,8 +102,8 @@ const canSee = (route) => levelFor(route) !== "none";
    Pages that aren't loaded (module not built) or that the role can't see are left out. */
 const NAV = [
   { route: "command", label: "Home", icon: "home" },
-  { route: "okr", label: "Goals & review", icon: "target" },
   { route: "sop", label: "SOP", icon: "check" },
+  { route: "okr", label: "Goals & review", icon: "target" },
   { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["intel", "Market intel"], ["results", "ROAS results"]] },
   { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"], ["success", "Customer success"]] },
   { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
