@@ -159,7 +159,7 @@ export function healthScore({ c, invoices = [], payments = [], tickets = [], onb
   else if (ov.limit) { const pct = Math.round((u.renders / ov.limit) * 100); use = pct >= 20 ? 25 : 15; why = `${u.renders.toLocaleString("en-US")} renders this month: ${pct}% of the ${ov.limit.toLocaleString("en-US")} included`; }
   else { use = 25; why = `${u.renders.toLocaleString("en-US")} renders this month`; }
   f.push({ id: "usage", name: "Usage vs plan", points: use, max: 25, why });
-  const openT = tickets.filter((t) => !["solved", "closed"].includes(t.status));
+  const openT = tickets.filter((t) => !["resolved", "solved", "closed"].includes(t.status)); // support uses "resolved"
   const tp = openT.length === 0 ? 15 : openT.length === 1 ? 10 : 0;
   f.push({ id: "tickets", name: "Open support tickets", points: tp, max: 15, why: openT.length ? `${openT.length} open ticket${openT.length === 1 ? "" : "s"}` : "No open tickets" });
   const done = onboarding ? ONBOARDING_STEPS.filter((s) => onboarding[s.id]).length : 0;

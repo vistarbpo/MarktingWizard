@@ -41,6 +41,7 @@ app.locals.studio.start(); // Creative Studio: publishes due posts every minute,
 app.locals.backups.start(); // Backups: checks every minute, runs nightly from 02:00 Riyadh (catches up after a restart)
 app.locals.status.start({ url: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/$/, "") + "/healthz" }); // status page uptime self-check every 5 minutes
 app.locals.billing.start(); // Billing: hourly run issues due invoices, ends trials, bills overage, sends dunning reminders
+app.locals.success.start(); // Customer Success: hourly (safe to repeat) daily health snapshots, churn alerts, queued surveys inside Saudi hours
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>
   console.log(`Marketing Wizard listening on ${port} (provider ${provider.name}, login ${password ? "on" : "NOT SET"})`));

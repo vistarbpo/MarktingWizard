@@ -45,6 +45,12 @@ export const AGENTS = [
     job: "Monthly reports, cost reviews, investor updates, sorting bank-statement lines.", levels: { 1: "Drafts and sorts; a person approves payments and filings." } },
   { id: "billing_assistant", name: "AI Billing assistant", team: "Finance", module: "billing", route: "billing", max: 1, level: 1, budget: 10,
     job: "Drafts payment reminders for overdue invoices and plain-language explanations of invoices, in Arabic and English.", levels: { 1: "Drafts; a person edits, approves and sends. The day 1/3/7 reminders themselves are fixed templates." } },
+  { id: "retention_watcher", name: "AI Retention watcher", team: "Customer Success", module: "success", route: "success", max: 1, level: 1, budget: 15,
+    job: "Explains why a customer is at risk from the health score, alerts, usage and tickets, and drafts a save plan with a first message to the owner.",
+    levels: { 1: "Drafts; the customer's owner edits and follows the plan. Churn alerts themselves are fixed rules." } },
+  { id: "success_writer", name: "AI Expansion & renewal writer", team: "Customer Success", module: "success", route: "success", max: 1, level: 1, budget: 15,
+    job: "Drafts upgrade and renewal emails in Saudi Arabic and English from real usage and plan facts, with [ADD] where proof or a number is missing.",
+    levels: { 1: "Drafts only; a person edits and sends." } },
   { id: "ops_planner", name: "AI Operations planner", team: "Operations", module: "ops", route: "ops", max: 1, level: 1, budget: 20,
     job: "Turns goals into tasks, writes incident summaries and weekly ops reports.", levels: { 1: "Plans; a person assigns and closes." } },
   { id: "product_analyst", name: "AI Product analyst", team: "Product", module: "product", route: "product", max: 1, level: 1, budget: 20,
@@ -68,6 +74,7 @@ export function agentFor(method, path) {
   const seg = p.split("/").filter(Boolean)[3] || "";
   if (seg === "creative") return /\/(plan|ideas)$/.test(p) ? "creative_strategist" : "creative_copywriter";
   if (seg === "crm") return /ai-write/.test(p) ? "crm_sequence_writer" : "crm_triage";
+  if (seg === "success") return /\/ai\/(expansion|renewal)$/.test(p) ? "success_writer" : "retention_watcher";
   return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }
 

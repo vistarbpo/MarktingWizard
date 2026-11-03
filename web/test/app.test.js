@@ -2994,3 +2994,423 @@ test("deleting a workspace also clears its billing, compliance and status rows",
     assert.equal(st.db.status_incidents.length, 0);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---------------------------------------------------------------- Customer Success
+async function successKit() {
+  const { createBilling } = await import("../lib/billing.js");
+  const { createSuccess } = await import("../lib/success.js");
+  const { CrmStore } = await import("../lib/crmstore.js");
+  const { createMoyasar } = await import("../lib/moyasar.js");
+  const { createZatca } = await import("../lib/zatca.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-sx-")), st = new Store(d), crm = new CrmStore(path.join(d, "crm"));
+  const fetchImpl = async () => { throw new Error("no network in tests"); };
+  const clock = { t: new Date("2026-11-03T07:00:00Z") }; // Tuesday, 10:00 in Riyadh
+  const b = createBilling({ store: st, crm, gateway: createMoyasar({ cfg: { secret: "", webhook_secret: "", ready: false, public_url: "" }, fetchImpl }),
+    zatca: createZatca({ cfg: { env: "sandbox", csid: "", secret: "", signing_ready: false }, fetchImpl }), log: { error() {} }, now: () => clock.t });
+  const sent = [];
+  const outreach = { cfg: { public_url: "https://wiz.test" }, sendOne: async (ws, c, m) => { sent.push({ c, m }); return { id: "m" + sent.length, status: "sent" }; } };
+  const s = createSuccess({ store: st, billing: b, crm, outreach, now: () => clock.t, log: { error() {} } });
+  const w = st.listWorkspaces()[0];
+  return { b, s, st, crm, w, clock, sent, at: (iso) => { clock.t = new Date(iso); }, done: () => { crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+
+test("success: daily health snapshot (one row per customer per day, five parts) and the health-drop trend", async () => {
+  const k = await successKit();
+  try {
+    const c = k.b.addCustomer(k.w, { store_name: "Snap Co", plan: "Growth", status: "active", start_date: "2026-10-01", already_billed: true });
+    k.s.runWorkspace(k.w); k.s.runWorkspace(k.w); // safe to repeat the same day
+    let snaps = k.s.snapsOf(k.w, c.id);
+    assert.equal(snaps.length, 1); assert.equal(snaps[0].date, "2026-11-03");
+    assert.deepEqual(Object.keys(snaps[0].parts).sort(), ["activity", "onboarding", "payment", "tickets", "usage"]);
+    assert.equal(snaps[0].score, k.b.health(k.w, c, "2026-11-03").score);
+    assert.equal(snaps[0].score, Object.values(snaps[0].parts).reduce((a, x) => a + x, 0));
+    k.at("2026-11-04T07:00:00Z"); k.s.runWorkspace(k.w);
+    snaps = k.s.snapsOf(k.w, c.id);
+    assert.deepEqual(snaps.map((x) => x.date), ["2026-11-03", "2026-11-04"]);
+    // A snapshot 10 days ago that was 35 points higher: the health-drop alert explains which parts fell.
+    k.st.addOps("success_health", k.w.id, { customer_id: c.id, date: "2026-10-25", score: snaps[1].score + 35, label: "healthy", parts: { payment: 30, usage: 25, tickets: 15, onboarding: 5, activity: 15 } });
+    k.at("2026-11-05T07:00:00Z"); k.s.runWorkspace(k.w);
+    const alerts = k.st.listOps("success_alerts", k.w.id);
+    const drop = alerts.find((a) => a.type === "health_drop");
+    assert.ok(drop); assert.match(drop.reason, new RegExp(`Health fell 35 points, from ${snaps[1].score + 35} on 2026-10-25`)); assert.match(drop.reason, /usage -15/); assert.match(drop.reason, /activity -15/);
+    assert.equal(drop.status, "open"); assert.ok(drop.steps.length >= 3 && drop.steps.every((x) => x.done === false)); // the playbook as a checklist
+    assert.ok(alerts.some((a) => a.type === "inactive" && /35 days since the start/.test(a.reason)));
+    k.s.runWorkspace(k.w); // repeating doesn't double alerts
+    assert.equal(k.st.listOps("success_alerts", k.w.id).length, alerts.length);
+    // Cancelled customers get no snapshot.
+    k.b.setStatus(k.w, c, "cancel", { at_period_end: false });
+    k.at("2026-11-06T07:00:00Z"); k.s.runWorkspace(k.w);
+    assert.equal(k.s.snapsOf(k.w, c.id).length, 4); // 3 real + the inserted one, none today
+  } finally { k.done(); }
+});
+
+test("success: each churn rule fires with its reason, and alerts are deduplicated, cooled down and snoozed", async () => {
+  const S = await import("../lib/success.js");
+  const s = S.DEFAULT_SETTINGS, today = "2026-11-03";
+  // Health drop: 15+ points within 14 days; an older peak doesn't count.
+  const cur = { score: 60, parts: { payment: 30, usage: 0, tickets: 15, onboarding: 5, activity: 10 } };
+  assert.equal(S.healthDropRule([{ date: "2026-10-25", score: 74, parts: {} }], cur, today, s), null);
+  assert.match(S.healthDropRule([{ date: "2026-10-25", score: 75, parts: { usage: 25 } }], cur, today, s).reason, /fell 15 points.*usage -25/);
+  assert.equal(S.healthDropRule([{ date: "2026-10-18", score: 99, parts: {} }], cur, today, s), null); // 16 days ago
+  // Usage: last full month vs the month before, 40%+.
+  assert.match(S.usageDropRule([{ month: "2026-09", renders: 1000 }, { month: "2026-10", renders: 600 }], today, s).reason, /fell 40%: 1,000 in 2026-09, 600 in 2026-10/);
+  assert.equal(S.usageDropRule([{ month: "2026-09", renders: 1000 }, { month: "2026-10", renders: 650 }], today, s), null);
+  assert.equal(S.usageDropRule([{ month: "2026-10", renders: 10 }, { month: "2026-11", renders: 0 }], today, s), null); // the current month never counts
+  assert.ok(S.usageDropRule([{ month: "2026-09", renders: 500 }], today, s)); // no renders at all last month
+  // Past due, with the worst invoice.
+  const inv = { kind: "invoice", status: "issued", number: "INV-000009", due_date: "2026-10-24", totals: { total: 100 }, paid_amount: 0 };
+  assert.match(S.pastDueRule({ status: "past_due" }, [inv], today).reason, /INV-000009 is 10 days overdue/);
+  assert.match(S.pastDueRule({ status: "paused", paused_reason: "dunning" }, [inv], today).reason, /paused for non-payment/);
+  assert.equal(S.pastDueRule({ status: "paused", paused_reason: "manual" }, [inv], today), null);
+  assert.equal(S.pastDueRule({ status: "active" }, [inv], today), null);
+  // No activity for 14 days.
+  assert.match(S.inactiveRule({ status: "active", start_date: "2026-01-01" }, "2026-10-20", today, s).reason, /14 days \(last activity 2026-10-20\)/);
+  assert.equal(S.inactiveRule({ status: "active", start_date: "2026-01-01" }, "2026-10-21", today, s), null);
+  assert.equal(S.inactiveRule({ status: "trial", start_date: "2026-10-25" }, null, today, s), null); // 9 days old
+  // Open tickets over N (resolved don't count) and unhappy tickets (each its own alert).
+  const t = (id, status, text) => ({ id, status, channel: "WhatsApp", messages: [{ from: "customer", text }] });
+  assert.equal(S.ticketsRule([t(1, "new", "hi"), t(2, "needs_human", "x"), t(3, "resolved", "x")], s), null);
+  assert.match(S.ticketsRule([t(1, "new", "hi"), t(2, "needs_human", "x"), t(3, "ai_answered", "x")], s).reason, /3 open support tickets \(more than 2\)/);
+  const neg = S.negativeTicketRules([t(7, "needs_human", "السلام عليكم، ابي استرجاع فلوسي لأن الإعلانات ما اشتغلت"), t(8, "resolved", "I want a refund"), t(9, "new", "How do I add a template?"), t(10, "new", "I want to cancel my plan")]);
+  assert.deepEqual(neg.map((x) => x.key), ["negative_ticket|7", "negative_ticket|10"]); assert.match(neg[0].reason, /استرجاع/); assert.match(neg[1].reason, /cancel/);
+  // Cancel at period end.
+  assert.match(S.cancelRule({ status: "active", cancel_at_period_end: true, period_end: "2026-12-01" }).reason, /cancels on 2026-12-01/);
+  assert.equal(S.cancelRule({ status: "active", cancel_at_period_end: false }), null);
+  // Dedupe, cool-down after done, specific keys never come back, snooze returns on its date.
+  const k = await successKit();
+  try {
+    const c = k.b.addCustomer(k.w, { store_name: "Rule Co", plan: "Starter", status: "active", start_date: "2026-10-01", already_billed: true });
+    const hit = { type: "past_due", key: "past_due", reason: "Invoice X is 2 days overdue" };
+    const a = k.s.raise(k.w, c, hit, "2026-11-03").alert;
+    assert.equal(k.s.raise(k.w, c, { ...hit, reason: "Invoice X is 3 days overdue" }, "2026-11-04").created, false);
+    assert.equal(a.reason, "Invoice X is 3 days overdue"); // refreshed, not doubled
+    Object.assign(a, { status: "done", done_at: "2026-11-04T10:00:00Z", outcome: "fixed" });
+    assert.equal(k.s.raise(k.w, c, hit, "2026-11-10").alert, null); // within 14 days of done
+    assert.equal(k.s.raise(k.w, c, hit, "2026-11-19").created, true);
+    const spec = k.s.raise(k.w, c, { type: "negative_ticket", key: "negative_ticket|7", reason: "x" }, "2026-11-03").alert;
+    Object.assign(spec, { status: "done", done_at: "2026-11-03T10:00:00Z" });
+    assert.equal(k.s.raise(k.w, c, { type: "negative_ticket", key: "negative_ticket|7", reason: "x" }, "2026-12-30").alert, null);
+    const sn = k.s.raise(k.w, c, { type: "tickets", key: "tickets", reason: "3 open" }, "2026-11-03").alert;
+    Object.assign(sn, { status: "snoozed", snooze_until: "2026-11-05" });
+    k.at("2026-11-04T07:00:00Z"); k.s.runWorkspace(k.w); assert.equal(sn.status, "snoozed");
+    k.at("2026-11-05T07:00:00Z"); k.s.runWorkspace(k.w); assert.equal(sn.status, "open");
+    // A store cancelling at period end and a past-due store raise their alerts in the daily run.
+    k.b.setStatus(k.w, c, "cancel");
+    c.status = "past_due";
+    k.s.runWorkspace(k.w);
+    const types = k.st.listOps("success_alerts", k.w.id).filter((x) => x.status === "open").map((x) => x.type);
+    assert.ok(types.includes("cancel_scheduled")); assert.ok(types.includes("past_due"));
+  } finally { k.done(); }
+});
+
+test("success: expansion signals use the Pricing render limits and PLANS prices, never invented numbers", async () => {
+  const { expansionSignals } = await import("../lib/success.js");
+  const { DEFAULT_PRICING, cleanPricing } = await import("../lib/pricing.js");
+  const { PLANS, SAR_PER_USD } = await import("../lib/sales.js");
+  const usd = (n) => PLANS.find((p) => p.name === n).usd;
+  const today = "2026-11-20";
+  // Scale at 80% of its 15,000 renders → Enterprise (a "from" price).
+  let r = expansionSignals({ c: { plan: "Scale", status: "active", cycle: "monthly" }, usage: [{ month: "2026-11", renders: 12000 }], today });
+  assert.deepEqual(r.signals.map((x) => x.id), ["render_usage"]); assert.match(r.signals[0].reason, /12,000 renders in 2026-11 so far: 80% of the 15,000 included in Scale/);
+  assert.equal(r.suggested.plan, "Enterprise"); assert.equal(r.suggested.from, true); assert.equal(r.suggested.diff_usd, usd("Enterprise") - usd("Scale"));
+  assert.equal(expansionSignals({ c: { plan: "Scale", status: "active" }, usage: [{ month: "2026-11", renders: 11999 }], today }).signals.length, 0); // 79.99%
+  // Catalog over the plan band → the plan that fits; price difference from PLANS in USD and SAR.
+  r = expansionSignals({ c: { plan: "Growth", status: "active" }, skus: 6200, today });
+  assert.equal(r.signals[0].id, "sku_band"); assert.equal(r.suggested.plan, "Scale");
+  assert.equal(r.suggested.diff_usd, usd("Scale") - usd("Growth")); assert.equal(r.suggested.diff_sar, (usd("Scale") - usd("Growth")) * SAR_PER_USD);
+  assert.equal(expansionSignals({ c: { plan: "Starter", status: "active" }, skus: 20000, today }).suggested.plan, "Scale"); // jumps to the band that fits
+  // Overage two complete months running.
+  r = expansionSignals({ c: { plan: "Scale", status: "active" }, usage: [{ month: "2026-09", renders: 15500 }, { month: "2026-10", renders: 17001 }], today });
+  const ov = r.signals.find((x) => x.id === "overage_2m");
+  assert.ok(ov); assert.equal(ov.overage_usd, 10 + 30); assert.match(ov.reason, /500 and 2,001 extra renders/);
+  assert.equal(expansionSignals({ c: { plan: "Scale", status: "active" }, usage: [{ month: "2026-09", renders: 15500 }, { month: "2026-10", renders: 100 }], today }).signals.find((x) => x.id === "overage_2m"), undefined);
+  // Limits come from Finance → Pricing: a Growth limit makes Growth eligible too.
+  const pr = cleanPricing({ plans: DEFAULT_PRICING.plans.map((p) => (p.name === "Growth" ? { ...p, render_limit: 5000 } : p)) }, DEFAULT_PRICING);
+  assert.equal(expansionSignals({ c: { plan: "Growth", status: "active" }, usage: [{ month: "2026-11", renders: 4000 }], pricing: pr, today }).suggested.plan, "Scale");
+  assert.equal(expansionSignals({ c: { plan: "Growth", status: "active" }, usage: [{ month: "2026-11", renders: 4000 }], today }).signals.length, 0);
+  // Enterprise has nothing above: no invented price, an [ADD] note.
+  r = expansionSignals({ c: { plan: "Enterprise", status: "active" }, usage: [{ month: "2026-11", renders: 45000 }], today });
+  assert.equal(r.suggested.plan, null); assert.match(r.suggested.note, /\[ADD\]/);
+  assert.equal(expansionSignals({ c: { plan: "Scale", status: "cancelled" }, usage: [{ month: "2026-11", renders: 15000 }], today }).signals.length, 0);
+});
+
+test("success: renewals list (yearly and trials, auto renewed/lost, status records) and the onboarding view", async () => {
+  const { renewalRows, onboardingRow } = await import("../lib/success.js");
+  const today = "2026-11-03";
+  const cs = [
+    { id: "1", store_name: "Yearly", plan: "Growth", cycle: "yearly", status: "active", period_end: "2026-12-01", start_date: "2025-12-01" },
+    { id: "2", store_name: "Trial", plan: "Starter", cycle: "monthly", status: "trial", trial_end: "2026-11-10", start_date: "2026-10-27" },
+    { id: "3", store_name: "Monthly", plan: "Starter", cycle: "monthly", status: "active", period_end: "2026-11-20", start_date: "2026-01-20" },
+    { id: "4", store_name: "Leaving", plan: "Scale", cycle: "yearly", status: "active", period_end: "2027-01-15", cancel_at_period_end: true, start_date: "2026-01-15" },
+    { id: "5", store_name: "Far", plan: "Growth", cycle: "yearly", status: "active", period_end: "2027-06-01", start_date: "2026-06-01" },
+    { id: "6", store_name: "Renewed", plan: "Growth", cycle: "yearly", status: "active", period_end: "2026-10-25", start_date: "2025-10-25" },
+    { id: "7", store_name: "Gone", plan: "Growth", cycle: "yearly", status: "cancelled", cancelled_at: "2026-10-20", period_end: "2026-10-20", start_date: "2025-10-20" },
+  ];
+  const rows = renewalRows(cs, today, [{ id: "r1", customer_id: "1", date: "2026-12-01", status: "in_talks", owner_id: "u1", lost_reason: "", note: "Call booked" }]);
+  assert.deepEqual(rows.map((r) => r.store_name), ["Gone", "Renewed", "Trial", "Yearly", "Leaving"]); // monthly and >90 days left out
+  const by = Object.fromEntries(rows.map((r) => [r.store_name, r]));
+  assert.deepEqual([by.Yearly.status, by.Yearly.days, by.Yearly.owner_id, by.Yearly.auto], ["in_talks", 28, "u1", false]);
+  assert.deepEqual([by.Trial.kind, by.Trial.date, by.Trial.status], ["trial", "2026-11-10", "not_started"]);
+  assert.deepEqual([by.Leaving.status, by.Leaving.auto], ["lost", true]); assert.match(by.Leaving.lost_reason, /Cancel at period end/);
+  assert.deepEqual([by.Renewed.status, by.Renewed.auto], ["renewed", true]); assert.equal(by.Gone.status, "lost");
+  assert.equal(by.Yearly.mrr_sar, 1403.13);
+  assert.equal(renewalRows(cs, today, [], 30).length, 4);
+  // Onboarding: progress from the CRM checklist, stuck after 7 days without a tick.
+  const c = { id: "9", store_name: "Onb", start_date: "2026-10-01" };
+  assert.equal(onboardingRow(c, null, today).linked, false);
+  const o = onboardingRow(c, { id: "x", stage: "onboarding", onboarding: { app: true, catalog: true }, onboarding_at: { app: "2026-10-03T10:00:00Z", catalog: "2026-10-26T10:00:00Z" } }, today);
+  assert.deepEqual([o.done, o.total, o.pct, o.last_progress, o.quiet_days, o.days], [2, 7, 29, "2026-10-26", 8, 33]);
+  assert.deepEqual(o.stuck, ["Brand kit set (logo, colors, fonts)"]);
+  assert.deepEqual(onboardingRow(c, { id: "x", onboarding: { app: true }, onboarding_at: { app: "2026-10-30T10:00:00Z" } }, today).stuck, []);
+});
+
+test("success: survey sending follows Test mode, opt-outs, WhatsApp opt-in, Saudi hours and sample stores", async () => {
+  const k = await successKit();
+  try {
+    const ct = k.crm.add(k.w.id, { store_name: "Ward", domain: "ward.sa", email: "owner@ward.sa", owner_name: "نورة", phone: "966500000001", wa_opt_in: true });
+    const opt = k.crm.add(k.w.id, { store_name: "Opt", domain: "opt.sa", email: "o@opt.sa", email_opt_out: true });
+    const c1 = k.b.addCustomer(k.w, { store_name: "Ward", domain: "ward.sa", plan: "Growth", status: "active", crm_contact_id: ct.id, already_billed: true });
+    const c2 = k.b.addCustomer(k.w, { store_name: "Opt", domain: "opt.sa", plan: "Starter", status: "active", already_billed: true }); // linked by domain
+    const c3 = k.b.addCustomer(k.w, { store_name: "No CRM", plan: "Starter", status: "active", already_billed: true });
+    const c4 = k.b.addCustomer(k.w, { store_name: "Sample", domain: "ward.sa", plan: "Starter", status: "active", crm_contact_id: ct.id, already_billed: true });
+    c4.sample = true;
+    assert.equal(k.s.contactFor(k.w, c2).id, opt.id);
+    const sv = k.s.createSurvey(k.w, { kind: "nps", channel: "email" });
+    assert.match(sv.question_ar, /من 0 إلى 10/); assert.match(sv.question_en, /recommend/);
+    let r = await k.s.sendSurvey(k.w, sv);
+    const rows = () => Object.fromEntries(k.st.listOps("success_responses", k.w.id).filter((x) => x.survey_id === sv.id).map((x) => [x.customer_id, x]));
+    assert.equal(r.created, 4); assert.equal(k.sent.length, 0);
+    assert.deepEqual([rows()[c1.id].send_status, rows()[c2.id].send_status, rows()[c3.id].send_status, rows()[c4.id].send_status], ["test", "skipped", "link", "test"]);
+    assert.match(rows()[c2.id].send_note, /Unsubscribed/); assert.match(rows()[c4.id].send_note, /Sample/); assert.match(rows()[c1.id].send_note, /Test mode/);
+    const tokens = Object.values(rows()).map((x) => x.token);
+    assert.equal(new Set(tokens).size, 4); assert.ok(tokens.every((t) => t.length >= 24)); // one unguessable token per customer
+    r = await k.s.sendSurvey(k.w, sv); assert.equal(r.created, 0); assert.equal(k.st.listOps("success_responses", k.w.id).length, 4); // no new tokens
+    // Live: only the opted-in, linked, real store is sent, through the CRM's sendOne, with the link.
+    k.s.setSettings(k.w, { mode: "live" });
+    const sv2 = k.s.createSurvey(k.w, { kind: "csat", channel: "email" });
+    await k.s.sendSurvey(k.w, sv2);
+    assert.equal(k.sent.length, 1); assert.equal(k.sent[0].c.id, ct.id); assert.equal(k.sent[0].m.channel, "email");
+    const link = k.s.link(k.st.listOps("success_responses", k.w.id).find((x) => x.survey_id === sv2.id && x.customer_id === c1.id));
+    assert.match(link, /^https:\/\/wiz\.test\/s\/[\w-]{24}$/); assert.ok(k.sent[0].m.body.includes(link)); assert.match(k.sent[0].m.body, /نورة/); assert.match(k.sent[0].m.body, /How are we doing|satisfied/);
+    // Friday (Riyadh): queued, then sent on Sunday inside 09:00–21:00.
+    k.at("2026-11-06T08:00:00Z");
+    const sv3 = k.s.createSurvey(k.w, { kind: "nps", channel: "email" });
+    await k.s.sendSurvey(k.w, sv3, [c1.id]);
+    const q = k.st.listOps("success_responses", k.w.id).find((x) => x.survey_id === sv3.id);
+    assert.equal(q.send_status, "queued"); assert.equal(k.sent.length, 1);
+    assert.equal(await k.s.sendQueued(k.w), 0);
+    k.at("2026-11-08T19:00:00Z"); assert.equal(await k.s.sendQueued(k.w), 0); // 22:00 in Riyadh
+    k.at("2026-11-08T07:00:00Z"); await k.s.tick();
+    assert.equal(q.send_status, "sent"); assert.equal(k.sent.length, 2);
+    // WhatsApp needs an approved template; then the link goes as a template parameter.
+    const sv4 = k.s.createSurvey(k.w, { kind: "nps", channel: "whatsapp" });
+    await k.s.sendSurvey(k.w, sv4, [c1.id, c2.id]);
+    const wa = Object.fromEntries(k.st.listOps("success_responses", k.w.id).filter((x) => x.survey_id === sv4.id).map((x) => [x.customer_id, x]));
+    assert.match(wa[c1.id].send_note, /template/); assert.match(wa[c2.id].send_note, /No WhatsApp number|opt-in/);
+    k.s.setSettings(k.w, { wa_template: "nps_survey_ar" }); wa[c1.id].send_status = "new";
+    await k.s.sendSurvey(k.w, sv4, [c1.id]);
+    assert.equal(k.sent.length, 3); assert.equal(k.sent[2].m.wa_template, "nps_survey_ar"); assert.deepEqual(k.sent[2].m.wa_params, ["owner_name", "survey_link"]); assert.match(k.sent[2].c.survey_link, /\/s\//);
+  } finally { k.done(); }
+});
+
+test("success HTTP: overview, alerts as tasks, renewals, public survey page, detractor alert, token reuse and rate limit", async () => {
+  const ws = await (await post("/api/workspaces", { company_name: "Success Co" })).json();
+  const B = `/api/workspaces/${ws.id}/billing`, X = `/api/workspaces/${ws.id}/success`;
+  const today = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+  const addD = (n) => new Date(Date.parse(today) + n * 864e5).toISOString().slice(0, 10);
+  const ct = await (await post(`/api/workspaces/${ws.id}/crm/contacts`, { store_name: "Riyadh Oud", domain: "riyadhoud.sa", email: "owner@riyadhoud.sa", products: 7000 })).json();
+  const a = await (await post(`${B}/customers`, { store_name: "Riyadh Oud", domain: "riyadhoud.sa", plan: "Growth", owner_email: "owner@riyadhoud.sa", crm_contact_id: ct.id, already_billed: true, start_date: addD(-40) })).json();
+  const t = await (await post(`${B}/customers`, { store_name: "Trial Shop", plan: "Starter", status: "trial", start_date: addD(-9), trial_end: addD(5) })).json();
+  // A past-due store with no usage: at risk.
+  const late = await (await post(`${B}/customers`, { store_name: "Late Shop", plan: "Starter", start_date: addD(-60), already_billed: true })).json();
+  const bill = appRef.locals.billing, lc = bill.getCustomer(ws.id, late.id), w = store.getWorkspace(ws.id);
+  const inv = bill.draft(w, lc, { lines: [{ kind: "subscription", description: "Starter", qty: 1, unit_price: 746.25 }] });
+  Object.assign(inv, { status: "issued", number: "T-1", issue_date: addD(-27), due_date: addD(-20) }); lc.status = "past_due"; store.save();
+  assert.equal((await post(`${X}/run`, {})).status, 200);
+  const ov = await json(X);
+  assert.equal(ov.customers.length, 3); assert.equal(ov.bands.at_risk, 1); assert.ok(ov.at_risk_mrr_sar > 0);
+  assert.equal(ov.trend.length, 1); assert.equal(ov.trend[0].n, 3);
+  assert.equal(ov.renewals.d30, 1); // the trial
+  assert.ok(ov.expansion.some((x) => x.customer_id === a.id && x.suggested.plan === "Scale")); // 7,000 products in the CRM
+  assert.equal(ov.settings.mode, "test");
+  const alerts = await json(`${X}/alerts?customer=${late.id}`);
+  const pd = alerts.find((x) => x.type === "past_due");
+  assert.match(pd.reason, /T-1 is 20 days overdue/);
+  // Alerts are tasks: owner, checklist, snooze needs a future date, done needs an outcome and a note.
+  const put = (p, body) => call(p, { method: "PUT", body: JSON.stringify(body) });
+  assert.equal((await put(`${X}/alerts/${pd.id}`, { owner_id: "nobody" })).status, 422);
+  assert.equal((await (await put(`${X}/alerts/${pd.id}`, { owner_id: "owner", steps: [true] })).json()).steps[0].done, true);
+  assert.equal((await (await put(`${X}/alerts/${pd.id}`, { steps: [null, true] })).json()).steps.filter((x) => x.done).length, 2);
+  assert.equal((await put(`${X}/alerts/${pd.id}`, { status: "snoozed", snooze_until: today })).status, 422);
+  assert.equal((await (await put(`${X}/alerts/${pd.id}`, { status: "snoozed", snooze_until: addD(3) })).json()).status, "snoozed");
+  assert.equal((await put(`${X}/alerts/${pd.id}`, { status: "done", outcome: "saved" })).status, 422);
+  const done = await (await put(`${X}/alerts/${pd.id}`, { status: "done", outcome: "saved", outcome_note: "Paid by bank transfer after a call" })).json();
+  assert.deepEqual([done.status, done.outcome], ["done", "saved"]); assert.ok(done.history.some((h) => /Paid by bank transfer/.test(h.text)));
+  // Renewals: set a status; "lost" needs a reason.
+  const ren = await json(`${X}/renewals`);
+  assert.deepEqual(ren.map((r) => r.customer_id), [t.id]); assert.equal(ren[0].kind, "trial");
+  assert.equal((await put(`${X}/renewals/${t.id}`, { status: "lost" })).status, 422);
+  assert.equal((await (await put(`${X}/renewals/${t.id}`, { status: "in_talks", note: "Demo on Sunday" })).json()).status, "in_talks");
+  assert.equal((await json(`${X}/renewals`))[0].status, "in_talks");
+  // Onboarding: ticking a CRM step records when (stuck detection reads it).
+  await put(`/api/workspaces/${ws.id}/crm/contacts/${ct.id}`, { onboarding: { app: true, catalog: true } });
+  const onb = (await json(`${X}/onboarding`)).find((r) => r.customer_id === a.id);
+  assert.deepEqual([onb.done, onb.last_progress, onb.stuck.length], [2, today, 0]);
+  // Survey: create, send in Test mode (link only for stores without a CRM email), public page without login.
+  const sv = await (await post(`${X}/surveys`, { name: "NPS Q4", kind: "nps", channel: "email" })).json();
+  assert.equal((await post(`${X}/surveys`, { kind: "stars" })).status, 422);
+  const sent = await (await post(`${X}/surveys/${sv.id}/send`, {})).json();
+  assert.equal(sent.created, 3); assert.equal(sent.results.sent, undefined);
+  const detail = await json(`${X}/surveys/${sv.id}`);
+  const ra = detail.responses.find((r) => r.customer_id === a.id), rt = detail.responses.find((r) => r.customer_id === t.id);
+  assert.equal(ra.send_status, "test"); assert.equal(rt.send_status, "link"); assert.match(ra.link, /\/s\/[\w-]+$/);
+  const pub = await fetch(`${base}/s/${ra.token}`);
+  assert.equal(pub.status, 200); const html = await pub.text();
+  assert.match(html, /dir="rtl"/); assert.match(html, /من 0 إلى 10/); assert.match(html, /recommend/); assert.match(html, /name="score" value="10"/);
+  assert.equal((await fetch(`${base}/s/not-a-token`)).status, 404);
+  const answer = (token, body, json = true) => fetch(`${base}/s/${token}`, { method: "POST", headers: { "Content-Type": json ? "application/json" : "application/x-www-form-urlencoded" }, body: json ? JSON.stringify(body) : new URLSearchParams(body) });
+  assert.equal((await answer(ra.token, { score: 11 })).status, 422);
+  const ok = await answer(ra.token, { score: "3", comment: "الفيديوهات تتأخر كثير <b>" }, false);
+  assert.equal(ok.status, 200); assert.match(await ok.text(), /شكراً/);
+  assert.equal((await answer(ra.token, { score: 9 })).status, 409); // one answer per token
+  assert.equal((await fetch(`${base}/s/${ra.token}`)).status, 200); // shows "already answered"
+  const det = (await json(`${X}/alerts?customer=${a.id}&type=detractor`))[0];
+  assert.ok(det); assert.match(det.reason, /NPS 3\/10: "الفيديوهات تتأخر كثير <b>"/); assert.equal(det.status, "open");
+  assert.equal((await answer(rt.token, { score: 10 })).status, 200); // a promoter: no alert
+  assert.equal((await json(`${X}/alerts?customer=${t.id}&type=detractor`)).length, 0);
+  const ov2 = await json(X);
+  assert.deepEqual([ov2.nps.n, ov2.nps.nps], [2, 0]); assert.equal(ov2.customers.find((c) => c.id === a.id).last_response.score, 3);
+  assert.equal((await json(`${X}/surveys`)).find((x) => x.id === sv.id).score.nps, 0);
+  // Command Center: at-risk customers, renewals in 14 days without status, unanswered detractors.
+  await put(`${X}/renewals/${t.id}`, { status: "not_started" });
+  const cmd = await json(`/api/workspaces/${ws.id}/command`);
+  const sx = cmd.needs.filter((n) => n.module === "Success").map((n) => n.text).join(" | ");
+  assert.match(sx, /1 customer at risk: SAR/); assert.match(sx, /1 unanswered detractor/);
+  // A renewal record (even "not started") means a person looked: only renewals nobody touched are listed.
+  assert.doesNotMatch(sx, /renewal/);
+  store.db.success_renewals = store.db.success_renewals.filter((r) => r.customer_id !== t.id);
+  assert.match((await json(`/api/workspaces/${ws.id}/command`)).needs.filter((n) => n.module === "Success").map((n) => n.text).join(" "), /1 renewal in the next 14 days with no status: Trial Shop/);
+  // Rate limit on the public page: 10 answers per IP per 10 minutes.
+  let limited = 0;
+  for (let i = 0; i < 12; i++) if ((await answer("rate-test-" + i, { score: 5 })).status === 429) limited++;
+  assert.ok(limited >= 1);
+  // Playbooks and settings are editable and validated.
+  assert.deepEqual((await (await put(`${X}/playbooks/past_due`, { steps: "Call the owner\nSend the bank details" })).json()).past_due, ["Call the owner", "Send the bank details"]);
+  assert.equal((await put(`${X}/playbooks/nope`, { steps: "x" })).status, 404);
+  assert.equal((await put(`${X}/settings`, { usage_drop_pct: 500 })).status, 422);
+  assert.equal((await (await put(`${X}/settings`, { usage_drop_pct: 30 })).json()).usage_drop_pct, 30);
+  // The customer view for Billing's drawer.
+  const one = await json(`${X}/customers/${a.id}`);
+  assert.equal(one.alerts.length >= 1, true); assert.equal(one.last_response.score, 3); assert.equal(one.onboarding.done, 2);
+});
+
+test("success AI agents: Retention watcher and Expansion & renewal writer draft, a person approves, outcomes recorded", async () => {
+  const [ws] = await json("/api/workspaces");
+  const B = `/api/workspaces/${ws.id}/billing`, X = `/api/workspaces/${ws.id}/success`;
+  const c = await (await post(`${B}/customers`, { store_name: "AI Store", plan: "Growth", already_billed: true })).json();
+  store.db.billing_customers.find((x) => x.id === c.id).skus = 9000; store.save();
+  const before = prompts.length;
+  const plan = await (await post(`${X}/customers/${c.id}/ai/save-plan`, {})).json();
+  assert.equal(plan.status, "draft"); assert.equal(plan.agent, "retention_watcher");
+  assert.match(prompts[before], /Retention watcher/); assert.match(prompts[before], /<health score="\d+"/); assert.match(prompts[before], /\[ADD\]/);
+  const ap = await (await post(`${X}/drafts/${plan.id}/approve`, {})).json();
+  assert.equal(ap.status, "approved");
+  assert.equal((await post(`${X}/drafts/${plan.id}/approve`, {})).status, 409);
+  const exp = await (await post(`${X}/customers/${c.id}/ai/expansion`, {})).json();
+  assert.equal(exp.agent, "success_writer"); assert.equal(exp.money, true);
+  const ep = prompts.at(-1);
+  assert.match(ep, /Expansion & renewal writer/); assert.match(ep, /9,000 products: over the Growth band/); assert.match(ep, /difference \$850\/month/); assert.match(ep, /Never invent results/);
+  assert.equal((await post(`${X}/customers/${c.id}/ai/renewal`, {})).status, 409); // monthly plan: no renewal date
+  const sentE = await (await post(`${X}/drafts/${exp.id}/approve`, { text: exp.text + "\n[edited]", send: true })).json();
+  assert.equal(sentE.sent.status, "link"); // not linked to a CRM store: the person sends it
+  assert.equal((await post(`${X}/customers/${c.id}/ai/nope`, {})).status, 404);
+  const ex2 = await (await post(`${X}/customers/${c.id}/ai/expansion`, {})).json();
+  await post(`${X}/drafts/${ex2.id}/reject`, {});
+  const rw = await json("/api/workforce/agents/retention_watcher"), sw = await json("/api/workforce/agents/success_writer");
+  assert.ok(rw.runs.length >= 1); assert.ok(rw.events.some((e) => e.outcome === "accepted"));
+  assert.ok(sw.runs.length >= 2); assert.ok(sw.events.some((e) => e.outcome === "edited")); assert.ok(sw.events.some((e) => e.outcome === "rejected"));
+  const { agentDef } = await import("../lib/agents.js");
+  assert.equal(agentDef("retention_watcher").max, 1); assert.equal(agentDef("success_writer").max, 1);
+  // Switched off in AI Workforce: refused before any AI call.
+  appRef.locals.workforce.set("retention_watcher", { paused: true });
+  const n = prompts.length;
+  assert.equal((await post(`${X}/customers/${c.id}/ai/save-plan`, {})).status, 409); assert.equal(prompts.length, n);
+  appRef.locals.workforce.set("retention_watcher", { paused: false, level: 1 });
+});
+
+test("success permissions: Owner/Admin/Team lead/Member edit, Finance and Viewer view, Creative none; money hidden without Billing", async () => {
+  const { DEFAULT_ROLES, moduleFor } = await import("../lib/access.js");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.success])), { owner: "edit", admin: "edit", manager: "edit", member: "edit", finance: "view", creative: "none", viewer: "view" });
+  assert.equal(moduleFor("GET", "/api/workspaces/1/success/alerts"), "success");
+  // ensureRoles adds the module to roles saved before it existed.
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-sxr-"));
+  fs.writeFileSync(path.join(d, "db.json"), JSON.stringify({ roles: [{ id: "member", name: "Team member", perms: { command: "view" } }] }));
+  const st = new Store(d);
+  assert.equal(st.db.roles.find((r) => r.id === "member").perms.success, "edit"); fs.rmSync(d, { recursive: true, force: true });
+  const ws = (await json("/api/workspaces")).find((x) => x.brief.company_name === "Success Co");
+  const X = `/api/workspaces/${ws.id}/success`;
+  const login = async (role) => {
+    const email = `sx-${role}@dpa.ad`;
+    await post("/api/admin/users", { name: `Sx ${role}`, email, password: `sx-${role}-pass`, role_id: role });
+    return (await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email, password: `sx-${role}-pass` }) })).headers.get("set-cookie").split(";")[0];
+  };
+  const as = (ck, p, m = "GET", body) => fetch(base + p, { method: m, headers: { cookie: ck, "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+  const [mem, lead, fin, view, cre] = await Promise.all(["member", "manager", "finance", "viewer", "creative"].map(login));
+  assert.equal((await as(cre, X)).status, 403);
+  assert.equal((await as(fin, X)).status, 200); assert.equal((await as(fin, `${X}/settings`, "PUT", { stuck_days: 7 })).status, 403);
+  assert.equal((await as(view, X)).status, 200); assert.equal((await as(view, `${X}/run`, "POST", {})).status, 403);
+  assert.equal((await as(lead, `${X}/settings`, "PUT", { stuck_days: 7 })).status, 200);
+  assert.equal((await as(mem, `${X}/run`, "POST", {})).status, 200);
+  // Team members can't see Billing: no MRR, no prices, anywhere in the payload.
+  const memOv = await (await as(mem, X)).text();
+  assert.doesNotMatch(memOv, /mrr_sar|diff_usd|suggested_usd|current_usd|diff_sar/); assert.match(memOv, /"at_risk":1/);
+  const finOv = await (await as(fin, X)).json();
+  assert.ok(finOv.at_risk_mrr_sar > 0); assert.ok(finOv.expansion[0].suggested.diff_usd > 0);
+  const anyC = finOv.customers[0].id;
+  assert.doesNotMatch(await (await as(mem, `${X}/customers/${anyC}`)).text(), /mrr_sar/);
+  assert.doesNotMatch(await (await as(mem, `${X}/renewals`)).text(), /mrr_sar/);
+  // Command Center: Success needs for Team members without money; nothing for Creative.
+  const cm = await (await as(mem, `/api/workspaces/${ws.id}/command`)).json();
+  const memNeeds = cm.needs.filter((n) => n.module === "Success").map((n) => n.text).join(" ");
+  assert.match(memNeeds, /at risk/); assert.doesNotMatch(memNeeds, /SAR/);
+  const cc = await (await as(cre, `/api/workspaces/${ws.id}/command`)).json();
+  assert.ok(!cc.needs.some((n) => n.module === "Success"));
+  // A draft with prices can't be handled (or read) by someone without Billing view.
+  const owner = (await json(X)).expansion[0];
+  const dr = await (await post(`${X}/customers/${owner.customer_id}/ai/expansion`, {})).json();
+  assert.equal((await as(mem, `${X}/drafts/${dr.id}/approve`, "POST", {})).status, 403);
+  assert.match((await (await as(mem, `${X}/drafts`)).json()).find((x) => x.id === dr.id).text, /Hidden/);
+  // The public survey page needs no login; the module's API does.
+  assert.equal((await fetch(base + X)).status, 401);
+});
+
+test("success sample data loads with Billing customers and the CRM link, and removes cleanly; deleting a workspace clears success rows", async () => {
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-sxs-")), st2 = new Store(d2);
+  const app2 = createApp({ store: st2, provider, password: "pw-sx" });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  try {
+    const b2 = `http://127.0.0.1:${srv.address().port}`;
+    const ck = (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-sx" }) })).headers.get("set-cookie").split(";")[0];
+    const j = (p, b, m) => fetch(b2 + p, { method: m || (b ? "POST" : "GET"), headers: { "Content-Type": "application/json", cookie: ck }, body: b && JSON.stringify(b) });
+    const [w] = await (await j("/api/workspaces")).json();
+    await j(`/api/workspaces/${w.id}/crm/sample`, {});
+    const loaded = await (await j(`/api/workspaces/${w.id}/sample-data`, {})).json();
+    assert.equal(loaded.success_customers, 6);
+    const ov = await (await j(`/api/workspaces/${w.id}/success`)).json();
+    assert.equal(ov.customers.length, 6); assert.ok(ov.customers.every((c) => c.sample && c.linked));
+    assert.ok(ov.bands.at_risk >= 1); assert.ok(ov.trend.length >= 20); assert.ok(ov.expansion.length >= 2); assert.equal(ov.nps.n, 3);
+    const types = new Set((await (await j(`/api/workspaces/${w.id}/success/alerts`)).json()).map((a) => a.type));
+    for (const t of ["past_due", "usage_drop", "health_drop", "cancel_scheduled", "detractor", "inactive"]) assert.ok(types.has(t), t);
+    assert.ok((await (await j(`/api/workspaces/${w.id}/success/onboarding`)).json()).some((r) => r.stuck.length));
+    assert.ok(st2.db.billing_invoices.filter((i) => i.sample).every((i) => /^SAMPLE-/.test(i.number))); // outside the invoice sequence
+    const rm = await (await j(`/api/workspaces/${w.id}/sample-data`, null, "DELETE")).json();
+    assert.equal(rm.customers, 6);
+    assert.equal(st2.db.billing_customers.filter((c) => c.workspace_id === w.id).length, 0);
+    for (const k of ["success_health", "success_alerts", "success_responses", "success_surveys", "billing_usage", "billing_invoices"]) assert.equal(st2.db[k].filter((x) => x.workspace_id === w.id).length, 0, k);
+    // Deleting a workspace clears its success_* rows.
+    st2.db.success_alerts.push({ id: "z1", workspace_id: w.id }, { id: "z2", workspace_id: "other" });
+    st2.db.success_health.push({ id: "z3", workspace_id: w.id });
+    assert.ok(st2.deleteWorkspace(w.id));
+    assert.deepEqual(st2.db.success_alerts.map((x) => x.id), ["z2"]); assert.equal(st2.db.success_health.length, 0);
+  } finally { srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true }); }
+});
