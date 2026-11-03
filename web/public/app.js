@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
+  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
 const levelFor = (route) => (S.me ? S.me.perms[ROUTE_MODULE[route] || "command"] || "none" : "edit");
 const canSee = (route) => levelFor(route) !== "none";
 /* ---------------------------------------------------------------- sidebar menu
@@ -100,7 +100,7 @@ const canSee = (route) => levelFor(route) !== "none";
 const NAV = [
   { route: "command", label: "Home", icon: "home" },
   { route: "sop", label: "SOP", icon: "check" },
-  { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["results", "ROAS results"]] },
+  { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["results", "ROAS results"]] },
   { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"]] },
   { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
   { route: "product", label: "Product", icon: "box" },
