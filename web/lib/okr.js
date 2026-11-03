@@ -252,9 +252,14 @@ export function hiddenRefs(data, perms, needModule = () => null) {
   return out;
 }
 const REF_RE = /\[([MGKONDIF]\d+)\]/g;
+// For a reader who can't see some rows: drop every line citing one, and lines with numbers that cite nothing
+// (a number without its row can't be checked against what this reader may see).
 export function redactNarrative(text, hidden) {
   if (!hidden.size) return String(text || "");
-  return String(text || "").split("\n").filter((l) => ![...l.matchAll(REF_RE)].some((m) => hidden.has(m[1]))).join("\n");
+  return String(text || "").split("\n").filter((l) => {
+    const refs = [...l.matchAll(REF_RE)].map((m) => m[1]);
+    return refs.length ? !refs.some((r) => hidden.has(r)) : !/\d/.test(l.replace(/\[ADD\]/g, ""));
+  }).join("\n");
 }
 export function redactData(data, perms, needModule) {
   const hidden = hiddenRefs(data, perms, needModule);
@@ -319,7 +324,10 @@ const CONF_NAME = Object.fromEntries(CONFIDENCE.map((c) => [c.id, c.name.toLower
 // The factual narrative built from the rows alone (used when the AI is off or its text can't be checked).
 export function ruleNarrative(data) {
   const lines = [`## Headlines`];
-  const moved = data.metrics.filter((m) => m.this_week != null);
+  // The three biggest week-over-week moves (the full table sits above the notes); without moves, the first rows with data.
+  const withData = data.metrics.filter((m) => m.this_week != null);
+  const movers = withData.filter((m) => m.change_pct).sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct));
+  const moved = (movers.length ? movers : withData).slice(0, 3);
   if (!moved.length) lines.push("- No metric has data for this week yet: [ADD]");
   for (const m of moved) lines.push(`- ${m.name}: ${fmtVal(m.this_week, m.unit)} this week${m.last_week != null ? ` vs ${fmtVal(m.last_week, m.unit)} last week${m.change_pct != null ? ` (${m.change_pct > 0 ? "+" : ""}${m.change_pct}%)` : ""}` : ""}${m.avg_4w != null ? `, 4-week average ${fmtVal(m.avg_4w, m.unit)}` : ""} [${m.ref}]`);
   lines.push("", "## Goals");
@@ -350,7 +358,7 @@ export function createOkr({ store, crm = null, provider, workforce = null, needs
       const run = () => provider.generate({ prompt: narrativePrompt(w, data), onText: () => {} });
       const out = await withAgent(AGENT_ID, w.id, run);
       const c = checkNarrative(out, data);
-      if (c.cited.length && !c.unknown.length && !c.unsourced_numbers.length) return { text: String(out).trim() + "\n", by_ai: true, note: "" };
+      if (c.cited.length && !c.unknown.length && !c.unsourced_numbers.length && !c.uncited) return { text: String(out).trim() + "\n", by_ai: true, note: "" };
       workforce?.event(AGENT_ID, w.id, "escalated", `WBR ${data.week_start}: AI narrative failed the checks (${c.issues[0] || "no references"}); factual summary used`);
       return { text: ruleNarrative(data), by_ai: false, note: c.unknown.length || c.unsourced_numbers.length ? `The AI's narrative ${c.unknown.length ? `cited rows that don't exist (${c.unknown.join(", ")})` : `had numbers that aren't in the rows (${c.unsourced_numbers.join(", ")})`}: this is the factual summary built from the rows instead. Add context where it says [ADD].` : "The AI's narrative didn't cite the rows: this is the factual summary built from the rows instead. Add context where it says [ADD]." };
     } catch (e) {

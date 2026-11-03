@@ -1,6 +1,6 @@
 // HTTP routes for OKRs & Weekly business review (module "okr" in Teams & roles).
-// Owner, Admin and Team lead create and edit any objective; anyone else with Edit may edit objectives they own and
-// check in on key results they own. Only an Owner or Admin marks a weekly review reviewed (then it's locked).
+// Owner, Admin and Team lead create, edit, activate, grade and delete objectives; anyone else with Edit (a Team member)
+// only checks in on key results they own and comments on the weekly review. Only an Owner or Admin marks a weekly review reviewed (then it's locked).
 // Metrics from modules a person can't view are hidden in every response (and in the printable review).
 import { levelOk } from "./access.js";
 import { withAgent } from "./agents.js";
@@ -19,14 +19,14 @@ export function mountOkr(app, { store, crm = null, provider, workforce = null, o
   const ctxOf = (w) => metricContext({ store, crm, w, now: now() });
   const manager = (req) => MANAGER_ROLES.includes(req.user?.role_id);
   const reviewer = (req) => REVIEWER_ROLES.includes(req.user?.role_id);
-  const canEdit = (req, o) => manager(req) || (!!o.owner_id && o.owner_id === req.user?.id);
+  const canEdit = (req) => manager(req); // objectives and their key results: Owner, Admin, Team lead only
   const outcome = (ws, o, note) => workforce?.event(AGENT_ID, ws, o, note);
   const log = (w, f) => store.addOps(COLL.log, w.id, { kr_id: null, from: null, to: null, ...f }, false);
   const obj = (w, id) => store.getOps(COLL.objectives, w.id, id);
   const krsOf = (w, o) => store.listOps(COLL.krs, w.id).filter((k) => k.objective_id === o.id);
   const view = (req, w, o, ctx = ctxOf(w)) => ({ ...objectiveView(store, ctx, o, req.perms, { now: now() }), can_edit: o.status !== "closed" && canEdit(req, o) && levelOk(req.perms?.okr, "edit") });
   const deny = (res, text) => res.status(403).json({ detail: text });
-  const NOT_YOURS = "Only an Owner, Admin or Team lead, or the objective's owner, can change this objective.";
+  const NOT_YOURS = "Only an Owner, Admin or Team lead changes objectives and key results. You can check in on key results you own.";
 
   app.get(`${P}/meta`, (req, res) => {
     const w = W(req, res); if (!w) return;
