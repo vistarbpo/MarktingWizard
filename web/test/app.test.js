@@ -344,7 +344,7 @@ test("command center: one snapshot across modules", async () => {
   assert.ok(d.goal.next_milestone > d.goal.arr);
   assert.deepEqual(d.work.modules.map((m) => m.module), ["Marketing", "Sales", "Support", "Outreach", "Hiring"]);
   assert.ok(d.work.ai > 0); // earlier tests ran playbooks and AI drafts this week
-  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations", "Product"].includes(n.module)));
+  assert.ok(Array.isArray(d.needs) && d.needs.every((n) => ["Sales", "Support", "Hiring", "Finance", "Operations", "Product", "Compliance"].includes(n.module)));
   assert.ok(d.needs.some((n) => n.module === "Support")); // the escalated chat from the support test
   assert.equal(d.sop.length, 4);
   assert.ok(d.feed.length > 0 && d.feed.length <= 14);
@@ -2296,4 +2296,348 @@ test("people sample data: sample employees, punches and leave load and remove cl
   assert.equal(removed.employees, 4); assert.ok(removed.people_punches > 0);
   assert.equal((await json(`${W}/people`)).employees.length, 0);
   assert.ok(!store.db.people_punches.some((p) => p.workspace_id === ws.id));
+});
+
+// ---------------------------------------------------------------- Security & compliance, backups, status page
+const BK = "a".repeat(64);
+async function cxApp({ env = {}, backupOptions = {}, statusOptions = {} } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-cx-"));
+  const st = new Store(d), pw = "cx-team-password-long";
+  const a = createApp({ store: st, provider, password: pw, env: { BACKUP_KEY: BK, ...env }, backupOptions, statusOptions });
+  const srv = a.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: pw });
+  const req = (c, p, method = "GET", body) => fetch(b + p, { method, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = async (c, p, method, body) => { const r = await req(c, p, method, body); const t = await r.text(); let data = null; try { data = JSON.parse(t); } catch { data = t; } return { status: r.status, data }; };
+  const user = async (name, role_id) => { const email = `${role_id}-${Date.now()}@dpa.ad`; await j(ck, "/api/admin/users", "POST", { name, email, password: "user-pass-123", role_id }); return login({ email, password: "user-pass-123" }); };
+  const [ws] = st.listWorkspaces();
+  return { d, st, a, b, ck, req, j, user, ws, crm: a.locals.crm, close: () => { srv.close(); a.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+
+test("backups: create → encrypt → decrypt → verify round trip, with media; Owner-only download", async () => {
+  const { openBackup } = await import("../lib/backup.js");
+  const t = await cxApp();
+  try {
+    fs.mkdirSync(path.join(t.d, "media"), { recursive: true });
+    fs.writeFileSync(path.join(t.d, "media", "a1.png"), Buffer.from("png-bytes-here"));
+    t.crm.add(t.ws.id, { store_name: "Round Trip Store", email: "rt@shop.sa" });
+    const r = await t.j(t.ck, "/api/compliance/backups", "POST", { media: true });
+    assert.equal(r.status, 201); assert.ok(r.data.ok); assert.ok(r.data.encrypted); assert.match(r.data.name, /^mwiz-backup-\d{8}T\d{9}Z-manual\.tar\.gz\.enc$/);
+    const file = path.join(t.d, "backups", r.data.name), raw = fs.readFileSync(file);
+    assert.ok(!raw.includes("Round Trip Store") && !raw.includes("DPA AD"), "the file on disk is encrypted");
+    const opened = await openBackup(raw, BK);
+    assert.equal(opened.crm.contacts.find((c) => c.email === "rt@shop.sa").store_name, "Round Trip Store");
+    assert.equal(opened.db.workspaces[0].brief.company_name, "DPA AD");
+    assert.equal(opened.files.find((f) => f.name === "media/a1.png").data.toString(), "png-bytes-here");
+    await assert.rejects(openBackup(raw, "b".repeat(64)), /wrong BACKUP_KEY/);
+    await assert.rejects(openBackup(raw, ""), /BACKUP_KEY is needed/);
+    const v = await t.j(t.ck, `/api/compliance/backups/${r.data.name}/verify`, "POST");
+    assert.equal(v.status, 200); assert.equal(v.data.counts.crm.contacts, 1); assert.equal(v.data.counts.db.workspaces, 1); assert.equal(v.data.media_files, 1);
+    assert.equal((await t.j(t.ck, "/api/compliance/backups/..%2Fdb.json/verify", "POST")).status, 404);
+    // Owner downloads; an Admin can back up and verify but not download.
+    const dl = await t.req(t.ck, `/api/compliance/backups/${r.data.name}/download`);
+    assert.equal(dl.status, 200); assert.ok(Buffer.from(await dl.arrayBuffer()).equals(raw));
+    const admin = await t.user("Ada Admin", "admin");
+    assert.equal((await t.req(admin, `/api/compliance/backups/${r.data.name}/download`)).status, 403);
+    assert.equal((await t.j(admin, `/api/compliance/backups/${r.data.name}/verify`, "POST")).status, 200);
+    const ov = await t.j(admin, "/api/compliance");
+    assert.equal(ov.data.backups.can_download, false); assert.equal(ov.data.backups.status.fresh, true);
+    assert.ok(t.st.db.audit.some((a) => a.summary.startsWith("downloaded backup")));
+  } finally { t.close(); }
+});
+
+test("backups: retention keeps 14 nightly + 8 weekly + 10 manual; nightly at 02:00 Riyadh; stale backups raise a need", async () => {
+  const { createBackups } = await import("../lib/backup.js");
+  const { complianceNeeds } = await import("../lib/complianceroutes.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-bk-"));
+  try {
+    const st = new Store(d);
+    let now = Date.parse("2026-10-01T00:00:00Z");
+    const bk = createBackups({ store: st, crm: null, env: { BACKUP_KEY: BK }, now: () => now, log: { error() {} } });
+    for (let i = 0; i < 20; i++) { now += 864e5; await bk.create({ kind: "nightly", offsite: false }); }
+    for (let i = 0; i < 10; i++) { now += 7 * 864e5; await bk.create({ kind: "weekly", offsite: false }); }
+    for (let i = 0; i < 12; i++) { now += 60e3; await bk.create({ kind: "manual", offsite: false }); }
+    const files = bk.files(), by = (k) => files.filter((f) => f.kind === k);
+    assert.equal(by("nightly").length, 14); assert.equal(by("weekly").length, 8); assert.equal(by("manual").length, 10);
+    assert.ok(by("nightly").every((f, i, a) => i === 0 || a[i - 1].at > f.at), "newest first");
+    // The schedule: nothing at 01:30 Riyadh, a backup from 02:00, once per Riyadh day.
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-bk2-")), st2 = new Store(d2);
+    now = Date.parse("2026-11-02T22:30:00Z"); // 01:30 Riyadh, Nov 3
+    const s2 = createBackups({ store: st2, crm: null, env: { BACKUP_KEY: BK }, now: () => now, log: { error() {} } });
+    assert.equal(s2.due(), false); assert.equal(await s2.tick(), null);
+    assert.equal(complianceNeeds({ store: st2, backups: s2, now })[0].title, "Backups");
+    now = Date.parse("2026-11-02T23:05:00Z"); // 02:05 Riyadh
+    const first = await s2.tick();
+    assert.equal(first.kind, "weekly"); assert.equal(first.by, "schedule");
+    assert.equal(s2.due(), false); assert.equal(await s2.tick(), null);
+    assert.equal(complianceNeeds({ store: st2, backups: s2, now }).length, 0);
+    now += 864e5; // next night
+    assert.equal((await s2.tick()).kind, "nightly");
+    now += 27 * 3600e3 + 22 * 3600e3; // missed nights: not fresh until the next run
+    assert.equal(s2.status().fresh, false);
+    assert.match(complianceNeeds({ store: st2, backups: s2, now })[0].text, /No successful backup in 26 hours/);
+    fs.rmSync(d2, { recursive: true, force: true });
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test("SigV4 matches AWS's published test vectors", async () => {
+  const { signV4 } = await import("../lib/backup.js");
+  const empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  // aws-sig-v4-test-suite "get-vanilla"
+  const a = signV4({ method: "GET", url: "https://example.amazonaws.com/", payloadHash: empty, region: "us-east-1", service: "service", accessKey: "AKIDEXAMPLE", secretKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", date: new Date("2015-08-30T12:36:00Z") });
+  assert.equal(a.signature, "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31");
+  assert.equal(a.headers.authorization, "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31");
+  // Amazon S3 API reference, "Example: GET Object"
+  const b = signV4({ method: "GET", url: "https://examplebucket.s3.amazonaws.com/test.txt", headers: { Range: "bytes=0-9", "x-amz-content-sha256": empty }, payloadHash: empty, region: "us-east-1", service: "s3", accessKey: "AKIAIOSFODNN7EXAMPLE", secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", date: new Date("2013-05-24T00:00:00Z") });
+  assert.equal(b.signature, "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41");
+});
+
+test("backups off-site: S3 upload (mocked fetch) and email, refused without BACKUP_KEY", async () => {
+  const crypto = await import("node:crypto");
+  const { createBackups, signV4 } = await import("../lib/backup.js");
+  const s3env = { BACKUP_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", BACKUP_S3_BUCKET: "dpa-backups", BACKUP_S3_KEY: "AKTEST", BACKUP_S3_SECRET: "s3cret", BACKUP_S3_REGION: "auto",
+    BACKUP_EMAIL_TO: "founder@dpa.ad", SMTP_HOST: "smtp.example", SMTP_USER: "u", SMTP_PASS: "p" };
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-s3-"));
+  try {
+    const st = new Store(d), puts = [], mails = [];
+    let fail = false;
+    const fetchImpl = async (url, opts) => { puts.push({ url, ...opts }); return fail ? { ok: false, status: 403, text: async () => "<Error>SignatureDoesNotMatch</Error>", headers: new Map() } : { ok: true, status: 200, text: async () => "", headers: new Map([["etag", '"abc"']]) }; };
+    const bk = createBackups({ store: st, crm: null, env: { ...s3env, BACKUP_KEY: BK }, fetchImpl, mailer: async (m) => mails.push(m), log: { error() {} } });
+    const r = await bk.create({ kind: "manual" });
+    assert.equal(puts.length, 1);
+    const p = puts[0], body = fs.readFileSync(path.join(d, "backups", r.name));
+    assert.equal(p.method, "PUT"); assert.equal(p.url, `https://acct.r2.cloudflarestorage.com/dpa-backups/marketing-wizard/${r.name}`);
+    assert.ok(Buffer.from(p.body).equals(body));
+    assert.equal(p.headers["x-amz-content-sha256"], crypto.createHash("sha256").update(body).digest("hex"));
+    assert.match(p.headers.authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\/\d{8}\/auto\/s3\/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/);
+    const amz = p.headers["x-amz-date"], date = new Date(`${amz.slice(0, 4)}-${amz.slice(4, 6)}-${amz.slice(6, 8)}T${amz.slice(9, 11)}:${amz.slice(11, 13)}:${amz.slice(13, 15)}Z`);
+    const again = signV4({ method: "PUT", url: p.url, headers: { "content-type": "application/octet-stream", "x-amz-content-sha256": p.headers["x-amz-content-sha256"] }, payloadHash: p.headers["x-amz-content-sha256"], region: "auto", accessKey: "AKTEST", secretKey: "s3cret", date });
+    assert.equal(p.headers.authorization, again.headers.authorization);
+    assert.equal(mails.length, 1); assert.equal(mails[0].to, "founder@dpa.ad"); assert.ok(mails[0].attachments[0].content.equals(body));
+    assert.equal(bk.status().last_ok.offsite.s3.ok, true); assert.equal(bk.status().last_ok.offsite.email.ok, true);
+    fail = true;
+    const r2 = await bk.create({ kind: "manual" });
+    assert.equal(r2.offsite.s3.ok, false); assert.match(r2.offsite.s3.error, /HTTP 403.*SignatureDoesNotMatch/);
+    // Too big to email.
+    const small = createBackups({ store: st, crm: null, env: { ...s3env, BACKUP_KEY: BK, BACKUP_EMAIL_MAX_MB: "0.0001" }, fetchImpl: async () => ({ ok: true, headers: new Map() }), mailer: async (m) => mails.push(m), log: { error() {} } });
+    assert.match((await small.create({ kind: "manual" })).offsite.email.error, /Too big to email/);
+    // Without BACKUP_KEY: stays local, unencrypted, never sent.
+    puts.length = 0; mails.length = 0;
+    const nokey = createBackups({ store: st, crm: null, env: s3env, fetchImpl, mailer: async (m) => mails.push(m), log: { error() {} } });
+    const r3 = await nokey.create({ kind: "manual" });
+    assert.ok(r3.name.endsWith(".tar.gz")); assert.equal(puts.length, 0); assert.equal(mails.length, 0);
+    assert.match(r3.offsite.s3.error, /set BACKUP_KEY/); assert.match(r3.offsite.email.error, /set BACKUP_KEY/);
+    assert.equal((await nokey.verify(r3.name)).ok, true);
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test("data requests: find, export and delete across CRM, support, HR and sales; audit trail with no personal data left", async () => {
+  const { dsrDue, dsrState } = await import("../lib/compliance.js");
+  assert.equal(dsrDue("2026-01-15", 30), "2026-02-14"); assert.equal(dsrDue("2026-02-20", 10), "2026-03-02");
+  assert.equal(dsrState({ received_at: "2026-01-01", status: "open" }, 30, Date.parse("2026-02-05T00:00:00Z")).overdue, true);
+  assert.equal(dsrState({ received_at: "2026-01-01", status: "completed" }, 30, Date.parse("2026-02-05T00:00:00Z")).overdue, false);
+  assert.equal(dsrState({ received_at: "2026-01-25", status: "open" }, 30, Date.parse("2026-02-20T00:00:00Z")).due_soon, true);
+  const t = await cxApp();
+  try {
+    const ws = t.ws.id, EMAIL = "sara.person@shop-example.sa", PHONE = "0551234567";
+    const c = t.crm.add(ws, { store_name: "Sara Store", email: EMAIL, phone: "966551234567", domain: "sara-shop.sa" });
+    t.crm.addMessage({ workspace_id: ws, contact_id: c.id, direction: "in", channel: "email", body: "Please delete my data", status: "received" });
+    t.crm.addNote(ws, c.id, "Called her", "you");
+    const other = t.crm.add(ws, { store_name: "Other Store", email: "other@shop.sa" });
+    const tk = t.st.addTicket(ws, { channel: "Website chat", customer_name: "Sara", contact: EMAIL });
+    t.st.addTicketMessage(ws, tk.id, { from: "customer", text: "Hi, my number is +966 55 123 4567" });
+    const cand = t.st.addHrCandidate(ws, { name: "Sara P", email: EMAIL.toUpperCase(), phone: "", cv_text: "CV" });
+    const deal = t.st.addDeal(ws, { name: "Sara Store deal", contact_name: "Sara", contact_email: EMAIL, contact_phone: PHONE });
+    t.st.addDealActivity(deal.id, { type: "note", by: "you", text: `Follow up with ${EMAIL} next week` });
+    const viewer = await t.user("Vic Viewer", "viewer"), member = await t.user("Mo Member", "member");
+    const bad = await t.j(t.ck, "/api/compliance/requests", "POST", { type: "deletion", subject: { name: "Sara" } });
+    assert.equal(bad.status, 422);
+    const r = (await t.j(t.ck, "/api/compliance/requests", "POST", { type: "deletion", received_at: "2026-11-01", channel: "email", subject: { name: "Sara P", email: EMAIL, phone: PHONE } })).data;
+    assert.equal(r.ref, "DSR-0001"); assert.equal(r.due, "2026-12-01");
+    // Viewers see the request without the person's details and can't search or delete.
+    const vview = (await t.j(viewer, "/api/compliance")).data;
+    assert.ok(!JSON.stringify(vview.requests).includes(EMAIL)); assert.equal(vview.can_edit, false);
+    assert.equal((await t.j(viewer, `/api/compliance/requests/${r.id}/find`, "POST")).status, 403);
+    assert.equal((await t.j(viewer, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "DELETE" })).status, 403);
+    assert.equal((await t.j(member, "/api/compliance")).status, 403);
+    const f = (await t.j(t.ck, `/api/compliance/requests/${r.id}/find`, "POST")).data;
+    assert.equal(f.crm_contacts.length, 1); assert.equal(f.crm_contacts[0].messages, 1); assert.equal(f.support_tickets.length, 1);
+    assert.equal(f.hr_candidates.length, 1); assert.equal(f.sales_deals.length, 1); assert.equal(f.mentions.deal_activities, 1); assert.equal(f.total, 4);
+    assert.equal((await t.j(t.ck, "/api/compliance/find", "POST", { phone: "+966 55 123 4567" })).data.crm_contacts.length, 1);
+    const ex = await t.req(t.ck, `/api/compliance/requests/${r.id}/export`, "POST", {});
+    assert.match(ex.headers.get("content-disposition"), /DSR-0001-export\.json/);
+    const exd = await ex.json();
+    assert.equal(exd.crm_contacts[0].store_name, "Sara Store"); assert.equal(exd.crm_contacts[0].messages[0].body, "Please delete my data");
+    assert.equal(exd.crm_contacts[0].unsub_token, undefined); assert.equal(exd.support_tickets[0].messages.length, 1); assert.equal(exd.sales_deals[0].contact_email, EMAIL);
+    const acc = (await t.j(t.ck, "/api/compliance/requests", "POST", { type: "access", subject: { email: EMAIL } })).data;
+    assert.equal((await t.j(t.ck, `/api/compliance/requests/${acc.id}/delete`, "POST", { confirm: "DELETE" })).status, 422);
+    // Deletion needs the typed confirmation.
+    assert.equal((await t.j(t.ck, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "delete" })).status, 422);
+    const del = await t.j(t.ck, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "DELETE" });
+    assert.equal(del.status, 200);
+    assert.deepEqual(del.data.result.deleted, { crm_contacts: 1, crm_messages: 1, support_tickets: 1, hr_candidates: 1, deal_contacts_cleared: 1, mentions_redacted: 1 });
+    assert.equal(del.data.erased, true); assert.equal(del.data.status, "completed");
+    // Nothing personal is left anywhere: not in db.json, crm.json, the request record or the activity log.
+    t.crm.flush();
+    const all = fs.readFileSync(path.join(t.d, "db.json"), "utf8") + fs.readFileSync(path.join(t.d, "crm.json"), "utf8");
+    for (const needle of [EMAIL, EMAIL.toUpperCase(), "551234567", "55 123 4567", "Sara Store\"", "Sara P"]) assert.ok(!all.includes(needle), `found ${needle}`);
+    assert.ok(t.crm.get(ws, other.id), "other stores are untouched");
+    assert.equal(t.st.getDeal(ws, deal.id).name, "Sara Store deal"); assert.match(t.st.listDealActivities(deal.id).find((a) => a.type === "note").text, /\[removed\]/);
+    const kept = t.st.db.compliance_requests.find((x) => x.id === r.id);
+    assert.deepEqual(kept.subject, { name: "", email: "", phone: "" }); assert.ok(kept.log.some((l) => /deleted across modules/.test(l.text)));
+    assert.ok(t.st.db.audit.some((a) => a.path === `/api/compliance/requests/${r.id}/delete`));
+    assert.equal(t.st.db.compliance_requests.find((x) => x.id === acc.id).erased, true, "the same person's other requests drop their details too");
+    assert.equal((await t.j(t.ck, `/api/compliance/requests/${r.id}/find`, "POST")).status, 409);
+    assert.equal((await t.j(t.ck, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "DELETE" })).status, 409);
+  } finally { t.close(); }
+});
+
+test("security checks are computed from the live server settings", async () => {
+  const { securityChecks } = await import("../lib/compliance.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-sec-"));
+  try {
+    const st = new Store(d);
+    const fakeCrm = { db: { settings: { [st.listWorkspaces()[0].id]: { mode: "live" } } } };
+    const s = (o) => Object.fromEntries(securityChecks({ store: st, crm: fakeCrm, ...o }).map((c) => [c.id, c]));
+    let c = s({ env: {}, password: "short", backupStatus: { fresh: false, offsite: { s3: { configured: false }, email: { configured: false } } } });
+    assert.equal(c.password.state, "fail"); assert.equal(c.owner.state, "fail"); assert.equal(c.token_key.state, "fail"); assert.equal(c.backup_key.state, "fail");
+    assert.equal(c.backups.state, "fail"); assert.equal(c.https.state, "warn"); assert.equal(c.webhook_secret.state, "info"); assert.match(c.crm_mode.detail, /Live in: DPA AD/);
+    st.db.users.push({ id: "u1", name: "Old Owner", email: "o@dpa.ad", role_id: "owner", active: true, created_at: "2025-01-01T00:00:00Z", last_login_at: "2025-01-02T00:00:00Z" });
+    c = s({ env: { TOKEN_KEY: "f".repeat(64), BACKUP_KEY: BK, PUBLIC_URL: "https://wizard.dpa.ad", META_APP_ID: "1", META_APP_SECRET: "x", WA_TOKEN: "t" }, password: "a-very-long-team-password",
+      backupStatus: { fresh: true, encrypted: true, last_ok: { at: new Date().toISOString() }, offsite: { s3: { configured: true }, email: { configured: false } } } });
+    for (const k of ["password", "owner", "token_key", "backup_key", "backups", "offsite", "https"]) assert.equal(c[k].state, "pass", k);
+    assert.equal(c.inactive.state, "warn"); assert.match(c.inactive.detail, /Old Owner/);
+    assert.equal(c.webhook_secret.state, "fail"); assert.match(c.webhook_secret.detail, /WA_APP_SECRET/);
+    assert.equal(s({ env: { PUBLIC_URL: "http://wizard.dpa.ad" }, password: "x", backupStatus: null }).https.state, "fail");
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  const t = await cxApp({ env: { PUBLIC_URL: "https://wizard.dpa.ad" } });
+  try {
+    const ov = (await t.j(t.ck, "/api/compliance")).data;
+    assert.equal(ov.checks.find((x) => x.id === "backup_key").state, "pass"); assert.equal(ov.checks.find((x) => x.id === "https").state, "pass");
+    assert.equal(ov.checks.find((x) => x.id === "password").state, "pass");
+  } finally { t.close(); }
+});
+
+test("status page: public without login, incidents publish/unpublish from Operations, 90-day bars and self-check", async () => {
+  const checks = [];
+  const t = await cxApp({ statusOptions: { fetchImpl: async (url) => { checks.push(url); return { ok: checks.length !== 2 }; } } });
+  try {
+    const page = await fetch(t.b + "/status", { redirect: "manual" });
+    assert.equal(page.status, 200); assert.match(await page.text(), /DPA AD status/);
+    let s = await (await fetch(t.b + "/status.json")).json();
+    assert.equal(s.overall, "operational"); assert.equal(s.components.length, 5); assert.ok(s.components.every((c) => c.days.length === 90));
+    assert.deepEqual(s.components.map((c) => c.id), ["dashboard", "rendering", "publishing", "integrations", "messaging"]);
+    assert.equal(s.components[1].name.ar, "تصميم الإعلانات");
+    assert.equal(s.components[0].uptime_pct, null, "no uptime is claimed before any check");
+    assert.equal(s.components[0].days[0].state, "nodata"); assert.equal(s.components[0].days[89].state, "operational");
+    // An Operations incident, published by a person with customer-facing text.
+    const inc = (await t.j(t.ck, `/api/workspaces/${t.ws.id}/ops/incidents`, "POST", { title: "Render queue stuck on db-02", severity: "SEV1", impact: "Internal: worker crashed" })).data;
+    const draft = await t.j(t.ck, "/api/compliance/status/draft", "POST", { ops_ws: t.ws.id, ops_id: inc.id });
+    assert.equal(draft.status, 200); assert.equal(draft.data.impact, "outage");
+    assert.equal((await t.j(t.ck, "/api/compliance/status/incidents", "POST", { title_en: "x", components: [] })).status, 422);
+    const si = (await t.j(t.ck, "/api/compliance/status/incidents", "POST", { ops_ws: t.ws.id, ops_id: inc.id, title_en: "Ad rendering is slow", title_ar: "تصميم الإعلانات بطيء", text_en: "We're on it.", text_ar: "نعمل على حلها.", impact: "outage", components: ["rendering"], ai_original: { ...draft.data } })).data;
+    assert.equal(si.published, false);
+    s = await (await fetch(t.b + "/status.json")).json();
+    assert.equal(s.incidents.active.length, 0); assert.equal(s.overall, "operational");
+    const viewer = await t.user("Vic Viewer", "viewer");
+    assert.equal((await t.j(viewer, `/api/compliance/status/incidents/${si.id}`, "PUT", { published: true })).status, 403);
+    assert.equal((await t.j(t.ck, `/api/compliance/status/incidents/${si.id}`, "PUT", { published: true })).status, 200);
+    s = await (await fetch(t.b + "/status.json")).json();
+    assert.equal(s.overall, "outage"); assert.equal(s.components.find((c) => c.id === "rendering").state, "outage");
+    assert.equal(s.components.find((c) => c.id === "rendering").days[89].state, "outage");
+    assert.equal(s.incidents.active[0].title.ar, "تصميم الإعلانات بطيء"); assert.equal(s.incidents.active[0].updates[0].text.en, "We're on it.");
+    const pub = JSON.stringify(s);
+    assert.ok(!pub.includes("db-02") && !pub.includes("worker crashed"), "internal details stay internal");
+    await t.j(t.ck, `/api/compliance/status/incidents/${si.id}`, "PUT", { published: false });
+    assert.equal((await (await fetch(t.b + "/status.json")).json()).incidents.active.length, 0);
+    await t.j(t.ck, `/api/compliance/status/incidents/${si.id}`, "PUT", { published: true, state: "resolved", text_en: "Fixed.", text_ar: "تم الحل." });
+    s = await (await fetch(t.b + "/status.json")).json();
+    assert.equal(s.incidents.active.length, 0); assert.equal(s.incidents.past.length, 1); assert.equal(s.incidents.past[0].updates[0].text.en, "Fixed.");
+    assert.equal(s.components.find((c) => c.id === "rendering").state, "operational");
+    // Manual component state and the self-check.
+    await t.j(t.ck, "/api/compliance/status/components/publishing", "PUT", { state: "maintenance" });
+    assert.equal((await t.j(t.ck, "/api/compliance/status/components/publishing", "PUT", { state: "melting" })).status, 422);
+    assert.equal((await (await fetch(t.b + "/status.json")).json()).overall, "maintenance");
+    const st = t.a.locals.status;
+    assert.equal(await st.selfCheck("https://wizard.dpa.ad/healthz"), true);
+    assert.equal(await st.selfCheck("https://wizard.dpa.ad/healthz"), false);
+    s = await (await fetch(t.b + "/status.json")).json();
+    assert.equal(s.components[0].uptime_pct, 50); assert.equal(s.components[0].days[89].state, "outage");
+    assert.equal((await t.j(t.ck, "/api/compliance/status/check", "POST")).status, 200);
+    assert.ok(t.st.db.agent_events.some((e) => e.agent_id === "compliance_officer" && e.outcome === "edited"));
+  } finally { t.close(); }
+});
+
+test("compliance: register, sub-processors, policies with the AI Compliance officer, access review, breach checklist and permissions", async () => {
+  const { DEFAULT_ROLES, moduleFor } = await import("../lib/access.js");
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  assert.equal(moduleFor("GET", "/api/compliance"), "compliance"); assert.equal(moduleFor("POST", "/api/compliance/backups"), "compliance");
+  const perm = Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.compliance]));
+  assert.deepEqual(perm, { owner: "edit", admin: "edit", manager: "view", member: "none", finance: "none", creative: "none", viewer: "view" });
+  const ag = AGENTS.find((a) => a.id === "compliance_officer");
+  assert.equal(ag.team, "Leadership"); assert.equal(ag.max, 1); assert.equal(agentFor("POST", "/api/compliance/policies/1/ai"), "compliance_officer");
+  const t = await cxApp();
+  try {
+    await t.j(t.ck, `/api/workspaces/${t.ws.id}/ops/vendors`, "POST", { name: "Hostinger", purpose: "hosting" });
+    await t.j(t.ck, `/api/workspaces/${t.ws.id}/ops/vendors`, "POST", { name: "Figma", purpose: "design" });
+    const ov = (await t.j(t.ck, "/api/compliance")).data;
+    assert.ok(["Store CRM contacts", "Support tickets & website chat", "HR candidates", "Team users (dashboard logins)", "Finance records", "Media files (Creative Studio)"].every((n) => ov.register.some((r) => r.name === n)));
+    assert.ok(ov.register.find((r) => r.key === "crm_contacts").access.some((a) => /^Owner/.test(a)));
+    assert.ok(["Hostinger", "Anthropic", "Moyasar"].every((n) => ov.vendors.some((v) => v.name === n)));
+    assert.ok(ov.vendors.every((v) => v.dpa === "unknown"), "no DPA is assumed signed");
+    assert.equal(ov.vendors.find((v) => v.name === "Hostinger").in_tool_stack, true);
+    assert.equal((await t.j(t.ck, "/api/compliance/vendors/from-ops", "POST")).data.added, 1);
+    assert.equal(ov.policies.length, 6);
+    for (const p of t.st.db.compliance_policies) { assert.match(p.body, /\[CONFIRM/); assert.doesNotMatch(p.body.replace(/does not hold[^.]*\./, ""), /ISO 27001|SOC 2/); }
+    // A second visit doesn't duplicate the starters.
+    assert.equal((await t.j(t.ck, "/api/compliance")).data.register.length, ov.register.length);
+    // Policy: AI drafts, a person saves (outcome recorded), approval needs every [CONFIRM] filled.
+    const pol = ov.policies[0];
+    const stream = await (await t.req(t.ck, `/api/compliance/policies/${pol.id}/ai`, "POST", {})).text();
+    assert.match(stream, /\[\[MWIZ_SAVED\]\]/);
+    assert.match(prompts.at(-1), /Never claim a certification/); assert.match(prompts.at(-1), /Security checks:/);
+    const withDraft = (await t.j(t.ck, `/api/compliance/policies/${pol.id}`)).data;
+    assert.ok(withDraft.ai_draft);
+    const saved = (await t.j(t.ck, `/api/compliance/policies/${pol.id}`, "PUT", { body: withDraft.ai_draft, from_ai: true })).data;
+    assert.equal(saved.version, 2); assert.equal(saved.ai_draft, null);
+    assert.ok(t.st.db.agent_events.some((e) => e.agent_id === "compliance_officer" && e.outcome === "accepted"));
+    assert.equal((await t.j(t.ck, `/api/compliance/policies/${ov.policies[1].id}`, "PUT", { approve: true })).status, 422);
+    const ok = (await t.j(t.ck, `/api/compliance/policies/${ov.policies[1].id}`, "PUT", { body: "# Access control\n\nEveryone has their own login.", owner: "Founder", approve: true })).data;
+    assert.equal(ok.status, "approved"); assert.ok(ok.approved_by);
+    // Access review: rows from Teams & roles; remove decisions can be applied.
+    await t.user("Idle Ida", "member");
+    const ida = t.st.db.users.find((u) => u.name === "Idle Ida");
+    ida.created_at = new Date(Date.now() - 120 * 864e5).toISOString(); ida.last_login_at = new Date(Date.now() - 100 * 864e5).toISOString();
+    const rows = (await t.j(t.ck, "/api/compliance")).data.access.rows;
+    assert.equal(rows.find((r) => r.name === "Idle Ida").suggestion, "remove");
+    const rev = (await t.j(t.ck, "/api/compliance/reviews", "POST", { decisions: [{ user_id: ida.id, decision: "remove", note: "left" }], shared_login: "change", apply: true })).data;
+    assert.equal(rev.applied, 1); assert.equal(rev.reviewer, "Owner (team password)"); assert.match(rev.quarter, /^\d{4}-Q[1-4]$/);
+    assert.equal(t.st.db.users.find((u) => u.id === ida.id).active, false);
+    assert.ok(rev.decisions.some((d) => d.user_id === "owner" && d.decision === "change"));
+    // Breach: the flag starts the checklist; deadlines count from when the team became aware.
+    const inc = (await t.j(t.ck, `/api/workspaces/${t.ws.id}/ops/incidents`, "POST", { title: "Leaked CSV", severity: "SEV1" })).data;
+    const aware = "2026-11-01T08:00:00.000Z";
+    const fl = (await t.j(t.ck, `/api/compliance/incidents/${t.ws.id}/${inc.id}/breach`, "POST", { aware_at: aware, people_affected: "about 40" })).data;
+    assert.equal(fl.personal_data_breach, true);
+    const regulator = fl.breach.checklist.find((c) => c.id === "regulator");
+    assert.equal(regulator.due_at, "2026-11-04T08:00:00.000Z"); assert.match(regulator.text, /Verify the current PDPL breach notification timeline/);
+    assert.equal((await t.j(t.ck, `/api/compliance/incidents/${t.ws.id}/${inc.id}/breach`, "POST", {})).status, 409);
+    await t.j(t.ck, `/api/compliance/incidents/${t.ws.id}/${inc.id}/breach`, "PUT", { item: "contain", done: true });
+    const after = (await t.j(t.ck, "/api/compliance")).data;
+    assert.ok(after.incidents.find((i) => i.id === inc.id).breach.checklist.find((c) => c.id === "contain").done_at);
+    assert.ok(after.needs.some((n) => /Breach checklist overdue/.test(n.text)));
+    const cmd = (await t.j(t.ck, `/api/workspaces/${t.ws.id}/command`)).data;
+    assert.ok(cmd.needs.some((n) => n.module === "Compliance"));
+    // Permissions: Team lead sees, can't change; Admin can change; settings validated.
+    const lead = await t.user("Lee Lead", "manager"), admin = await t.user("Ada Admin", "admin");
+    assert.equal((await t.j(lead, "/api/compliance")).status, 200);
+    assert.equal((await t.j(lead, "/api/compliance/register", "POST", { name: "x" })).status, 403);
+    assert.equal((await t.j(admin, "/api/compliance/register", "POST", { name: "Webinar sign-ups", data: "name, email", module: "marketing" })).status, 201);
+    assert.equal((await t.j(admin, "/api/compliance/settings", "PUT", { dsr_days: 200 })).status, 422);
+    assert.equal((await t.j(admin, "/api/compliance/settings", "PUT", { dsr_days: 45 })).data.dsr_days, 45);
+    const me = (await t.j(lead, "/api/me")).data;
+    assert.equal(me.perms.compliance, "view");
+  } finally { t.close(); }
 });

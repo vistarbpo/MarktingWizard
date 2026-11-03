@@ -19,6 +19,7 @@ export const MODULES = [
   { id: "team", name: "Team & hiring, attendance and leave" },
   { id: "payroll", name: "Payroll & salaries" },
   { id: "admin", name: "Teams & roles (people, access)" },
+  { id: "compliance", name: "Security & compliance (backups, PDPL, status page)" },
 ];
 export const MODULE_IDS = MODULES.map((m) => m.id);
 export const LEVELS = ["none", "view", "edit"];
@@ -28,8 +29,8 @@ const all = (lvl) => Object.fromEntries(MODULE_IDS.map((m) => [m, lvl]));
 export const DEFAULT_ROLES = [
   { id: "owner", name: "Owner", locked: true, description: "Everything, including people, roles and billing decisions.", perms: all("edit") },
   { id: "admin", name: "Admin", description: "Runs the dashboard day to day and manages people.", perms: all("edit") },
-  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none" } },
-  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none" } },
+  { id: "manager", name: "Team lead", description: "Edits all work modules; sees Finance; no access settings.", perms: { ...all("edit"), finance: "view", admin: "none", workforce: "view", payroll: "none", compliance: "view" } },
+  { id: "member", name: "Team member", description: "Edits marketing, sales, support, product and operations work; no Finance.", perms: { ...all("edit"), command: "view", sop: "edit", team: "view", finance: "none", admin: "none", workforce: "view", payroll: "none", compliance: "none" } },
   { id: "finance", name: "Finance", description: "Bookkeeper or accountant: Finance only, plus the overview.", perms: { ...all("none"), command: "view", sop: "view", finance: "edit", ops: "view", payroll: "edit" } },
   { id: "creative", name: "Creative", description: "Content team: Creative Studio; reads Knowledge, CRM and ROAS results; no Finance.", perms: { ...all("none"), command: "view", sop: "view", creative: "edit", marketing: "view", results: "view", crm: "view", workforce: "view" } },
   { id: "viewer", name: "Viewer", description: "Investor or adviser: can look, can't change anything; no Finance detail.", perms: { ...all("view"), finance: "none", admin: "none", payroll: "none" } },
@@ -63,6 +64,7 @@ export function moduleFor(method, path) {
   if (p[1] === "admin") return "admin";
   if (p[1] === "me") return null;
   if (p[1] === "workforce") return "workforce";
+  if (p[1] === "compliance") return "compliance";
   if (p[1] !== "workspaces") return null; // meta endpoints, playbook list, health
   if (p.length === 2) return method === "GET" ? null : "admin"; // list / create workspaces
   const seg = p[3];

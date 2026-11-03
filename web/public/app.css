@@ -979,3 +979,20 @@ details > summary { cursor: pointer; }
 .ppl-rates { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--s-3); margin-bottom: var(--s-3); align-items: end; }
 .ppl-sources li { display: block; }
 @media (max-width: 760px) { .ppl-grid2, .ppl-form { grid-template-columns: 1fr; } .ppl-adjrow { grid-template-columns: 1fr 1fr; } .ppl-att .ppl-namecol { min-width: 110px; max-width: 120px; } }
+/* ---------------------------------------------------------------- Security & compliance */
+.cx-tabs { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.cx-tabs .s-tabs { width: max-content; }
+.cx-tabs .s-tabs button { white-space: nowrap; }
+.cx-span-5 { grid-column: span 5; } .cx-span-7 { grid-column: span 7; } .cx-span-12 { grid-column: span 12; }
+.cx-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: var(--s-3); }
+.cx-cards h3 { margin: 0; font-size: var(--fs-md); overflow-wrap: anywhere; }
+.cx-facts { display: grid; grid-template-columns: minmax(90px, max-content) minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: var(--fs-sm); }
+.cx-facts dt { color: var(--text-2); }
+.cx-facts dd { margin: 0; overflow-wrap: anywhere; }
+.cx-confirm { color: var(--warn); }
+.cx-steps { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 6px; }
+.cx-steps code, .cx-facts code { overflow-wrap: anywhere; }
+.cx-check li { padding-left: 0; padding-right: 0; }
+.dialog:has(.cx-wide) { width: min(860px, calc(100vw - 24px)); }
+@media (max-width: 1100px) { .cx-span-5, .cx-span-7 { grid-column: span 12; } }
+@media (max-width: 560px) { .cx-facts { grid-template-columns: 1fr; gap: 2px; } .cx-facts dd { margin-bottom: 6px; } }
