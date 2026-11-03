@@ -19,6 +19,9 @@ import { Workforce, agentFor, withAgent } from "./agents.js";
 import { mountWorkforce, workforceSummary } from "./agentroutes.js";
 import { claudeAssistantClient, createAssistant } from "./assistant.js";
 import { createProducts } from "./products.js";
+import { createPublisher } from "./publisher.js";
+import { socialConfig } from "./social.js";
+import { mountStudio, mountStudioPublic } from "./studioroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -30,7 +33,7 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {} }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {} }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -38,6 +41,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const triageProvider = { ...provider, generate: (a) => withAgent("crm_triage", null, () => provider.generate(a)) };
   const outreach = createOutreach({ store, crm, provider: triageProvider, levelOf: (id) => workforce.level(id), onOutcome: (id, ws, o, note) => workforce.event(id, ws, o, note), ...outreachOptions });
   const products = createProducts({ crm, ...productOptions }); // product samples per store (fetch jobs)
+  const studio = createPublisher({ store, provider, cfg: socialConfig(process.env, password),
+    publisherLevel: () => workforce.level("creative_publisher"), setPublisherLevel: (on, by) => workforce.set("creative_publisher", { level: on ? 2 : 1, paused: false }, by), ...studioOptions }); // Creative Studio publishing
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -61,7 +66,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -155,6 +160,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   });
 
   mountCrmPublic(app, { crm, outreach });
+  mountStudioPublic(app, { store, studio });
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -180,6 +186,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
 
   mountCrm(app, { store, crm, outreach, provider, workforce, products });
   mountCreative(app, { store, provider, workforce, crm });
+  mountStudio(app, { store, provider, studio });
   mountWorkforce(app, { store, workforce });
 
   // ---- Ask DPA AD: the assistant on every page

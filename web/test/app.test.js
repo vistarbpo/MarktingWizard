@@ -1469,3 +1469,507 @@ test("product fetch: store drawer, edits, bulk job with progress, personalized p
     assert.match(pv2.steps[1].warning, /skipped/); assert.ok(!(await (await req(pv2.steps[0].email_url)).text()).includes("إعلان مصمم · DPA AD"));
   } finally { srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true }); }
 });
+
+// ---------------------------------------------------------------- Creative Studio phases 2-3
+// A mock of every platform API: routes are [method, regex, (url, opts, n) => { status, json, headers }].
+function mockFetch(routes) {
+  const calls = [];
+  const fn = async (url, opts = {}) => {
+    const method = opts.method || "GET";
+    calls.push({ method, url: String(url), body: opts.body, headers: opts.headers || {} });
+    const r = routes.find(([m, re]) => m === method && re.test(String(url)));
+    if (!r) return new Response(JSON.stringify({ error: { message: `no mock for ${method} ${url}` } }), { status: 500 });
+    const out = await r[2](String(url), opts, calls.filter((c) => r[1].test(c.url)).length);
+    return new Response(out.text ?? JSON.stringify(out.json ?? {}), { status: out.status || 200, headers: { "content-type": "application/json", ...(out.headers || {}) } });
+  };
+  fn.calls = calls;
+  return fn;
+}
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 2)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(200, 3)]);
+const MP3 = Buffer.concat([Buffer.from("ID3"), Buffer.alloc(64, 4)]);
+
+async function studioApp({ env = {}, routes = [], provider: prov } = {}) {
+  const { socialConfig } = await import("../lib/social.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-st-"));
+  const st = new Store(d), fetchImpl = mockFetch(routes);
+  const supportProvider = prov || { name: "fake", model: "fake", async generate({ prompt }) {
+    if (prompt.includes("AI Support's next reply")) return 'META {"category":"other","language":"ar","escalate":false,"reason":""}\n\nهلا! نرد عليك بالخاص.';
+    if (prompt.includes('title="What worked"')) return "## What worked\nReels led on saves.";
+    return "{}";
+  } };
+  const cfg = socialConfig({ PUBLIC_URL: "https://wiz.test", META_APP_ID: "mapp", META_APP_SECRET: "msecret", META_VERIFY_TOKEN: "mverify", LINKEDIN_CLIENT_ID: "lid", LINKEDIN_CLIENT_SECRET: "lsec", GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsec", TIKTOK_CLIENT_KEY: "tkey", TIKTOK_CLIENT_SECRET: "tsec", ...env }, "pw-st");
+  const app = createApp({ store: st, provider: supportProvider, password: "pw-st", studioOptions: { cfg, fetchImpl, sleep: async () => {}, pollEvery: 0, pollMax: 5, log: { error() {} } } });
+  const srv = app.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const ck = (await fetch(b + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-st" }) })).headers.get("set-cookie").split(";")[0];
+  const req = (p, opts = {}) => fetch(b + p, { redirect: "manual", ...opts, headers: { "Content-Type": "application/json", cookie: ck, ...(opts.headers || {}) } });
+  const j = async (p, body, method) => { const r = await req(p, { method: method || (body !== undefined ? "POST" : "GET"), body: body !== undefined ? JSON.stringify(body) : undefined }); return { status: r.status, body: r.status === 204 ? null : await r.json() }; };
+  const [w] = st.listWorkspaces();
+  const upload = (buf, filename, q = {}, type = "application/octet-stream") => fetch(`${b}/api/workspaces/${w.id}/creative/media?${new URLSearchParams({ filename, ...q })}`, { method: "POST", headers: { "Content-Type": type, cookie: ck }, body: buf });
+  const close = () => { srv.close(); app.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); };
+  return { st, app, studio: app.locals.studio, cfg, fetchImpl, b, ck, req, j, w, P: `/api/workspaces/${w.id}/creative`, upload, close, dir: d };
+}
+// An approved item, straight in the store (approval itself is tested in phase 1).
+function addItem(st, wsId, { channels, variants, status = "scheduled", date = "2026-01-05", time = "09:00" }) {
+  return st.addOps("creative_items", wsId, { title: "Test post", status, date, time, channels, variants, comments: [], history: [], published: {}, pillar: "product" });
+}
+function connectMeta(studio, wsId) {
+  return studio.saveAccount(wsId, "meta", { name: "DPA AD", tokens: { user: "U-LONG", pages: { P1: "PAGE-TOKEN" } }, targets: [{ id: "P1", page_id: "P1", page_name: "DPA AD", ig_id: "IG1", ig_username: "dpa.ad" }], selected: "P1", expires_at: new Date(Date.now() + 50 * 864e5).toISOString(), scopes: ["pages_show_list"] }, "test");
+}
+
+test("studio: token encryption round-trip and OAuth state (CSRF) checks", async () => {
+  const { seal, unseal, tokenKey, makeState, checkState } = await import("../lib/social.js");
+  const k = tokenKey("", "pass-1"), k2 = tokenKey("", "pass-2"), hex = tokenKey("a".repeat(64), "x");
+  assert.equal(hex.length, 32); assert.deepEqual(hex, Buffer.from("a".repeat(64), "hex"));
+  const s = seal({ access: "secret-token" }, k);
+  assert.ok(!s.includes("secret-token"));
+  assert.deepEqual(unseal(s, k), { access: "secret-token" });
+  assert.equal(unseal(s, k2), null); // rotated password without TOKEN_KEY: unreadable, reconnect
+  const parts = s.split("."); parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
+  assert.equal(unseal(parts.join("."), k), null); // tampered
+  assert.notEqual(seal({ a: 1 }, k), seal({ a: 1 }, k)); // random IV
+  const { state, nonce } = makeState(k, { ws: "1", provider: "meta", uid: "owner" });
+  assert.deepEqual(checkState(k, state, { uid: "owner", nonce, provider: "meta" }), { ws: "1", provider: "meta" });
+  assert.equal(checkState(k, state, { uid: "someone-else", nonce, provider: "meta" }), null);
+  assert.equal(checkState(k, state, { uid: "owner", nonce: "other", provider: "meta" }), null);
+  assert.equal(checkState(k, state, { uid: "owner", nonce, provider: "tiktok" }), null);
+  assert.equal(checkState(k2, state, { uid: "owner", nonce, provider: "meta" }), null);
+  assert.equal(checkState(k, state.slice(0, -3) + "abc", { uid: "owner", nonce, provider: "meta" }), null);
+  assert.equal(checkState(k, state, { uid: "owner", nonce, provider: "meta" }, Date.now() + 16 * 60e3), null); // expired
+});
+
+test("studio: media library upload limits, public serving, tags, delete", async () => {
+  const t = await studioApp();
+  try {
+    const up = await t.upload(PNG, "packshot.png", { tags: "Abaya, ramadan", ai: "1" });
+    assert.equal(up.status, 201);
+    const m = await up.json();
+    assert.equal(m.kind, "image"); assert.equal(m.ext, "png"); assert.deepEqual(m.tags, ["abaya", "ramadan"]); assert.equal(m.ai_generated, true);
+    assert.match(m.url, /^https:\/\/wiz\.test\/media\/[A-Za-z0-9_-]{32}\.png$/); assert.equal(m.path, m.url.replace("https://wiz.test", ""));
+    // Served publicly (platforms fetch it), right type, no login needed.
+    const pub = await fetch(t.b + m.path);
+    assert.equal(pub.status, 200); assert.equal(pub.headers.get("content-type"), "image/png"); assert.equal(pub.headers.get("x-content-type-options"), "nosniff");
+    assert.deepEqual(Buffer.from(await pub.arrayBuffer()), PNG);
+    assert.equal((await fetch(t.b + "/media/..%2Fdb.json")).status, 404);
+    assert.equal((await fetch(t.b + "/media/short.png")).status, 404);
+    // Allowlist and real bytes: a text file named .png is refused; unknown types too.
+    assert.equal((await t.upload(Buffer.from("hello world, not an image"), "fake.png")).status, 415);
+    assert.equal((await t.upload(PNG, "doc.pdf")).status, 415);
+    assert.equal((await t.upload(JPG, "photo.jpeg")).status, 201);
+    assert.equal((await t.upload(MP4, "reel.mp4")).status, 201);
+    // Size limits: images 10 MB.
+    const big = Buffer.concat([PNG, Buffer.alloc(10 * 1024 * 1024 + 10)]);
+    assert.equal((await t.upload(big, "big.png")).status, 413);
+    // Audio needs "I have the rights".
+    assert.equal((await t.upload(MP3, "song.mp3")).status, 422);
+    const au = await t.upload(MP3, "voice.mp3", { rights: "1", licence: "Recorded by Noura" });
+    assert.equal(au.status, 201); const a = await au.json();
+    assert.equal(a.kind, "audio"); assert.equal(a.rights_confirmed, true); assert.equal(a.licence, "Recorded by Noura");
+    const list = (await t.j(`${t.P}/media`)).body;
+    assert.equal(list.media.length, 4); assert.equal(list.limits.mp4.max_mb, 150);
+    const ed = (await t.j(`${t.P}/media/${m.id}`, { tags: "eid", ai_generated: false, name: "Abaya" }, "PUT")).body;
+    assert.deepEqual(ed.tags, ["eid"]); assert.equal(ed.ai_generated, false);
+    // Attached to a variant, then deleted: the file goes and the variant forgets it.
+    const it = (await t.j(`${t.P}/items`, { title: "With media", channels: ["ig_post"], variants: { ig_post: { caption_ar: "هلا", media: [m.id] } } })).body;
+    assert.deepEqual(it.variants.ig_post.media, [m.id]);
+    assert.ok(it.checks.some((c) => c.level === "bad" && /only accepts JPEG/.test(c.text))); // Instagram needs JPEG
+    assert.ok(!it.checks.some((c) => /attach or link/.test(c.text)));
+    assert.equal((await t.req(`${t.P}/media/${m.id}`, { method: "DELETE" })).status, 204);
+    assert.equal((await fetch(t.b + m.path)).status, 404);
+    assert.deepEqual(t.st.getOps("creative_items", t.w.id, it.id).variants.ig_post.media, []);
+    assert.ok(!fs.readdirSync(path.join(t.dir, "media")).some((f) => f.startsWith(".up-"))); // no temp files left
+    // Deleting the workspace removes its files.
+    assert.ok(fs.readdirSync(path.join(t.dir, "media")).length >= 3);
+    t.st.deleteWorkspace(t.w.id);
+    assert.equal(fs.readdirSync(path.join(t.dir, "media")).length, 0);
+  } finally { t.close(); }
+});
+
+test("studio: OAuth connect needs a signed-in person, a valid state and the browser cookie", async () => {
+  const t = await studioApp({ routes: [
+    ["GET", /graph\.facebook\.com\/v23\.0\/oauth\/access_token\?client_id=mapp.*code=CODE1/, () => ({ json: { access_token: "SHORT" } })],
+    ["GET", /oauth\/access_token\?grant_type=fb_exchange_token/, () => ({ json: { access_token: "LONG", expires_in: 5184000 } })],
+    ["GET", /\/me\?fields=id%2Cname/, () => ({ json: { id: "U1", name: "Founder" } })],
+    ["GET", /\/me\/permissions/, () => ({ json: { data: [{ permission: "pages_show_list", status: "granted" }, { permission: "instagram_content_publish", status: "granted" }] } })],
+    ["GET", /\/me\/accounts\?fields=name%2Caccess_token%2Cinstagram_business_account/, () => ({ json: { data: [{ id: "P0", name: "Old page", access_token: "PT0" }, { id: "P1", name: "DPA AD", access_token: "PT1", instagram_business_account: { id: "IG1", username: "dpa.ad" } }] } })],
+    ["DELETE", /\/me\/permissions/, () => ({ json: { success: true } })],
+  ] });
+  try {
+    // Not logged in: login wall.
+    assert.equal((await fetch(t.b + `/oauth/meta/start?ws=${t.w.id}`, { redirect: "manual" })).status, 302);
+    assert.match((await fetch(t.b + `/oauth/meta/callback?code=x&state=y`, { redirect: "manual" })).headers.get("location"), /\/login/);
+    const start = await t.req(`/oauth/meta/start?ws=${t.w.id}`);
+    assert.equal(start.status, 302);
+    const loc = new URL(start.headers.get("location"));
+    assert.equal(loc.origin + loc.pathname, "https://www.facebook.com/v23.0/dialog/oauth");
+    assert.equal(loc.searchParams.get("redirect_uri"), "https://wiz.test/oauth/meta/callback");
+    assert.match(loc.searchParams.get("scope"), /instagram_content_publish/);
+    const nonce = /mwiz_oauth=([^;]+)/.exec(start.headers.get("set-cookie"))[1];
+    const state = loc.searchParams.get("state");
+    // Wrong or missing cookie (another browser) → refused; bad state → refused.
+    assert.equal((await t.req(`/oauth/meta/callback?code=CODE1&state=${encodeURIComponent(state)}`)).status, 403);
+    assert.equal((await t.req(`/oauth/meta/callback?code=CODE1&state=forged`, { headers: { cookie: `${t.ck}; mwiz_oauth=${nonce}` } })).status, 403);
+    assert.equal(t.fetchImpl.calls.length, 0);
+    const ok = await t.req(`/oauth/meta/callback?code=CODE1&state=${encodeURIComponent(state)}`, { headers: { cookie: `${t.ck}; mwiz_oauth=${nonce}` } });
+    assert.equal(ok.status, 302); assert.equal(ok.headers.get("location"), `/#/${t.w.id}/studio/accounts`);
+    const acc = (await t.j(`${t.P}/accounts`)).body;
+    const meta = acc.providers.find((p) => p.id === "meta");
+    assert.equal(meta.configured, true); assert.equal(meta.account.status, "connected"); assert.equal(meta.account.target.ig_username, "dpa.ad"); // picks the Page with Instagram
+    assert.ok(meta.account.missing_scopes.includes("instagram_manage_comments"));
+    assert.ok(!JSON.stringify(acc).includes("PT1") && !JSON.stringify(acc).includes("LONG") && !("token_enc" in meta.account)); // tokens never reach the browser
+    assert.match(acc.notice.text, /connected/);
+    const raw = t.st.db.social_accounts[0];
+    assert.ok(!raw.token_enc.includes("PT1"));
+    assert.deepEqual(t.studio.tokensOf(raw).pages, { P0: "PT0", P1: "PT1" });
+    assert.equal(acc.settings.mode, "test"); assert.equal(acc.settings.auto_publish, false); // safe defaults
+    // Switch page, then disconnect (revokes).
+    assert.equal((await t.j(`${t.P}/accounts/${raw.id}`, { selected: "P0" }, "PUT")).body.target.page_id, "P0");
+    assert.equal((await t.j(`${t.P}/accounts/${raw.id}`, { selected: "nope" }, "PUT")).status, 422);
+    assert.equal((await t.req(`${t.P}/accounts/${raw.id}`, { method: "DELETE" })).status, 204);
+    assert.ok(t.fetchImpl.calls.some((c) => c.method === "DELETE" && /me\/permissions/.test(c.url)));
+    assert.equal(t.st.db.social_accounts.length, 0);
+    // Unconfigured platform: clear message, no redirect.
+    const t2 = await studioApp({ env: { TIKTOK_CLIENT_KEY: "" } });
+    try { assert.equal((await t2.req(`/oauth/tiktok/start?ws=${t2.w.id}`)).status, 422); } finally { t2.close(); }
+  } finally { t.close(); }
+});
+
+test("studio: OAuth code exchange for LinkedIn, YouTube and TikTok, with refresh", async () => {
+  const { socialConfig, exchangeCode, refreshTokens, authUrl } = await import("../lib/social.js");
+  const cfg = socialConfig({ PUBLIC_URL: "https://wiz.test", LINKEDIN_CLIENT_ID: "lid", LINKEDIN_CLIENT_SECRET: "lsec", LINKEDIN_ORG_ID: "777", GOOGLE_CLIENT_ID: "gid", GOOGLE_CLIENT_SECRET: "gsec", TIKTOK_CLIENT_KEY: "tkey", TIKTOK_CLIENT_SECRET: "tsec" }, "pw");
+  const f = mockFetch([
+    ["POST", /linkedin\.com\/oauth\/v2\/accessToken/, () => ({ json: { access_token: "LI", expires_in: 5184000, scope: "openid,profile,w_member_social" } })],
+    ["GET", /api\.linkedin\.com\/v2\/userinfo/, () => ({ json: { sub: "abc", name: "Founder" } })],
+    ["POST", /oauth2\.googleapis\.com\/token/, (u, o) => ({ json: String(o.body).includes("refresh_token=GR") ? { access_token: "GA2", expires_in: 3599 } : { access_token: "GA", refresh_token: "GR", expires_in: 3599, scope: "https://www.googleapis.com/auth/youtube.upload" } })],
+    ["GET", /youtube\/v3\/channels\?part=snippet&mine=true/, () => ({ json: { items: [{ id: "UC1", snippet: { title: "DPA AD" } }] } })],
+    ["POST", /open\.tiktokapis\.com\/v2\/oauth\/token\//, () => ({ json: { access_token: "TA", refresh_token: "TR", open_id: "OPEN1", expires_in: 86400, refresh_expires_in: 31536000, scope: "user.info.basic,video.publish" } })],
+    ["GET", /open\.tiktokapis\.com\/v2\/user\/info/, () => ({ json: { data: { user: { open_id: "OPEN1", display_name: "dpa" } }, error: { code: "ok" } } })],
+  ]);
+  const li = await exchangeCode(cfg, "linkedin", "C", f);
+  assert.equal(li.targets[0].author, "urn:li:person:abc"); assert.equal(li.targets[1].author, "urn:li:organization:777");
+  assert.match(authUrl(cfg, "linkedin", "s"), /w_organization_social/);
+  const g = await exchangeCode(cfg, "google", "C", f);
+  assert.equal(g.tokens.refresh, "GR"); assert.equal(g.selected, "UC1");
+  assert.match(authUrl(cfg, "google", "s"), /access_type=offline/);
+  const r = await refreshTokens(cfg, "google", g.tokens, f);
+  assert.equal(r.tokens.access, "GA2"); assert.equal(r.tokens.refresh, "GR");
+  const tk = await exchangeCode(cfg, "tiktok", "C", f);
+  assert.equal(tk.selected, "OPEN1"); assert.equal(tk.name, "dpa");
+  assert.equal(await refreshTokens(cfg, "meta", { user: "x" }, f), null);
+  assert.ok(!f.calls.some((c) => c.url.includes("lsec"))); // client secrets go in POST bodies, not URLs (except Meta's documented GET)
+});
+
+test("studio: every platform publisher calls the right endpoints (mocked)", async () => {
+  const { socialConfig, PUBLISHERS, tiktokChunks, youtubeTitle } = await import("../lib/social.js");
+  const cfg = socialConfig({ PUBLIC_URL: "https://wiz.test" }, "pw");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-pub-"));
+  const file = path.join(d, "v.mp4"); fs.writeFileSync(file, MP4);
+  const img = (n) => ({ kind: "image", ext: "jpg", mime: "image/jpeg", url: `https://wiz.test/media/i${n}.jpg`, local: file, size: MP4.length });
+  const vid = { kind: "video", ext: "mp4", mime: "video/mp4", url: "https://wiz.test/media/v.mp4", local: file, size: MP4.length, duration: 20 };
+  const variant = { caption_ar: "إعلان مصمم", caption_en: "Designed ad (new)", hashtags: ["#DPAAD"] };
+  let statusN = 0;
+  const f = mockFetch([
+    ["POST", /\/IG1\/media$/, (u, o) => ({ json: { id: "C" + (new URLSearchParams(o.body).get("media_type") || "IMG") } })],
+    ["GET", /\/C(REELS|CAROUSEL|STORIES|VIDEO)\?fields=status_code/, () => ({ json: { status_code: ++statusN % 2 ? "IN_PROGRESS" : "FINISHED" } })],
+    ["POST", /\/IG1\/media_publish$/, () => ({ json: { id: "M1" } })],
+    ["GET", /\/M1\?fields=permalink/, () => ({ json: { permalink: "https://instagram.com/p/x" } })],
+    ["POST", /\/P1\/photos$/, (u, o) => ({ json: new URLSearchParams(o.body).get("published") === "false" ? { id: "PH" + Math.random() } : { id: "PH1", post_id: "P1_9" } })],
+    ["POST", /\/P1\/feed$/, () => ({ json: { id: "P1_10" } })],
+    ["POST", /graph-video\.facebook\.com\/v23\.0\/P1\/videos$/, () => ({ json: { id: "V1" } })],
+    ["POST", /rest\/images\?action=initializeUpload/, () => ({ json: { value: { uploadUrl: "https://upload.linkedin.test/1", image: "urn:li:image:1" } } })],
+    ["PUT", /upload\.linkedin\.test/, () => ({ status: 201 })],
+    ["POST", /api\.linkedin\.com\/rest\/posts$/, () => ({ status: 201, text: "", headers: { "x-restli-id": "urn:li:share:9" } })],
+    ["POST", /upload\/youtube\/v3\/videos\?uploadType=resumable/, () => ({ headers: { location: "https://upload.youtube.test/s1" } })],
+    ["PUT", /upload\.youtube\.test\/s1/, () => ({ json: { id: "YT1" } })],
+    ["POST", /creator_info\/query/, () => ({ json: { data: { privacy_level_options: ["PUBLIC_TO_EVERYONE", "SELF_ONLY"], creator_username: "dpa", max_video_post_duration_sec: 600 }, error: { code: "ok" } } })],
+    ["POST", /publish\/video\/init/, () => ({ json: { data: { publish_id: "PUB1", upload_url: "https://upload.tiktok.test/u" }, error: { code: "ok" } } })],
+    ["PUT", /upload\.tiktok\.test/, () => ({ status: 201 })],
+    ["POST", /publish\/status\/fetch/, (u, o, n) => ({ json: { data: n < 2 ? { status: "PROCESSING_UPLOAD" } : { status: "PUBLISH_COMPLETE", publicaly_available_post_id: [] }, error: { code: "ok" } } })],
+  ]);
+  const base = { cfg, fetchImpl: f, sleep: async () => {}, pollEvery: 0, pollMax: 5, variant, item: {} };
+  const meta = { ...base, target: { page_id: "P1", ig_id: "IG1" }, tokens: { pages: { P1: "PT" } } };
+  try {
+    // Instagram image, carousel, reel (polls until FINISHED), story.
+    let r = await PUBLISHERS.meta({ ...meta, channel: "ig_post", files: [img(1)] });
+    assert.equal(r.post_id, "M1"); assert.equal(r.url, "https://instagram.com/p/x");
+    const first = new URLSearchParams(f.calls[0].body);
+    assert.equal(first.get("image_url"), "https://wiz.test/media/i1.jpg"); assert.match(first.get("caption"), /إعلان مصمم\n\nDesigned ad \(new\)\n\n#DPAAD/); assert.equal(first.get("access_token"), "PT");
+    f.calls.length = 0;
+    await PUBLISHERS.meta({ ...meta, channel: "ig_carousel", files: [img(1), img(2), vid] });
+    const kids = f.calls.filter((c) => /IG1\/media$/.test(c.url)).map((c) => new URLSearchParams(c.body));
+    assert.equal(kids.filter((k) => k.get("is_carousel_item") === "true").length, 3);
+    assert.equal(kids[2].get("media_type"), "VIDEO"); assert.equal(kids[3].get("media_type"), "CAROUSEL"); assert.equal(kids[3].get("children").split(",").length, 3);
+    f.calls.length = 0;
+    await PUBLISHERS.meta({ ...meta, channel: "ig_reel", files: [vid], cover: img(9) });
+    const reel = new URLSearchParams(f.calls[0].body);
+    assert.equal(reel.get("media_type"), "REELS"); assert.equal(reel.get("video_url"), vid.url); assert.equal(reel.get("cover_url"), img(9).url);
+    assert.ok(f.calls.filter((c) => /status_code/.test(c.url)).length >= 1);
+    f.calls.length = 0;
+    await PUBLISHERS.meta({ ...meta, channel: "ig_story", files: [img(1)] });
+    assert.equal(new URLSearchParams(f.calls[0].body).get("media_type"), "STORIES"); assert.equal(new URLSearchParams(f.calls[0].body).get("caption"), null);
+    await assert.rejects(PUBLISHERS.meta({ ...meta, channel: "ig_reel", files: [img(1)] }), /MP4/);
+    // Facebook Page: photo, multi-photo post, video by URL.
+    f.calls.length = 0;
+    r = await PUBLISHERS.meta({ ...meta, channel: "fb_post", files: [img(1)] });
+    assert.equal(r.post_id, "P1_9"); assert.equal(new URLSearchParams(f.calls[0].body).get("url"), img(1).url);
+    f.calls.length = 0;
+    r = await PUBLISHERS.meta({ ...meta, channel: "fb_post", files: [img(1), img(2)] });
+    const feed = new URLSearchParams(f.calls.at(-1).body);
+    assert.equal(r.post_id, "P1_10"); assert.match(feed.get("attached_media[1]"), /media_fbid/);
+    r = await PUBLISHERS.meta({ ...meta, channel: "fb_post", files: [vid] });
+    assert.equal(r.post_id, "V1"); assert.equal(new URLSearchParams(f.calls.at(-1).body).get("file_url"), vid.url);
+    // LinkedIn: image upload then the post, with the version headers and escaped text.
+    f.calls.length = 0;
+    r = await PUBLISHERS.linkedin({ ...base, channel: "linkedin", target: { author: "urn:li:person:abc" }, tokens: { access: "LI" }, files: [img(1)] });
+    assert.equal(r.post_id, "urn:li:share:9"); assert.equal(r.url, "https://www.linkedin.com/feed/update/urn:li:share:9");
+    const lp = f.calls.find((c) => /rest\/posts/.test(c.url));
+    assert.equal(lp.headers["X-Restli-Protocol-Version"], "2.0.0"); assert.match(lp.headers["LinkedIn-Version"], /^\d{6}$/);
+    const lb = JSON.parse(lp.body);
+    assert.equal(lb.content.media.id, "urn:li:image:1"); assert.match(lb.commentary, /\\\(new\\\)/); assert.match(lb.commentary, /\{hashtag\|\\#\|DPAAD\}/);
+    assert.ok(f.calls.some((c) => c.method === "PUT" && /upload\.linkedin\.test/.test(c.url)));
+    // YouTube: resumable upload; Shorts get #Shorts; private until audited.
+    f.calls.length = 0;
+    r = await PUBLISHERS.google({ ...base, channel: "yt_short", tokens: { access: "GA" }, files: [vid] });
+    assert.equal(r.url, "https://www.youtube.com/shorts/YT1"); assert.match(r.note, /private/);
+    const ym = JSON.parse(f.calls[0].body);
+    assert.match(ym.snippet.title, /#Shorts$/); assert.equal(ym.status.privacyStatus, "private"); assert.equal(f.calls[0].headers["X-Upload-Content-Type"], "video/mp4");
+    assert.equal(youtubeTitle("yt_short", { caption_ar: "x".repeat(200) }).length, 100);
+    await assert.rejects(PUBLISHERS.google({ ...base, channel: "yt_short", tokens: { access: "GA" }, files: [{ ...vid, duration: 75 }] }), /under 60/);
+    // TikTok: creator info → init FILE_UPLOAD → PUT chunks → status. Unaudited: SELF_ONLY.
+    f.calls.length = 0;
+    r = await PUBLISHERS.tiktok({ ...base, channel: "tiktok", tokens: { access: "TA" }, files: [vid] });
+    const init = JSON.parse(f.calls.find((c) => /video\/init/.test(c.url)).body);
+    assert.equal(init.post_info.privacy_level, "SELF_ONLY"); assert.equal(init.source_info.source, "FILE_UPLOAD"); assert.equal(init.source_info.total_chunk_count, 1);
+    assert.equal(f.calls.find((c) => c.method === "PUT").headers["Content-Range"], `bytes 0-${MP4.length - 1}/${MP4.length}`);
+    assert.match(r.note, /SELF_ONLY/); assert.equal(r.post_id, "PUB1");
+    assert.deepEqual(tiktokChunks(200 * 1024 * 1024), { chunk_size: 20 * 1024 * 1024, count: 10 });
+    const aud = socialConfig({ TIKTOK_AUDITED: "1" }, "pw");
+    f.calls.length = 0;
+    await PUBLISHERS.tiktok({ ...base, cfg: aud, channel: "tiktok", tokens: { access: "TA" }, files: [vid] });
+    assert.equal(JSON.parse(f.calls.find((c) => /video\/init/.test(c.url)).body).post_info.privacy_level, "PUBLIC_TO_EVERYONE");
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test("studio: scheduler publishes only approved+due items, Test mode only logs, retries stop at 3", async () => {
+  let fail = true;
+  const t = await studioApp({ routes: [
+    ["POST", /\/IG1\/media$/, () => (fail ? { status: 400, json: { error: { message: "Media download failed" } } } : { json: { id: "C1" } })],
+    ["POST", /\/IG1\/media_publish$/, () => ({ json: { id: "M7" } })],
+    ["GET", /\/M7\?fields=permalink/, () => ({ json: { permalink: "https://instagram.com/p/m7" } })],
+  ] });
+  try {
+    const { canAutoPublish, isDue } = await import("../lib/publisher.js");
+    const m = await (await t.upload(JPG, "ad.jpg")).json();
+    connectMeta(t.studio, t.w.id);
+    const v = { ig_post: { caption_ar: "هلا", media: [m.id] }, x: { caption_ar: "هلا" } };
+    const due = addItem(t.st, t.w.id, { channels: ["ig_post", "x"], variants: v });
+    const review = addItem(t.st, t.w.id, { channels: ["ig_post"], variants: v, status: "review" });
+    const approved = addItem(t.st, t.w.id, { channels: ["ig_post"], variants: v, status: "approved" }); // approved, not scheduled: waits for a person
+    const later = addItem(t.st, t.w.id, { channels: ["ig_post"], variants: v, date: "2099-01-01" });
+    assert.equal(isDue(due), true); assert.equal(isDue(later), false);
+    const riyadhToday = new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+    assert.equal(isDue({ status: "scheduled", date: riyadhToday, time: "23:59" }, Date.parse(`${riyadhToday}T20:58:00Z`)), false); // 23:58 Riyadh
+    assert.equal(isDue({ status: "scheduled", date: riyadhToday, time: "23:59" }, Date.parse(`${riyadhToday}T21:00:00Z`)), true);
+    // Auto-publish is off by default: due items wait for "Publish now".
+    assert.equal(canAutoPublish(t.w), false);
+    assert.deepEqual(await t.studio.tick(), { items: 0, waiting: 1 });
+    assert.equal(t.st.db.creative_publish_log.length, 0);
+    // Test mode + auto: logs "would publish" once, calls nothing.
+    assert.equal((await t.j(`${t.P}/publish/settings`, { auto_publish: true }, "PUT")).body.can_auto_publish, true);
+    await t.studio.tick(); await t.studio.tick();
+    const logs = t.st.db.creative_publish_log.filter((l) => l.status === "test");
+    assert.equal(logs.length, 1); assert.equal(logs[0].item_id, due.id); assert.match(logs[0].text, /would publish Instagram post → Meta \(@dpa\.ad\)/);
+    assert.equal(t.fetchImpl.calls.length, 0);
+    assert.equal(t.st.getOps("creative_items", t.w.id, due.id).status, "scheduled");
+    // Live: the platform fails → retry later, max 3 tries.
+    await t.j(`${t.P}/publish/settings`, { mode: "live" }, "PUT");
+    await t.studio.tick();
+    let st = t.st.getOps("creative_items", t.w.id, due.id).publish_state.ig_post;
+    assert.equal(st.attempts, 1); assert.match(st.last_error, /Media download failed/); assert.ok(st.next_at);
+    await t.studio.tick(); // too soon: waits for next_at
+    assert.equal(t.st.getOps("creative_items", t.w.id, due.id).publish_state.ig_post.attempts, 1);
+    await t.studio.tick(new Date(Date.now() + 6 * 60e3));
+    await t.studio.tick(new Date(Date.now() + 30 * 60e3));
+    st = t.st.getOps("creative_items", t.w.id, due.id).publish_state.ig_post;
+    assert.equal(st.attempts, 3); assert.equal(st.failed, true);
+    const before = t.fetchImpl.calls.length;
+    await t.studio.tick(new Date(Date.now() + 90 * 60e3));
+    assert.equal(t.fetchImpl.calls.length, before); // stopped after 3
+    assert.ok(t.st.db.creative_publish_log.some((l) => l.status === "failed" && /Stopped after 3/.test(l.text)));
+    // A person retries: works now. X has no API, so the item stays scheduled until someone posts it by hand.
+    fail = false;
+    const rt = (await t.j(`${t.P}/items/${due.id}/retry`, { channel: "ig_post" })).body;
+    assert.deepEqual(rt.result.published, ["ig_post"]);
+    const it = t.st.getOps("creative_items", t.w.id, due.id);
+    assert.equal(it.published.ig_post.post_id, "M7"); assert.equal(it.published.ig_post.url, "https://instagram.com/p/m7"); assert.equal(it.published.ig_post.via, "api");
+    assert.equal(it.status, "scheduled");
+    assert.equal(rt.publishing.channels.x.direct, false);
+    await t.j(`${t.P}/items/${due.id}/posted`, { channel: "x", url: "https://x.com/dpa/1" });
+    assert.equal(t.st.getOps("creative_items", t.w.id, due.id).status, "published");
+    // Nothing unapproved ever goes: not by the scheduler, not by "Publish now".
+    for (const x of [review, approved, later]) assert.equal(t.st.getOps("creative_items", t.w.id, x.id).published.ig_post, undefined);
+    assert.equal((await t.j(`${t.P}/items/${review.id}/publish`, {})).status, 422);
+    const r = await t.studio.publishItem(t.w.id, review.id, { by: "test" });
+    assert.match(r.skipped[0].reason, /Only approved or scheduled/);
+    // "Publish now" works for approved content.
+    const now = (await t.j(`${t.P}/items/${approved.id}/publish`, {})).body;
+    assert.deepEqual(now.result.published, ["ig_post"]); assert.equal(now.item.status, "published");
+    // Editing published content sends it back to review (phase 1 rule still holds).
+    const ed = (await t.j(`${t.P}/items/${approved.id}`, { variants: { ig_post: { caption_ar: "تعديل", media: [m.id] } } }, "PUT")).body;
+    assert.equal(ed.status, "review");
+    // Item publishing view.
+    const pv = (await t.j(`${t.P}/items/${due.id}/publishing`)).body;
+    assert.equal(pv.mode, "live"); assert.equal(pv.channels.ig_post.account, "@dpa.ad"); assert.ok(pv.log.length >= 4);
+    // A Creative user can't switch to Live or publish.
+    await t.j("/api/admin/users", { name: "Cr", email: "cr@dpa.ad", password: "creative-pass", role_id: "creative" });
+    const cc = (await fetch(t.b + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "cr@dpa.ad", password: "creative-pass" }) })).headers.get("set-cookie").split(";")[0];
+    const asC = (p, body) => fetch(t.b + p, { method: "POST", headers: { "Content-Type": "application/json", cookie: cc }, body: JSON.stringify(body) });
+    assert.equal((await fetch(t.b + `${t.P}/publish/settings`, { method: "PUT", headers: { "Content-Type": "application/json", cookie: cc }, body: JSON.stringify({ mode: "test" }) })).status, 403);
+    assert.equal((await asC(`${t.P}/items/${due.id}/publish`, {})).status, 403);
+  } finally { t.close(); }
+});
+
+test("studio: results every 6 hours (graceful metric errors), totals and AI summary from real numbers", async () => {
+  const t = await studioApp({ routes: [
+    ["GET", /\/M1\/insights\?metric=reach%2Cviews/, () => ({ status: 400, json: { error: { message: "metric views not supported" } } })],
+    ["GET", /\/M1\/insights\?metric=views&/, () => ({ status: 400, json: { error: { message: "unsupported" } } })],
+    ["GET", /\/M1\/insights\?metric=(reach|likes|comments|saved|shares)&/, (u) => { const k = /metric=(\w+)/.exec(u)[1]; return { json: { data: [{ name: k, values: [{ value: { reach: 900, likes: 40, comments: 6, saved: 12, shares: 3 }[k] }] }] } }; }],
+    ["GET", /\/P1_9\?fields=shares/, () => ({ json: { shares: { count: 2 }, comments: { summary: { total_count: 1 } }, reactions: { summary: { total_count: 15 } } } })],
+    ["GET", /\/P1_9\/insights/, () => ({ json: { data: [{ values: [{ value: 300 }] }] } })],
+  ] });
+  try {
+    connectMeta(t.studio, t.w.id);
+    const it = addItem(t.st, t.w.id, { channels: ["ig_reel", "fb_post"], variants: { ig_reel: { caption_ar: "a" }, fb_post: { caption_ar: "b" } }, status: "published" });
+    it.published = { ig_reel: { at: new Date().toISOString(), via: "api", provider: "meta", post_id: "M1", url: "https://instagram.com/p/m1" }, fb_post: { at: new Date().toISOString(), via: "api", provider: "meta", post_id: "P1_9" } };
+    t.st.save();
+    assert.equal((await t.j(`${t.P}/results/fetch`, {})).status, 422); // Test mode calls nothing
+    assert.equal(t.fetchImpl.calls.length, 0);
+    await t.j(`${t.P}/publish/settings`, { mode: "live" }, "PUT");
+    const f = (await t.j(`${t.P}/results/fetch`, {})).body;
+    assert.equal(f.updated, 2);
+    const r = t.st.getOps("creative_items", t.w.id, it.id).results;
+    assert.deepEqual({ ...r.ig_reel.metrics }, { reach: 900, views: null, likes: 40, comments: 6, saves: 12, shares: 3 });
+    assert.ok(r.ig_reel.errors.some((e) => /views/.test(e)));
+    assert.equal(r.fb_post.metrics.likes, 15); assert.equal(r.fb_post.metrics.reach, 300);
+    const res = (await t.j(`${t.P}/results`)).body;
+    assert.equal(res.posts.length, 2); assert.equal(res.totals.reach, 1200); assert.equal(res.totals.views, null);
+    assert.equal(res.by_pillar[0].name, "Product"); assert.equal(res.top[0].channel, "ig_reel");
+    const sum = (await t.j(`${t.P}/results/summary`, {})).body;
+    assert.match(sum.text, /What worked/);
+    const { resultsPrompt, resultsSummary } = await import("../lib/publisher.js");
+    const p = resultsPrompt(t.w, resultsSummary(t.st.listOps("creative_items", t.w.id)));
+    assert.match(p, /reach 900/); assert.match(p, /never invent/);
+  } finally { t.close(); }
+});
+
+test("studio: Instagram comments become AI Support tickets; replies go back by API (Test mode logs only)", async () => {
+  const t = await studioApp({ routes: [
+    ["GET", /\/M1\/comments\?fields=id%2Ctext/, () => ({ json: { data: [{ id: "CM1", text: "كم السعر؟", username: "noura.store", from: { id: "U9", username: "noura.store" } }, { id: "CM2", text: "شكراً", username: "dpa.ad", from: { id: "IG1" } }] } })],
+    ["POST", /\/CM1\/replies$/, () => ({ json: { id: "R1" } })],
+  ] });
+  try {
+    connectMeta(t.studio, t.w.id);
+    const it = addItem(t.st, t.w.id, { channels: ["ig_post"], variants: { ig_post: { caption_ar: "a" } }, status: "published" });
+    it.published = { ig_post: { at: new Date().toISOString(), via: "api", provider: "meta", post_id: "M1", url: "https://instagram.com/p/m1" } };
+    t.st.save();
+    assert.deepEqual(await t.studio.pollComments(), { new: 0, errors: 0 }); // Test mode: no API
+    assert.equal(t.fetchImpl.calls.length, 0);
+    await t.j(`${t.P}/publish/settings`, { mode: "live" }, "PUT");
+    assert.equal((await t.studio.pollComments()).new, 1); // our own reply (from IG1) is skipped
+    assert.equal((await t.studio.pollComments()).new, 0); // no duplicates
+    const tk = t.st.db.support_tickets.find((x) => x.social?.comment_id === "CM1");
+    assert.equal(tk.channel, "Instagram comment"); assert.equal(tk.customer_name, "@noura.store"); assert.equal(tk.social.item_id, it.id);
+    assert.equal(tk.messages[0].text, "كم السعر؟"); assert.match(tk.ai_draft.text, /هلا/); // drafted, not posted
+    assert.ok(!t.fetchImpl.calls.some((c) => /replies/.test(c.url)));
+    const sup = (await t.j(`/api/support/meta`)).body;
+    assert.ok(sup.channels.includes("Instagram comment") && sup.channels.includes("Messenger"));
+    // Back in Test mode, a reply is logged, not sent.
+    await t.j(`${t.P}/publish/settings`, { mode: "test" }, "PUT");
+    let r = await t.j(`/api/workspaces/${t.w.id}/support/tickets/${tk.id}/messages`, { from: "ai", text: tk.ai_draft.text });
+    assert.equal(r.status, 201); assert.equal(r.body.delivery, "test");
+    assert.ok(!t.fetchImpl.calls.some((c) => /replies/.test(c.url)));
+    await t.j(`${t.P}/publish/settings`, { mode: "live" }, "PUT");
+    r = await t.j(`/api/workspaces/${t.w.id}/support/tickets/${tk.id}/messages`, { from: "you", text: "السعر في الرابط 🙏" });
+    assert.equal(r.body.delivery, "sent");
+    const call = t.fetchImpl.calls.find((c) => /CM1\/replies/.test(c.url));
+    assert.equal(new URLSearchParams(call.body).get("message"), "السعر في الرابط 🙏");
+    const after = t.st.getTicket(t.w.id, tk.id);
+    assert.equal(after.messages.at(-1).delivery, "sent"); assert.equal(after.human_touched, true); assert.equal(after.ai_draft, null);
+    // Normal tickets still use the normal route.
+    const n = (await t.j(`/api/workspaces/${t.w.id}/support/tickets`, { message: "hi", channel: "Email" })).body;
+    assert.equal((await t.j(`/api/workspaces/${t.w.id}/support/tickets/${n.id}/messages`, { from: "you", text: "ok" })).status, 201);
+    assert.equal(t.st.getTicket(t.w.id, n.id).messages.at(-1).delivery, undefined);
+  } finally { t.close(); }
+});
+
+test("studio: Meta webhook verifies, rejects bad signatures, turns DMs into tickets, 24h reply window", async () => {
+  const crypto = await import("node:crypto");
+  const t = await studioApp({ routes: [["POST", /\/P1\/messages\?access_token=PAGE-TOKEN/, () => ({ json: { recipient_id: "S1", message_id: "mid.out" } })]] });
+  try {
+    connectMeta(t.studio, t.w.id);
+    assert.equal(await (await fetch(t.b + "/hooks/meta?hub.mode=subscribe&hub.verify_token=mverify&hub.challenge=42")).text(), "42");
+    assert.equal((await fetch(t.b + "/hooks/meta?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=42")).status, 403);
+    const body = JSON.stringify({ object: "instagram", entry: [{ id: "IG1", time: Date.now(), messaging: [{ sender: { id: "S1" }, recipient: { id: "IG1" }, timestamp: Date.now(), message: { mid: "mid.1", text: "ابي اجرب" } }, { sender: { id: "IG1" }, recipient: { id: "S1" }, message: { mid: "mid.2", text: "echo", is_echo: true } }] }] });
+    const sig = (b, s = "msecret") => "sha256=" + crypto.createHmac("sha256", s).update(b).digest("hex");
+    const hook = (b, s) => fetch(t.b + "/hooks/meta", { method: "POST", headers: { "Content-Type": "application/json", ...(s ? { "X-Hub-Signature-256": s } : {}) }, body: b });
+    assert.equal((await hook(body)).status, 401);
+    assert.equal((await hook(body, sig(body, "wrong-secret"))).status, 401);
+    assert.equal((await hook(body.replace("ابي", "لا"), sig(body))).status, 401); // body changed after signing
+    assert.equal(t.st.db.support_tickets.length, 0);
+    assert.equal((await hook(body, sig(body))).status, 200);
+    await new Promise((r) => setTimeout(r, 50));
+    await hook(body, sig(body)); // Meta retries: no duplicate
+    await new Promise((r) => setTimeout(r, 50));
+    const dms = t.st.db.support_tickets.filter((x) => x.channel === "Instagram DM");
+    assert.equal(dms.length, 1); assert.equal(dms[0].messages.length, 1); assert.equal(dms[0].messages[0].text, "ابي اجرب");
+    // A Facebook Page comment through the webhook.
+    const fb = JSON.stringify({ object: "page", entry: [{ id: "P1", changes: [{ field: "feed", value: { item: "comment", verb: "add", comment_id: "P1_9_1", post_id: "P1_9", from: { id: "U2", name: "Sara" }, message: "متوفر؟" } }] }] });
+    await hook(fb, sig(fb)); await new Promise((r) => setTimeout(r, 50));
+    assert.ok(t.st.db.support_tickets.some((x) => x.channel === "Facebook comment" && x.customer_name === "Sara"));
+    // Reply inside 24 hours goes through the Send API (Live).
+    await t.j(`${t.P}/publish/settings`, { mode: "live" }, "PUT");
+    const r = await t.j(`/api/workspaces/${t.w.id}/support/tickets/${dms[0].id}/messages`, { from: "you", text: "أكيد! هذا الرابط" });
+    assert.equal(r.body.delivery, "sent");
+    const sent = JSON.parse(t.fetchImpl.calls.find((c) => /P1\/messages/.test(c.url)).body);
+    assert.deepEqual(sent, { recipient: { id: "S1" }, messaging_type: "RESPONSE", message: { text: "أكيد! هذا الرابط" } });
+    // Outside 24 hours Meta refuses: we say so and don't call.
+    const tk = t.st.getTicket(t.w.id, dms[0].id);
+    tk.social.last_in_at = new Date(Date.now() - 25 * 3600e3).toISOString(); t.st.save();
+    const n = t.fetchImpl.calls.length;
+    const late = await t.j(`/api/workspaces/${t.w.id}/support/tickets/${dms[0].id}/messages`, { from: "you", text: "hello" });
+    assert.equal(late.status, 502); assert.match(late.body.detail, /24 hours/); assert.equal(t.fetchImpl.calls.length, n);
+    // No app secret configured: every POST is refused.
+    const t2 = await studioApp({ env: { META_APP_SECRET: "" } });
+    try { assert.equal((await fetch(t2.b + "/hooks/meta", { method: "POST", headers: { "Content-Type": "application/json", "X-Hub-Signature-256": sig(body, "") }, body })).status, 401); } finally { t2.close(); }
+  } finally { t.close(); }
+});
+
+test("studio: variant media ids, saved reel spec and per-channel media checks", async () => {
+  const { cleanVariant } = await import("../lib/creative.js");
+  const { mediaChecks, sniff, extFrom } = await import("../lib/media.js");
+  const v = cleanVariant("ig_reel", { media: ["5", "5", "../x", 7], cover_id: "9", reel: { scenes: [{ media_id: "5", text: "مشهد", duration: 99, motion: "spin" }], audio_id: "8", volume: 3 } });
+  assert.deepEqual(v.media, ["5", "7"]); assert.equal(v.cover_id, "9");
+  assert.deepEqual(v.reel.scenes[0], { media_id: "5", text: "مشهد", duration: 15, motion: "zoom_in" }); assert.equal(v.reel.volume, 1);
+  assert.equal(cleanVariant("ig_post", { reel: { scenes: [] } }).reel, undefined);
+  assert.equal(sniff(MP3), "mp3"); assert.equal(sniff(JPG), "jpg"); assert.equal(sniff(Buffer.from("<html>hello there")), "");
+  assert.equal(extFrom("a.JPEG"), "jpg"); assert.equal(extFrom("blob", "audio/x-m4a"), "m4a"); assert.equal(extFrom("a.gif"), "");
+  const files = { 1: { kind: "image", ext: "png" }, 2: { kind: "video", ext: "mp4", width: 1920, height: 1080, duration: 75 }, 3: { kind: "audio", ext: "mp3" }, 4: { kind: "image", ext: "jpg", ai_generated: true } };
+  const item = { channels: ["ig_post", "yt_short", "ig_carousel", "tiktok"], variants: { ig_post: { media: ["1"] }, yt_short: { media: ["2"] }, ig_carousel: { media: ["4"] }, tiktok: { media: ["3", "99"] } } };
+  const out = mediaChecks(item, (id) => files[id]).map((c) => `${c.level}:${c.channel}:${c.text}`);
+  assert.ok(out.some((t) => /^bad:ig_post:.*JPEG/.test(t)));
+  assert.ok(out.some((t) => /^bad:yt_short:.*under 60/.test(t)) && out.some((t) => /^warn:yt_short:.*landscape/.test(t)));
+  assert.ok(out.some((t) => /^warn:ig_carousel:.*2 to 10/.test(t)) && out.some((t) => /ig_carousel:.*AI label/.test(t)));
+  assert.ok(out.some((t) => /^bad:tiktok:.*deleted/.test(t)) && out.some((t) => /^bad:tiktok:.*audio files/.test(t)));
+});
+
+test("auto-publish is the AI Publisher's level in AI Workforce (one switch, two places)", async () => {
+  const [ws] = await json("/api/workspaces");
+  await call(`/api/workspaces/${ws.id}/creative/publish/settings`, { method: "PUT", body: JSON.stringify({ auto_publish: true }) });
+  assert.equal((await json("/api/workforce/agents/creative_publisher")).config.level, 2);
+  await call("/api/workforce/agents/creative_publisher", { method: "PUT", body: JSON.stringify({ level: 1 }) });
+  const acc = await json(`/api/workspaces/${ws.id}/creative/accounts`);
+  assert.equal(acc.can_auto_publish, false); assert.equal(acc.settings.auto_publish, false);
+});

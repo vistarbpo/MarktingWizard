@@ -3,7 +3,7 @@
 import { BRIEF_FIELDS } from "./catalog.js";
 
 export const CATEGORIES = ["getting-started", "feed-import", "templates", "video", "billing", "account", "bug", "feature-request", "other"];
-export const CHANNELS = ["WhatsApp", "Email", "Website chat", "App store review", "Phone", "Other"];
+export const CHANNELS = ["WhatsApp", "Email", "Website chat", "Instagram comment", "Facebook comment", "Instagram DM", "Messenger", "App store review", "Phone", "Other"];
 export const TICKET_STATUS = ["new", "ai_answered", "needs_human", "resolved"];
 
 // Must be a person: money, legal, data, angry or at-risk customers, real bugs, enterprise deals.

@@ -1,5 +1,7 @@
-/* Creative Studio (phase 1): calendar with Saudi seasons, board by status, idea bank, email designer,
-   brand kit, AI copy in Arabic and English, approvals and "download and post".
+/* Creative Studio: calendar with Saudi seasons, board by status, idea bank, email designer,
+   brand kit, AI copy in Arabic and English, approvals and "download and post" (phase 1).
+   Phases 2-3 add tabs and drawer sections from studio-media.js (Assets, templates, reels) and
+   studio-publish.js (Accounts, publishing, Results) through CS_TABS and CS_DRAWER_HOOKS.
    Uses app.js globals (S, $, api, esc, toast, fmtDate, ROUTES, levelFor). */
 
 const CS = { meta: null, items: [], counts: {}, due: [], tab: "calendar", month: null, openId: null, chTab: null, draft: null };
@@ -10,6 +12,11 @@ const csCh = (id) => CS.meta.channels.find((c) => c.id === id);
 const csShort = { ig_post: "IG", ig_carousel: "IG▦", ig_reel: "Reel", ig_story: "Story", tiktok: "TikTok", snapchat: "Snap", yt_short: "Short", yt_video: "YT", fb_post: "FB", linkedin: "in", x: "X", email: "Email", whatsapp: "WA" };
 
 ROUTES.studio = { title: "Creative Studio", crumb: "Creative Studio", render: renderStudio };
+// Tabs in order; later scripts add theirs (key, label, render function returning HTML, optional after-render).
+const CS_TABS = [{ key: "calendar", label: "Calendar", view: () => csCalendar() }, { key: "board", label: "Board", view: () => csBoard() }, { key: "ideas", label: "Ideas", view: () => csIdeas() }, { key: "emails", label: "Emails", view: () => csEmails() }];
+const CS_TABS_END = [{ key: "brand", label: "Brand kit", view: () => csBrand() }];
+const csTabs = () => [...CS_TABS, ...CS_TABS_END];
+const CS_DRAWER_HOOKS = []; // functions(item, channel) run after the drawer renders
 
 async function csLoad() {
   if (!CS.meta) CS.meta = await api(`${csP()}/meta`);
@@ -21,8 +28,9 @@ async function csLoad() {
 async function renderStudio(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   CS.meta = null; await csLoad();
+  if (S.param && csTabs().some((t) => t.key === S.param)) CS.tab = S.param;
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Creative Studio views">
-    ${[["calendar", "Calendar"], ["board", "Board"], ["ideas", "Ideas"], ["emails", "Emails"], ["brand", "Brand kit"]].map(([k, l]) => `<button role="tab" data-cstab="${k}" aria-selected="${CS.tab === k}">${l}</button>`).join("")}</div>
+    ${csTabs().map((t) => `<button role="tab" data-cstab="${t.key}" aria-selected="${CS.tab === t.key}">${t.label}</button>`).join("")}</div>
     ${csEdit() ? `<button class="btn" data-csact="plan">Plan month with AI</button><button class="btn btn-primary" data-csact="new">New content</button>` : ""}`;
   view.innerHTML = `<div id="csBody"></div>`;
   csRerender();
@@ -34,7 +42,9 @@ function csRerender() {
   const due = CS.items.filter((i) => CS.due.includes(i.id));
   const banner = due.length ? `<div class="card c-banner" style="margin-bottom:16px"><b>Post today (${due.length}):</b> ${due.map((i) => `<button class="linklike" data-csopen="${i.id}">${esc(i.title)}</button>`).join(", ")}. Open each, download the pack, post it, then tap "Mark posted".</div>` : "";
   const review = CS.counts.review ? `<div class="card c-banner" style="margin-bottom:16px;border-color:var(--accent)"><b>${CS.counts.review} waiting for approval.</b> ${CS.meta.can_approve ? "You can approve them on the Board." : "An approver needs to review them."} <button class="btn btn-sm btn-ghost" data-cstab="board">Board</button></div>` : "";
-  $("#csBody").innerHTML = banner + review + ({ calendar: csCalendar, board: csBoard, ideas: csIdeas, emails: csEmails, brand: csBrand }[CS.tab])();
+  const tab = csTabs().find((t) => t.key === CS.tab) || csTabs()[0];
+  $("#csBody").innerHTML = banner + review + tab.view();
+  tab.after?.();
 }
 
 /* ------------------------------------------------ Calendar (weeks start Sunday, Saudi-style) */
@@ -167,14 +177,17 @@ function csDrawer() {
   ${i.channels.length ? `<div class="s-tabs cs-vtabs" role="tablist">${i.channels.map((x) => `<button role="tab" data-cevtab="${x}" aria-selected="${x === ch}">${esc(csCh(x).name)}${i.published?.[x] ? " ✓" : ""}</button>`).join("")}</div>
   <div class="card" style="padding:14px 16px"><p class="subtle s-small">${esc(c.ratio)}${c.caption_max ? ` · caption up to ${c.caption_max}` : ""}${c.hashtags_max ? ` · ${c.hashtags_max} hashtags max` : ""}${c.tip ? ` · ${esc(c.tip)}` : ""}</p>
     ${c.kind === "email" ? csEmailEditor(v, edit) : csSocialEditor(c, v, edit)}
+    ${c.kind !== "email" ? `<div id="csMediaBox"></div>` : ""}
     ${c.kind !== "email" ? `<div class="row gap-8" style="flex-wrap:wrap;margin-top:10px"><button class="btn btn-sm" data-csact="copy">Copy caption</button><a class="btn btn-sm" href="${csP()}/items/${i.id}/pack/${ch}">Download pack</a>
       ${["approved", "scheduled", "published"].includes(st) && edit ? (posted ? `<span class="badge good">Posted ${fmtDate(posted.at)} by ${esc(posted.by)}</span>${posted.url ? ` <a href="${esc(posted.url)}" target="_blank" rel="noopener" class="s-small">open</a>` : ""}` : `<button class="btn btn-sm btn-primary" data-csact="posted">Mark posted</button>`) : `<span class="subtle s-small">Posting opens after approval.</span>`}</div>` : ""}
   </div>` : `<p class="muted s-small">Pick channels above to write each version.</p>`}
+  <div id="csPubBox"></div>
   <div><span class="eyebrow">Comments and history</span><div class="c-timeline">${[...i.comments].reverse().map((m) => `<div class="c-tl ${m.system ? "note" : ""}"><span class="subtle">${fmtDate(m.at)} · ${esc(m.by)}</span><div dir="auto">${esc(m.text)}</div></div>`).join("") || `<p class="muted s-small">No comments yet.</p>`}</div>
     ${edit ? `<div class="row gap-8" style="margin-top:8px"><input class="input input-sm" id="ceComment" placeholder="Comment for the team" dir="auto"><button class="btn btn-sm" data-csact="comment">Add</button></div>` : ""}
     ${i.history?.length ? `<p class="subtle s-small" style="margin-top:6px">${i.history.length} earlier version${i.history.length === 1 ? "" : "s"} kept.</p>` : ""}</div>
   ${edit ? `<button class="btn btn-ghost btn-sm" data-csact="delete" style="color:var(--bad);align-self:flex-start">Delete</button>` : ""}`;
   el.hidden = false; $("#csScrim").hidden = false;
+  for (const h of CS_DRAWER_HOOKS) { try { h(i, ch); } catch (e) { console.error(e); } }
 }
 function csSocialEditor(c, v, edit) {
   const dis = edit ? "" : "disabled";
