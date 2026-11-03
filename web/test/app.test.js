@@ -4248,3 +4248,319 @@ test("intel sample data loads clearly marked rows and removes them; deleting a w
     assert.deepEqual(k.st.db.intel_briefs.map((b) => b.id), ["zb"]);
   } finally { k.done(); }
 });
+
+// ---- Goals & review (OKRs + weekly business review)
+// A test app whose OKR clock can be moved (`k.at(iso)`) and whose AI can be swapped (`k.ai(fn)`; null = demo provider).
+async function okrKit({ clock = null, assistantClient = null } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-okr-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const prov = { name: "test", model: "test", async generate(a) { return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-okr", assistantClient, okrOptions: { clock: () => (t == null ? Date.now() : t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-okr" });
+  const as = async (c, p, m = "GET", body) => { const r = await fetch(b2 + p, { method: m, headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const user = async (role) => { const email = `okr-${role}@dpa.ad`; await j("/api/admin/users", { name: `Okr ${role}`, email, password: `okr-${role}-pass1`, role_id: role }); return { ck: await login({ email, password: `okr-${role}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  return { app: app2, st, w, X: `/api/workspaces/${w.id}/okr`, W: `/api/workspaces/${w.id}`, j, as, ck, user, b2,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+
+test("okr objectives: create, key results (linked and manual), 2–5 rule, activate, edit, grade and close, locked when closed, delete", async () => {
+  const k = await okrKit({ clock: "2026-11-02T09:00:00Z" });
+  try {
+    const meta = (await k.j(`${k.X}/meta`)).body;
+    assert.equal(meta.current_quarter, "2026-Q4"); assert.deepEqual(meta.quarters, ["2026-Q3", "2026-Q4", "2027-Q1"]);
+    assert.ok(meta.metrics.some((m) => m.id === "mrr_sar") && meta.metrics.some((m) => m.id === "cost_per_lead_sar"));
+    assert.equal((await k.j(`${k.X}/objectives`, { title: "" })).status, 422);
+    assert.equal((await k.j(`${k.X}/objectives`, { title: "Team goal", level: "team" })).status, 422); // a team objective needs its team
+    assert.equal((await k.j(`${k.X}/objectives`, { title: "X", quarter: "Q4" })).status, 422);
+    const o = (await k.j(`${k.X}/objectives`, { title: "Win the first paying stores", description: "Why" })).body;
+    assert.equal(o.status, "draft"); assert.equal(o.quarter, "2026-Q4"); assert.equal(o.level, "company"); assert.equal(o.owner_id, "owner");
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/krs`, { title: "Linked without metric", kind: "linked", target: 5 })).status, 422);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/krs`, { title: "No target", kind: "manual" })).status, 422);
+    const a = (await k.j(`${k.X}/objectives/${o.id}/krs`, { title: "Deals won", kind: "linked", metric: "deals_won", target: 10 })).body;
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/activate`, {})).status, 422); // only 1 key result
+    const b = (await k.j(`${k.X}/objectives/${o.id}/krs`, { title: "Salla listing approved", kind: "manual", start: 0, target: 1, unit: "listing" })).body;
+    const lk = a.krs.find((x) => x.kind === "linked"), mk = b.krs.find((x) => x.kind === "manual");
+    assert.equal(lk.start, 0); assert.equal(lk.current, 0); assert.equal(lk.progress, 0); assert.equal(lk.ref, `K${lk.id}`); assert.match(lk.source, /Sales/);
+    assert.equal(mk.current, 0); assert.equal(mk.unit, "listing");
+    for (const n of [3, 4, 5]) assert.equal((await k.j(`${k.X}/objectives/${o.id}/krs`, { title: `KR ${n}`, kind: "manual", target: n })).status, 201);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/krs`, { title: "KR 6", kind: "manual", target: 6 })).status, 422); // at most 5
+    // Check-ins wait for activation.
+    assert.equal((await k.j(`${k.X}/krs/${mk.id}/checkins`, { value: 1 })).status, 422);
+    const act = (await k.j(`${k.X}/objectives/${o.id}/activate`, {})).body;
+    assert.equal(act.status, "active"); assert.ok(act.activated_at);
+    const ed = (await k.j(`${k.X}/objectives/${o.id}`, { title: "Win 25 paying stores" }, "PUT")).body;
+    assert.equal(ed.title, "Win 25 paying stores");
+    const kr2 = (await k.j(`${k.X}/krs/${mk.id}`, { target: 2, current: 99, confidence: "off_track" }, "PUT")).body.krs.find((x) => x.id === mk.id);
+    assert.equal(kr2.target, 2); assert.equal(kr2.current, 0); assert.equal(kr2.confidence, "on_track"); // value and confidence only change through a check-in
+    // Close: a person's score from 0 to 1.0 and a retro; the rule-based suggestion is offered.
+    const sug = (await k.j(`${k.X}/objectives/${o.id}/suggest-score`, {})).body;
+    assert.equal(sug.score, 0); assert.equal(sug.by_ai, false);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/close`, { score: 1.4, retro: "x" })).status, 422);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}/close`, { score: 0.6 })).status, 422);
+    const cl = (await k.j(`${k.X}/objectives/${o.id}/close`, { score: 0.6, retro: "Listing took longer than planned." })).body;
+    assert.equal(cl.status, "closed"); assert.equal(cl.score, 0.6); assert.equal(cl.can_edit, false);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}`, { title: "y" }, "PUT")).status, 422);
+    assert.equal((await k.j(`${k.X}/objectives/${o.id}`, undefined, "DELETE")).status, 422);
+    assert.equal((await k.j(`${k.X}/krs/${mk.id}/checkins`, { value: 1 })).status, 422);
+    // A draft deletes with its key results.
+    const dr = (await k.j(`${k.X}/objectives`, { title: "Draft", krs: [{ title: "A", kind: "manual", target: 1 }, { title: "B", kind: "manual", target: 2 }] })).body;
+    assert.equal(dr.krs.length, 2);
+    assert.equal((await k.j(`${k.X}/objectives/${dr.id}`, undefined, "DELETE")).status, 204);
+    assert.equal(k.st.db.okr_krs.filter((x) => x.objective_id === dr.id).length, 0);
+    const list = (await k.j(`${k.X}/objectives?quarter=2026-Q4`)).body;
+    assert.deepEqual(list.objectives.map((x) => x.id), [o.id]); assert.ok(list.log.some((l) => l.kind === "status" && l.to === "closed"));
+    assert.equal((await k.j(`${k.X}/objectives?quarter=2026-Q3`)).body.objectives.length, 0);
+  } finally { k.done(); }
+});
+
+test("okr linked metrics read the modules' own data (sample data), manual check-ins keep a history, members check in only on their own key results", async () => {
+  const { mrrAt, addDays } = await import("../lib/billing.js");
+  const { quarterOf, quarterRange, todayOf } = await import("../lib/okr.js");
+  const k = await okrKit();
+  try {
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.okr_objectives, 3); assert.equal(loaded.okr_krs, 8);
+    const list = (await k.j(`${k.X}/objectives`)).body;
+    assert.equal(list.quarter, quarterOf(Date.now()));
+    assert.ok(list.objectives.every((o) => o.sample && o.title.startsWith("Sample · ")));
+    const krs = list.objectives.flatMap((o) => o.krs), by = (m) => krs.find((x) => x.metric === m);
+    const tomorrow = addDays(todayOf(Date.now()), 1), cust = k.st.db.billing_customers.filter((c) => c.workspace_id === k.w.id && !c.archived);
+    assert.ok(cust.length > 0);
+    assert.equal(by("paying_stores").current, cust.filter((c) => mrrAt(c, tomorrow) > 0).length);
+    const mrr = Math.round(cust.reduce((a, c) => a + mrrAt(c, tomorrow), 0) * 100) / 100;
+    assert.equal(by("arr_usd").current, Math.round((mrr * 12) / 3.75));
+    const { start } = quarterRange(list.quarter);
+    assert.equal(by("deals_won").current, k.st.listDeals(k.w.id).filter((d) => d.stage === "paying" && d.stage_changed_at >= new Date(Date.parse(`${start}T00:00:00Z`) - 3 * 3600e3).toISOString()).length);
+    assert.equal(by("paying_stores").progress, Math.round((by("paying_stores").current / 25) * 1000) / 10);
+
+    // Manual check-in: value, confidence change logged, history newest first; linked check-ins never take a typed value.
+    const manual = krs.find((x) => x.kind === "manual");
+    assert.equal((await k.j(`${k.X}/krs/${manual.id}/checkins`, { confidence: "on_track" })).status, 422); // manual needs a value
+    assert.equal((await k.j(`${k.X}/krs/${manual.id}/checkins`, { value: 1, confidence: "nope" })).status, 422);
+    const ci = (await k.j(`${k.X}/krs/${manual.id}/checkins`, { value: 1, confidence: "on_track", note: "Approved by Salla" })).body;
+    const mk = ci.objective.krs.find((x) => x.id === manual.id);
+    assert.equal(mk.current, 1); assert.equal(mk.progress, 100); assert.equal(mk.confidence, "on_track"); assert.equal(mk.stale, false);
+    assert.equal(mk.checkins[0].note, "Approved by Salla"); assert.equal(mk.checkins.length, 2);
+    assert.ok(k.st.db.okr_log.some((l) => l.kr_id === manual.id && l.kind === "confidence" && l.from === "at_risk" && l.to === "on_track"));
+    const lin = by("deals_won");
+    const lc = (await k.j(`${k.X}/krs/${lin.id}/checkins`, { value: 999, confidence: "at_risk" })).body;
+    assert.equal(lc.checkin.value, lin.current); // the live metric, not the typed number
+
+    // Team member: no objective changes; check-ins only on key results they own. Viewer: read only.
+    const mem = await k.user("member"), view = await k.user("viewer");
+    const mine = (await k.j(`${k.X}/krs/${manual.id}`, { owner_id: mem.id }, "PUT")).body.krs.find((x) => x.id === manual.id);
+    assert.equal(mine.owner_id, mem.id); assert.equal(mine.owner_name, "Okr member");
+    assert.equal((await k.as(mem.ck, `${k.X}/objectives`, "POST", { title: "Mine" })).status, 403);
+    assert.equal((await k.as(mem.ck, `${k.X}/objectives/${manual.objective_id}`, "PUT", { title: "Changed" })).status, 403);
+    assert.equal((await k.as(mem.ck, `${k.X}/krs/${manual.id}`, "PUT", { target: 9 })).status, 403);
+    const other = krs.find((x) => x.kind === "linked" && x.metric === "crm_replies");
+    assert.equal((await k.as(mem.ck, `${k.X}/krs/${other.id}/checkins`, "POST", { confidence: "on_track" })).status, 403);
+    const own = await k.as(mem.ck, `${k.X}/krs/${manual.id}/checkins`, "POST", { value: 1, note: "Still live" });
+    assert.equal(own.status, 201); assert.equal(own.body.checkin.by, "Okr member");
+    assert.equal((await k.as(view.ck, `${k.X}/objectives`)).status, 200);
+    assert.equal((await k.as(view.ck, `${k.X}/krs/${manual.id}/checkins`, "POST", { value: 1 })).status, 403);
+    // Metrics from modules a role can't view are hidden: Team members have no Finance or Billing (MRR, ARR, paying stores).
+    const ml = (await k.as(mem.ck, `${k.X}/objectives`)).body.objectives.flatMap((o) => o.krs);
+    const arr = ml.find((x) => x.metric === "arr_usd");
+    assert.equal(arr.hidden, true); assert.equal(arr.current, null); assert.equal(arr.target, null); assert.match(arr.hidden_hint, /Finance or Billing/);
+    assert.equal(ml.find((x) => x.metric === "deals_won").hidden, false);
+    assert.ok((await k.as(mem.ck, `${k.X}/meta`)).body.metrics.find((m) => m.id === "mrr_sar").hidden);
+    const o1 = (await k.as(mem.ck, `${k.X}/objectives`)).body.objectives.find((o) => o.krs.some((x) => x.metric === "arr_usd"));
+    assert.equal(o1.partial, true);
+    assert.ok(!JSON.stringify(o1).includes(String(by("arr_usd").current)));
+  } finally { k.done(); }
+});
+
+test("okr weekly business review: drafted from Monday 07:00 Riyadh, safe to repeat, week-over-week maths, factual narrative from the demo AI", async () => {
+  const { checkNarrative } = await import("../lib/okr.js");
+  const k = await okrKit({ clock: "2026-11-01T21:30:00Z" }); // Monday 00:30 Riyadh
+  try {
+    const okr = k.app.locals.okr;
+    // Deals won: 2 this week (26 Oct – 1 Nov), 1 last week, 0 two weeks ago, 1 three weeks ago.
+    for (const [n, at] of [["A", "2026-10-27T10:00:00Z"], ["B", "2026-10-31T10:00:00Z"], ["C", "2026-10-21T10:00:00Z"], ["D", "2026-10-07T10:00:00Z"], ["E", "2026-11-02T10:00:00Z"]]) {
+      const d = k.st.addDeal(k.w.id, { name: `Store ${n}`, stage: "paying" }); Object.assign(k.st.db.deals.find((x) => x.id === d.id), { stage: "paying", stage_changed_at: at, won_reason: n === "A" ? "Zid import" : "" });
+    }
+    const o = (await k.j(`${k.X}/objectives`, { title: "Close stores", krs: [{ title: "Deals won", kind: "linked", metric: "deals_won", target: 10 }, { title: "Case study", kind: "manual", target: 1 }] })).body;
+    await k.j(`${k.X}/objectives/${o.id}/activate`, {});
+    assert.equal((await okr.tick()).created, 0); // Monday, but before 07:00 Riyadh
+    k.at("2026-11-02T03:59:00Z"); assert.equal((await okr.tick()).created, 0);
+    k.at("2026-11-02T04:30:00Z"); assert.equal((await okr.tick()).created, 1);
+    assert.equal((await okr.tick()).created, 0); // idempotent
+    k.at("2026-11-04T10:00:00Z"); assert.equal((await okr.tick()).created, 0);
+    assert.equal(k.st.db.okr_wbrs.length, 1);
+    const list = (await k.j(`${k.X}/wbr`)).body;
+    assert.equal(list.reviews.length, 1); assert.equal(list.reviews[0].week_start, "2026-11-02"); assert.equal(list.reviews[0].status, "draft");
+    const r = (await k.j(`${k.X}/wbr/${list.reviews[0].id}`)).body;
+    assert.equal(r.from, "2026-10-26"); assert.equal(r.to, "2026-11-01");
+    const dw = r.data.metrics.find((m) => m.id === "deals_won");
+    assert.deepEqual(dw.weeks, [2, 1, 0, 1]); assert.equal(dw.this_week, 2); assert.equal(dw.last_week, 1); assert.equal(dw.avg_4w, 1); assert.equal(dw.change, 1); assert.equal(dw.change_pct, 100);
+    assert.deepEqual(r.data.winloss.map((x) => x.name).sort(), ["Store A", "Store B"]);
+    assert.ok(r.data.okrs.some((g) => g.id === o.id)); assert.ok(r.data.cash && r.data.cash.ref === "F1");
+    // The demo AI doesn't cite rows: the factual narrative is used; every number in it is in the rows.
+    assert.equal(r.by_ai, false); assert.match(r.note, /factual summary/);
+    assert.match(r.narrative, /Deals won: 2 this week vs 1 last week \(\+100%\), 4-week average 1 \[M\d+\]/);
+    assert.match(r.narrative, /\[ADD\]/);
+    const chk = checkNarrative(r.narrative, k.st.db.okr_wbrs[0].data);
+    assert.deepEqual(chk.unsourced_numbers, []); assert.deepEqual(chk.unknown, []); assert.equal(chk.ok, true);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "chief_of_staff" && e.outcome === "escalated"));
+    // A person drafting again gets the same review (no duplicate).
+    const again = await k.j(`${k.X}/wbr`, {});
+    assert.equal(again.status, 200); assert.equal(again.body.id, r.id); assert.equal(k.st.db.okr_wbrs.length, 1);
+    // Print view.
+    const pr = await k.j(`${k.X}/wbr/${r.id}/print`);
+    assert.equal(pr.status, 200); assert.match(pr.body, /Weekly business review/); assert.match(pr.body, /Store A/);
+  } finally { k.done(); }
+});
+
+test("okr narrative: an AI that invents numbers or rows is replaced by the facts; a cited one is kept; review lock, comments and hidden rows per role", async () => {
+  const { checkNarrative, ruleNarrative } = await import("../lib/okr.js");
+  const k = await okrKit({ clock: "2026-11-02T05:00:00Z" });
+  try {
+    const rowsOf = (p) => JSON.parse(/<rows count="\d+">\n([\s\S]*)\n<\/rows>/.exec(p)[1]);
+    let seen = null;
+    k.ai((p) => { seen = p; return "## Headlines\n- Revenue grew 37% thanks to Noon [M1]\n- Ask [Z9]"; });
+    const bad = (await k.j(`${k.X}/wbr`, {})).body;
+    assert.match(seen, /Never add facts/); assert.match(seen, /\[ADD\]/);
+    assert.equal(bad.by_ai, false); assert.match(bad.note, /numbers that aren't in the rows|cited rows/); assert.doesNotMatch(bad.narrative, /37%|Noon/);
+    // Uncited bullets are not accepted either.
+    k.ai(() => "## Headlines\n- Everything is fine");
+    assert.equal((await k.j(`${k.X}/wbr`, { refresh: true })).body.by_ai, false);
+    // A narrative that cites rows and copies their values is kept as the AI's draft.
+    k.ai((p) => { const rows = rowsOf(p), m = rows.find((x) => x.ref === "M1"); return `## Headlines\n- ${m.metric}: ${m.this_week ?? "no data"} [M1]\n- Why it moved: [ADD]\n- Deals this week: see [M8]`; });
+    const good = (await k.j(`${k.X}/wbr`, { refresh: true })).body;
+    assert.equal(good.by_ai, true); assert.match(good.narrative, /\[M1\]/); assert.deepEqual(good.issues, []);
+    assert.equal(k.st.db.okr_wbrs.length, 1);
+    // checkNarrative directly.
+    const data = k.st.db.okr_wbrs[0].data;
+    const c = checkNarrative("- MRR is 123456 [M2]\n- note\n- [Q1] x", data);
+    assert.deepEqual(c.unsourced_numbers, ["123456"]); assert.equal(c.uncited, 2); assert.equal(c.ok, false);
+    assert.equal(checkNarrative(ruleNarrative(data), data).ok, true);
+
+    // Comments per section, edits, Owner marks reviewed → locked.
+    const mem = await k.user("member"), lead = await k.user("manager"), fin = await k.user("finance");
+    assert.equal((await k.j(`${k.X}/wbr/${good.id}/comments`, { section: "nope", text: "x" })).status, 422);
+    const cm = await k.as(mem.ck, `${k.X}/wbr/${good.id}/comments`, "POST", { section: "metrics", text: "تأخر الربط مع زد" });
+    assert.equal(cm.status, 201); assert.equal(cm.body.comments[0].by, "Okr member");
+    assert.equal((await k.as(fin.ck, `${k.X}/wbr/${good.id}/comments`, "POST", { section: "cash", text: "x" })).status, 403); // Finance: view only
+    assert.equal((await k.j(`${k.X}/wbr/${good.id}`, { narrative: good.narrative + "\n- Also [M999]" }, "PUT")).status, 422);
+    const edited = (await k.j(`${k.X}/wbr/${good.id}`, { narrative: good.narrative + "\n- Owner for next step: [ADD]" }, "PUT")).body;
+    assert.match(edited.narrative, /Owner for next step/);
+    assert.equal((await k.as(lead.ck, `${k.X}/wbr/${good.id}/review`, "POST", {})).status, 403); // Team lead edits but doesn't mark reviewed
+    assert.equal((await k.as(mem.ck, `${k.X}/wbr/${good.id}`, "PUT", { narrative: "x [M1]" })).status, 403);
+    // Hidden rows: a Team member (no Finance or Billing) doesn't see MRR/ARR rows, the cash section, or any note line citing them.
+    const mv = (await k.as(mem.ck, `${k.X}/wbr/${good.id}`)).body;
+    assert.ok(!mv.data.metrics.some((m) => ["mrr_sar", "arr_usd", "paying_stores"].includes(m.id)));
+    assert.equal(mv.data.cash, null); assert.equal(mv.partial, true); assert.doesNotMatch(mv.narrative, /\[M1\]/); assert.match(mv.narrative, /\[M8\]/);
+    assert.equal(mv.can_edit, false); assert.equal(mv.can_review, false);
+    const pm = (await k.as(mem.ck, `${k.X}/wbr/${good.id}/print`)).body;
+    assert.doesNotMatch(pm, /ARR \(USD\)/); assert.doesNotMatch(pm, /Runway/);
+    const fv = (await k.as(fin.ck, `${k.X}/wbr/${good.id}`)).body;
+    assert.ok(fv.data.metrics.some((m) => m.id === "mrr_sar")); assert.ok(fv.data.cash);
+    const rv = (await k.j(`${k.X}/wbr/${good.id}/review`, {})).body;
+    assert.equal(rv.status, "reviewed"); assert.equal(rv.edited, true); assert.equal(rv.can_edit, false);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "chief_of_staff" && e.outcome === "edited"));
+    assert.equal((await k.j(`${k.X}/wbr/${good.id}`, { narrative: "x" }, "PUT")).status, 422);
+    assert.equal((await k.j(`${k.X}/wbr/${good.id}/comments`, { section: "metrics", text: "late" })).status, 422);
+    assert.equal((await k.j(`${k.X}/wbr`, { refresh: true })).status, 409); // this week's review is locked
+    assert.equal((await okrTickCount(k)), 0);
+    // Switched off in AI Workforce: the next week's review is the factual summary, no AI call.
+    await k.j("/api/workforce/agents/chief_of_staff", { level: 0 }, "PUT");
+    k.at("2026-11-09T05:00:00Z"); seen = null; k.ai((p) => { seen = p; return "- x [M1]"; });
+    const off = (await k.j(`${k.X}/wbr`, {})).body;
+    assert.equal(off.by_ai, false); assert.match(off.note, /switched off/); assert.equal(seen, null);
+    assert.equal((await k.j(`${k.X}/wbr`)).body.reviews.length, 2);
+  } finally { k.done(); }
+});
+async function okrTickCount(k) { return (await k.app.locals.okr.tick()).created; }
+
+test("okr Command Center: Home card with this quarter's company goals, stale check-ins and a review waiting as needs, redacted per role", async () => {
+  const k = await okrKit({ clock: "2026-11-02T09:00:00Z" });
+  try {
+    const mem = await k.user("member"), cre = await k.user("creative");
+    const o = (await k.j(`${k.X}/objectives`, { title: "Revenue", krs: [{ title: "MRR", kind: "linked", metric: "mrr_sar", start: 0, target: 100000 }, { title: "Listing", kind: "manual", target: 1, owner_id: mem.id }] })).body;
+    await k.j(`${k.X}/objectives/${o.id}/activate`, {});
+    const home = (await k.j(`${k.W}/command`)).body;
+    assert.equal(home.okr.quarter, "2026-Q4"); assert.equal(home.okr.objectives[0].title, "Revenue"); assert.equal(home.okr.objectives[0].krs, 2);
+    assert.ok(!home.needs.some((n) => n.module === "Goals & review"));
+    k.at("2026-11-10T09:00:00Z"); // 8 days without a check-in
+    const h2 = (await k.j(`${k.W}/command`)).body.needs.filter((n) => n.module === "Goals & review");
+    assert.ok(h2.some((n) => n.title === "MRR" && /No check-in for 8 days/.test(n.text))); // the Owner's own KR
+    assert.ok(h2.some((n) => n.title === "Key result check-ins" && /1 key result has/.test(n.text))); // others' KRs, for managers
+    const hm = (await k.as(mem.ck, `${k.W}/command`)).body;
+    assert.deepEqual(hm.needs.filter((n) => n.module === "Goals & review").map((n) => n.title), ["Listing"]);
+    assert.equal(hm.okr.objectives[0].partial, true); // MRR hidden without Finance or Billing view
+    assert.equal(hm.okr.objectives[0].progress, 0); // only the Listing KR counts
+    const ch = (await k.as(cre.ck, `${k.W}/command`)).body;
+    assert.ok(ch.okr); assert.ok(!ch.needs.some((n) => n.module === "Goals & review"));
+    // A check-in clears the need; a draft review is a need for Owner/Admin only.
+    await k.as(mem.ck, `${k.X}/krs/${o.krs.find((x) => x.title === "Listing").id}/checkins`, "POST", { value: 0, confidence: "at_risk" });
+    assert.ok(!(await k.as(mem.ck, `${k.W}/command`)).body.needs.some((n) => n.module === "Goals & review"));
+    await k.j(`${k.X}/wbr`, {});
+    assert.ok((await k.j(`${k.W}/command`)).body.needs.some((n) => n.title === "Weekly business review"));
+    assert.ok(!(await k.as(mem.ck, `${k.W}/command`)).body.needs.some((n) => n.title === "Weekly business review"));
+    // Without the module: no card, no needs. The review job stored no Goals & review needs of its own.
+    k.st.db.roles.find((r) => r.id === "creative").perms.okr = "none"; k.st.save();
+    const cn = (await k.as(cre.ck, `${k.W}/command`)).body;
+    assert.equal(cn.okr, null); assert.equal((await k.as(cre.ck, `${k.X}/objectives`)).status, 403);
+    assert.ok(!k.st.db.okr_wbrs[0].data.needs.some((n) => n.module === "Goals & review"));
+  } finally { k.done(); }
+});
+
+test("okr: AI Chief of staff agent, roles and module defaults, Ask DPA AD tools, sample data removal, workspace delete", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  const ag = AGENTS.find((a) => a.id === "chief_of_staff");
+  assert.equal(ag.name, "AI Chief of staff"); assert.equal(ag.team, "Leadership"); assert.equal(ag.max, 1); assert.equal(ag.module, "okr");
+  assert.equal(agentFor("POST", "/api/workspaces/1/okr/wbr"), "chief_of_staff");
+  assert.ok(MODULE_IDS.includes("okr")); assert.equal(moduleFor("POST", "/api/workspaces/1/okr/krs/3/checkins"), "okr");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.okr])), { owner: "edit", admin: "edit", manager: "edit", member: "edit", finance: "view", creative: "view", viewer: "view" });
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-okrr-"));
+  fs.writeFileSync(path.join(d, "db.json"), JSON.stringify({ roles: [{ id: "finance", name: "Finance", perms: { command: "view" } }] }));
+  assert.equal(new Store(d).db.roles.find((r) => r.id === "finance").perms.okr, "view"); fs.rmSync(d, { recursive: true, force: true });
+  const lt = TOOLS.find((t) => t.name === "list_okrs"), ct = TOOLS.find((t) => t.name === "okr_check_in");
+  assert.equal(lt.module, "okr"); assert.ok(!lt.write); assert.equal(ct.module, "okr"); assert.equal(ct.write, true); assert.equal(ct.risk, "low"); assert.equal(typeof ct.preview, "function");
+
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await okrKit({ assistantClient: fakeClient });
+  try {
+    const real = (await k.j(`${k.X}/objectives`, { title: "Real goal", krs: [{ title: "Listing approved", kind: "manual", target: 1 }, { title: "Deals", kind: "linked", metric: "deals_won", target: 5 }] })).body;
+    await k.j(`${k.X}/objectives/${real.id}/activate`, {});
+    const kr = real.krs.find((x) => x.kind === "manual");
+    script = [use("o1", "list_okrs", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.objectives[0].title, "Real goal"); assert.equal(r.objectives[0].key_results.length, 2); return say("One objective."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "How are our goals?", ws: k.w.id })).body;
+    assert.match(a1.reply, /One objective/);
+    script = [use("o2", "okr_check_in", { kr_id: kr.id, value: 1, confidence: "on_track", note: "Approved today" })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Salla approved the listing", ws: k.w.id })).body;
+    assert.match(a2.pending.summary, /Check in on "Listing approved": value 1, on track, note "Approved today"/);
+    assert.equal(k.st.db.okr_checkins.length, 0);
+    script = [say("Done.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const ci = k.st.db.okr_checkins.find((c) => c.kr_id === kr.id);
+    assert.equal(ci.value, 1); assert.equal(ci.via, "assistant");
+
+    // Sample objectives go with Remove sample data; real ones stay.
+    await k.j(`${k.W}/sample-data`, {});
+    assert.equal(k.st.db.okr_objectives.filter((o) => o.sample).length, 3);
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.okr_objectives, 3); assert.equal(rm.okr_krs, 8);
+    assert.deepEqual(k.st.db.okr_objectives.map((o) => o.title), ["Real goal"]);
+    assert.ok(!k.st.db.okr_krs.some((x) => x.sample) && !k.st.db.okr_checkins.some((x) => x.sample) && !k.st.db.okr_log.some((x) => x.sample));
+    // Deleting a workspace clears its okr_* rows and keeps other workspaces'.
+    await k.j(`${k.X}/wbr`, {});
+    k.st.db.okr_objectives.push({ id: "zo", workspace_id: "other" });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    for (const c of ["okr_objectives", "okr_krs", "okr_checkins", "okr_log", "okr_wbrs"]) assert.equal(k.st.db[c].filter((x) => x.workspace_id === k.w.id).length, 0, c);
+    assert.deepEqual(k.st.db.okr_objectives.map((o) => o.id), ["zo"]);
+  } finally { k.done(); }
+});
