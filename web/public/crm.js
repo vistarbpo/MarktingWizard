@@ -17,6 +17,7 @@ ROUTES.crm = { title: "Store CRM", crumb: "Store CRM", render: renderCrm };
 async function renderCrm(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   CRM.meta = await api(`${crmP()}/meta`);
+  CRM.job = CRM.meta.products_job || null; crmPollJob();
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Store CRM views">
     ${[["overview", "Overview"], ["stores", "Stores"], ["pipeline", "Pipeline"], ["campaigns", "Campaigns"], ["inbox", "Inbox"], ["settings", "Settings"]].map(([k, l]) => `<button role="tab" data-ctab="${k}" aria-selected="${CRM.tab === k}">${l}</button>`).join("")}</div>
     ${crmEdit() ? `<button class="btn btn-primary" data-caction="import">Import stores</button>` : ""}`;
@@ -133,6 +134,7 @@ function crmFilterHtml(p, f = {}) {
     <input class="input input-sm" type="number" min="0" data-f="quiet_days" placeholder="Not contacted in (days)" value="${f.quiet_days || ""}" style="width:178px">
     <label class="chip"><input type="checkbox" data-f="has_email" ${f.has_email ? "checked" : ""}> Has email</label>
     <label class="chip"><input type="checkbox" data-f="has_whatsapp" ${f.has_whatsapp ? "checked" : ""}> Has phone</label>
+    <label class="chip" title="Stores with product samples (photos) for personalized emails and WhatsApp headers"><input type="checkbox" data-f="has_products" ${f.has_products ? "checked" : ""}> Has product photos</label>
   </div>`;
 }
 function crmReadFilter(p) {
@@ -157,14 +159,15 @@ async function crmStores(body) {
     <div class="row gap-8"><b class="num">${nf(L.total)}</b><span class="muted">of ${nf(L.all)} stores</span>
       <select class="input input-sm" id="cSort" aria-label="Sort">${[["score", "Best fit first"], ["products", "Most products"], ["recent", "Recent activity"], ["name", "Name"]].map(([v, l]) => `<option value="${v}" ${CRM.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       ${Object.keys(CRM.f).length ? `<button class="btn btn-sm btn-ghost" data-caction="clear-f">Clear filters</button>` : ""}</div>
-    <div class="row gap-8">${edit ? `<button class="btn btn-sm" data-caction="add-store">Add store</button><button class="btn btn-sm" data-caction="icp" title="Tag the best-fit stores in this view as your focus list">Build ICP list</button><button class="btn btn-sm" data-caction="seg-camp">Campaign for these ${nf(L.total)}</button>` : ""}<a class="btn btn-sm btn-ghost" href="${crmP()}/export?f=${encodeURIComponent(JSON.stringify(CRM.f))}">Export CSV</a></div>
+    <div class="row gap-8" style="flex-wrap:wrap">${edit ? `<button class="btn btn-sm" data-caction="add-store">Add store</button><button class="btn btn-sm" data-caction="icp" title="Tag the best-fit stores in this view as your focus list">Build ICP list</button><button class="btn btn-sm" data-caction="seg-camp">Campaign for these ${nf(L.total)}</button><button class="btn btn-sm" data-caction="fetch-bulk" title="Read up to ${nf(CRM.meta.products_bulk_cap || 500)} stores' own products for personalized emails">Fetch products</button>` : ""}<a class="btn btn-sm btn-ghost" href="${crmP()}/export?f=${encodeURIComponent(JSON.stringify(CRM.f))}">Export CSV</a></div>
   </div>
+  <div id="cProdJob">${crmJobHtml(CRM.job)}</div>
   ${edit && nSel ? `<div class="card c-bulk"><b>${nf(nSel)} selected</b>${!CRM.allMatching && CRM.sel.size === L.rows.length && L.total > L.rows.length ? `<button class="btn btn-sm btn-ghost" data-caction="sel-all">Select all ${nf(L.total)} matching</button>` : ""}
     <select class="input input-sm" id="cBulkAct"><option value="">Action…</option><option value="stage">Move to stage</option><option value="owner">Assign owner (round-robin)</option><option value="tag">Add tag</option><option value="untag">Remove tag</option><option value="enroll">Add to campaign</option><option value="delete">Delete</option></select>
     <span id="cBulkVal"></span><button class="btn btn-sm btn-primary" data-caction="bulk-go">Apply</button><button class="btn btn-sm btn-ghost" data-caction="sel-none">Clear</button></div>` : ""}
   <div class="card"><div class="table-wrap"><table class="c-table"><thead><tr>${edit ? `<th style="width:32px"><input type="checkbox" id="cSelPage" aria-label="Select page" ${L.rows.length && L.rows.every((r) => CRM.sel.has(r.id)) ? "checked" : ""}></th>` : ""}<th>Store</th><th>Category · platform</th><th>City</th><th>Products</th><th>Fit</th><th>Stage</th><th>Owner</th><th>Reach</th><th>Last contact</th></tr></thead><tbody>
   ${L.rows.map((c) => `<tr class="clickable" data-copen="${c.id}">${edit ? `<td><input type="checkbox" data-csel="${c.id}" ${CRM.allMatching || CRM.sel.has(c.id) ? "checked" : ""} aria-label="Select ${esc(c.store_name)}"></td>` : ""}
-    <td><b dir="auto">${esc(c.store_name)}</b><div class="subtle">${esc(c.domain || "")}${c.sample ? ' <span class="badge">SAMPLE</span>' : ""}</div></td>
+    <td><b dir="auto">${esc(c.store_name)}</b><div class="subtle">${esc(c.domain || "")}${c.sample ? ' <span class="badge">SAMPLE</span>' : ""}${(c.products_sample || []).some((p) => p.image_url) ? ` <span class="badge good" title="Has product samples">${(c.products_sample || []).filter((p) => p.image_url).length} photo${(c.products_sample || []).filter((p) => p.image_url).length > 1 ? "s" : ""}</span>` : ""}</div></td>
     <td>${esc(c.category)}<div class="subtle">${esc(c.platform || "")}</div></td><td>${esc(c.city || "–")}</td><td class="num">${nf(c.products)}</td>
     <td><span class="c-score" style="--v:${c.score}%">${c.score}</span></td><td>${stageBadge(c.stage)}</td><td>${esc(c.owner_name || "–")}</td>
     <td class="subtle" style="white-space:nowrap">${c.email ? (c.email_opt_out ? "<s>email</s>" : c.bounced ? "bounced" : "email") : ""}${c.phone ? ` · ${c.wa_opt_in ? "WA ✓" : "phone"}` : ""}</td>
@@ -230,6 +233,7 @@ async function crmEditor(body) {
   if (!c) { CRM.editId = null; return crmRerender(); }
   if (!CRM.list) CRM.list = await api(`${crmP()}/contacts?size=1`);
   try { CRM.designs = levelFor("studio") !== "none" ? await api(`/api/workspaces/${S.ws.id}/creative/emails`) : []; } catch { CRM.designs = []; }
+  if (CRM.prevFor !== c.id) { CRM.previewStore = null; CRM.prevFor = c.id; }
   const locked = c.status === "running";
   const dt = c.start_at ? new Date(new Date(c.start_at).getTime() + 3 * 3600e3).toISOString().slice(0, 16) : "";
   body.innerHTML = `<div class="row gap-8" style="margin-bottom:14px"><button class="btn btn-sm btn-ghost" data-caction="back">← Campaigns</button>${locked ? `<span class="badge warn">Running: changes apply to messages not sent yet</span>` : ""}</div>
@@ -272,7 +276,9 @@ function crmStepHtml(s, i) {
     <span class="subtle">${i ? "wait" : "send after"}</span><input class="input input-sm" type="number" min="0" data-s="delay_days" value="${s.delay_days}" style="width:64px"><span class="subtle">days</span>
     ${s.channel === "whatsapp" ? `<input class="input input-sm" data-s="wa_template" placeholder="Approved template name" value="${esc(s.wa_template || "")}" style="width:200px" title="First WhatsApp to a store must be an approved template (Meta). The text below is used inside a 24h chat window.">` : ""}
     <button class="btn btn-sm btn-ghost" data-caction="del-step" data-i="${i}" style="margin-left:auto">Remove</button></div>
-    ${s.channel === "email" ? `<div class="row gap-8" style="flex-wrap:wrap"><select class="input input-sm" data-s="design_id" style="width:auto" title="Designed emails approved in Creative Studio"><option value="">Plain email (text below)</option>${(CRM.designs || []).map((d) => `<option value="${esc(d.id)}" ${String(d.id) === String(s.design_id || "") ? "selected" : ""}>Design: ${esc(d.title)}</option>`).join("")}${s.design_id && !(CRM.designs || []).some((d) => String(d.id) === String(s.design_id)) ? `<option value="${esc(s.design_id)}" selected>Design #${esc(s.design_id)} (not approved: won't send)</option>` : ""}</select>
+    ${s.channel === "whatsapp" ? `<div class="row gap-8" style="flex-wrap:wrap"><select class="input input-sm" data-s="wa_header" style="width:auto;max-width:100%;min-width:0" title="Template messages only. The template must be approved with an image header."><option value="">No header image</option><option value="product" ${s.wa_header === "product" ? "selected" : ""}>Header image: store's first product photo</option></select>
+      ${s.wa_header === "product" ? `<input class="input input-sm" data-s="wa_header_url" placeholder="Fallback image if the store has none (https, optional)" value="${esc(s.wa_header_url || "")}" dir="ltr" style="flex:1;min-width:200px"><span class="subtle" style="font-size:12px;flex-basis:100%">Stores without a product photo ${s.wa_header_url ? "get the fallback image" : "are skipped for this step, with the reason logged"}. Needs a template approved with an image header.</span>` : ""}</div>` : ""}
+    ${s.channel === "email" ? `<div class="row gap-8" style="flex-wrap:wrap"><select class="input input-sm" data-s="design_id" style="width:auto;max-width:100%;min-width:0" title="Designed emails approved in Creative Studio"><option value="">Plain email (text below)</option>${(CRM.designs || []).map((d) => `<option value="${esc(d.id)}" ${String(d.id) === String(s.design_id || "") ? "selected" : ""}>Design: ${esc(d.title)}</option>`).join("")}${s.design_id && !(CRM.designs || []).some((d) => String(d.id) === String(s.design_id)) ? `<option value="${esc(s.design_id)}" selected>Design #${esc(s.design_id)} (not approved: won't send)</option>` : ""}</select>
       ${s.design_id ? `<span class="subtle" style="font-size:12px">Subject and content come from the design unless you write a subject here. The text below is kept as a fallback.</span>` : ""}</div>
       <input class="input" data-s="subject" placeholder="${s.design_id ? "Subject (optional: the design has one)" : "Subject"}" value="${esc(s.subject || "")}" dir="auto">` : ""}
     ${s.channel === "call" ? `<span class="subtle" style="font-size:12px">Creates a call task with this script for the store's owner (Store CRM → Inbox → Calls). Only stores with a phone number.</span>` : ""}
@@ -281,7 +287,7 @@ function crmStepHtml(s, i) {
 function crmReadSteps() {
   return [...document.querySelectorAll("#ceSteps .c-step")].map((el) => {
     const g = (k) => el.querySelector(`[data-s="${k}"]`)?.value ?? "";
-    return { channel: g("channel"), delay_days: Number(g("delay_days")) || 0, subject: g("subject"), body: g("body"), wa_template: g("wa_template"), design_id: g("design_id") };
+    return { channel: g("channel"), delay_days: Number(g("delay_days")) || 0, subject: g("subject"), body: g("body"), wa_template: g("wa_template"), wa_header: g("wa_header"), wa_header_url: g("wa_header_url"), design_id: g("design_id") };
   });
 }
 function crmReadCampaign() {
@@ -295,8 +301,13 @@ async function crmSaveCampaign() { return api(`${crmP()}/campaigns/${CRM.editId}
 async function crmPreview() {
   const el = $("#cePrev"); if (!el) return;
   try {
-    const p = await api(`${crmP()}/campaigns/${CRM.editId}/preview`);
-    el.innerHTML = `<p class="subtle" style="font-size:12px;margin-bottom:10px">As <b dir="auto">${esc(p.store)}</b> would see it</p>` + p.steps.map((s, i) => `<div class="c-msg ${s.channel}"><span class="eyebrow">Step ${i + 1} · ${chIcon(s.channel)}${s.delay_days ? ` · +${s.delay_days}d` : ""}</span>${s.subject ? `<b dir="auto">${esc(s.subject)}</b>` : ""}<div dir="auto" style="white-space:pre-wrap">${esc(s.body)}</div></div>`).join("");
+    const p = await api(`${crmP()}/campaigns/${CRM.editId}/preview${CRM.previewStore ? `?contact_id=${encodeURIComponent(CRM.previewStore)}` : ""}`);
+    const opts = [...(p.store_id && !p.stores_with_products.some((x) => x.id === p.store_id) ? [{ id: p.store_id, store_name: p.store, products: p.products }] : []), ...p.stores_with_products];
+    el.innerHTML = `<div class="field" style="margin-bottom:10px"><label for="cePrevStore" class="subtle" style="font-size:12px">Preview as</label><select class="input input-sm" id="cePrevStore" style="width:100%;min-width:0">${opts.map((x) => `<option value="${esc(x.id)}" ${x.id === p.store_id ? "selected" : ""}>${esc(x.store_name)}${x.products ? ` · ${x.products} product photo${x.products > 1 ? "s" : ""}` : " · no product photos"}</option>`).join("") || `<option value="">${esc(p.store)}</option>`}</select>
+      <span class="hint">${p.stores_with_products.length ? `${nf(p.stores_with_products.length)}${p.stores_with_products.length >= 30 ? "+" : ""} stores in this segment have product photos.` : "No store in this segment has product samples yet: Stores → Fetch products."}</span></div>` +
+      p.steps.map((s, i) => `<div class="c-msg ${s.channel}"><span class="eyebrow">Step ${i + 1} · ${chIcon(s.channel)}${s.delay_days ? ` · +${s.delay_days}d` : ""}</span>${s.subject ? `<b dir="auto">${esc(s.subject)}</b>` : ""}
+        ${s.header_image ? `<img class="c-wa-head" src="${esc(s.header_image)}" alt="WhatsApp header: the store's product photo" referrerpolicy="no-referrer" loading="lazy">` : ""}${s.warning ? `<span class="badge warn" style="white-space:normal">${esc(s.warning)}</span>` : ""}
+        ${s.email_url ? `<iframe class="c-email-frame" src="${esc(s.email_url)}" title="Designed email as ${esc(p.store)} gets it" sandbox loading="lazy"></iframe><details><summary class="subtle" style="font-size:12px">Plain-text version</summary><div dir="auto" style="white-space:pre-wrap">${esc(s.body)}</div></details>` : `<div dir="auto" style="white-space:pre-wrap">${esc(s.body)}</div>`}</div>`).join("");
   } catch (e) { el.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
 }
 
@@ -384,7 +395,7 @@ function crmDrawerEl() {
   if (!el) { document.body.insertAdjacentHTML("beforeend", `<div class="s-scrim" id="cScrim" hidden></div><aside class="s-drawer" id="cDrawer" hidden aria-label="Store"></aside>`); el = $("#cDrawer"); }
   return el;
 }
-function crmClose() { const d = $("#cDrawer"); if (d) { d.hidden = true; $("#cScrim").hidden = true; } CRM.openId = null; }
+function crmClose() { const d = $("#cDrawer"); if (d) { d.hidden = true; $("#cScrim").hidden = true; } CRM.openId = null; CRM.editProducts = null; }
 async function crmOpen(id) {
   if (!id) return;
   let d;
@@ -407,6 +418,7 @@ async function crmOpen(id) {
     <span>Source</span><span>${esc(c.source || "–")} · added ${fmtDate(c.created_at)}</span>
     ${d.deal ? `<span>Deal</span><span><a href="#/${S.ws.id}/pipeline">${esc(d.deal.name)} · ${esc(d.deal.stage)}</a></span>` : ""}
   </div></div>
+  ${crmProductsHtml(c, edit)}
   ${["onboarding", "active"].includes(c.stage) ? `<div class="card" style="padding:12px 16px"><span class="eyebrow">Onboarding checklist</span><div class="stack" style="margin-top:8px">${CRM.meta.onboarding.map((o) => `<label class="row gap-8" style="font-size:13px"><input type="checkbox" data-onb="${o.id}" ${c.onboarding?.[o.id] ? "checked" : ""} ${edit ? "" : "disabled"}> ${esc(o.name)}</label>`).join("")}</div><p class="subtle" style="font-size:12px;margin-top:6px">All ticked moves the store to Active customer.</p></div>` : ""}
   ${edit ? `<div class="row gap-8"><button class="btn btn-primary btn-sm" data-caction="save-store">Save</button></div>` : ""}
   ${d.enrollments.length ? `<div><span class="eyebrow">Campaigns</span><div class="row gap-8" style="flex-wrap:wrap;margin-top:6px">${d.enrollments.map((e) => `<span class="badge ${e.status === "active" ? "accent" : e.status === "replied" ? "good" : ""}">${esc(e.campaign)} · step ${Math.min(e.step + 1, 99)} · ${e.status}</span>`).join("")}</div></div>` : ""}
@@ -419,6 +431,50 @@ async function crmOpen(id) {
     : `<div class="c-tl ${t.direction}"><span class="subtle">${fmtDate(t.at)} · ${t.direction === "in" ? "Store" : esc(t.by || "AI")} · ${chIcon(t.channel)} · <b class="${t.status === "failed" ? "bad" : ""}">${esc(t.status)}</b>${t.intent ? " · " + esc(t.intent) : ""}</span>${t.subject ? `<b dir="auto">${esc(t.subject)}</b>` : ""}<div dir="auto" style="white-space:pre-wrap">${esc(t.body)}</div>${t.error ? `<span class="subtle" style="font-size:12px">${esc(t.error)}</span>` : ""}</div>`).join("") || `<p class="muted">Nothing yet.</p>`}</div></div>
   ${edit ? `<button class="btn btn-ghost btn-sm" data-caction="del-store" style="color:var(--bad);align-self:flex-start">Delete store and its data</button>` : ""}`;
   el.hidden = false; $("#cScrim").hidden = false;
+}
+
+/* ------------------------------------------------ Product samples ("your products as ads") */
+function crmProductsHtml(c, edit) {
+  const ps = c.products_sample || [], src = CRM.meta.product_sources?.[c.products_source] || c.products_source || "";
+  const info = [ps.length ? `${ps.length} sample${ps.length > 1 ? "s" : ""}${src ? " · " + esc(src) : ""}` : "No product samples yet", c.products_fetched_at ? `checked ${fmtDate(c.products_fetched_at)}` : ""].filter(Boolean).join(" · ");
+  const editing = edit && CRM.editProducts === c.id;
+  const rows = editing ? (CRM.prodDraft || []) : ps;
+  return `<div class="card" style="padding:12px 16px"><div class="row gap-8" style="justify-content:space-between;flex-wrap:wrap"><span class="eyebrow">Products as ads</span>
+    ${edit && !editing ? `<div class="row gap-8"><button class="btn btn-sm" data-caction="fetch-one" ${c.domain ? "" : "disabled title=\"Add the store link first\""}>Fetch products</button><button class="btn btn-sm btn-ghost" data-caction="edit-prods">Edit</button></div>` : ""}</div>
+    <p class="subtle" style="font-size:12px;margin:4px 0 8px">${info}. Used by the "Store's own products" email block and the WhatsApp header image.</p>
+    ${c.products_error && !editing ? `<p class="subtle" style="font-size:12px;color:var(--warn);margin:0 0 8px">Last fetch: ${esc(c.products_error)}</p>` : ""}
+    ${editing ? `<div class="stack" id="cdProdEd">${rows.map((p, k) => `<div class="c-prod-row" data-prow="${k}">${["title", "price", "image_url", "url"].map((f) => `<input class="input input-sm" data-pf="${f}" value="${esc(p[f] || "")}" placeholder="${{ title: "Product name", price: "Price", image_url: "Photo link (https)", url: "Product page link" }[f]}" dir="${f === "title" || f === "price" ? "auto" : "ltr"}" aria-label="${f}">`).join("")}<button class="btn btn-sm btn-ghost" data-caction="del-prod" data-i="${k}" aria-label="Remove product">✕</button></div>`).join("")}
+      <div class="row gap-8" style="flex-wrap:wrap">${rows.length < 6 ? `<button class="btn btn-sm" data-caction="add-prod">Add product</button>` : ""}<button class="btn btn-sm btn-primary" data-caction="save-prods">Save samples</button><button class="btn btn-sm btn-ghost" data-caction="cancel-prods">Cancel</button></div>
+      <span class="subtle" style="font-size:12px">Up to 6. Only https photo links are kept.</span></div>`
+    : ps.length ? `<div class="c-prods">${ps.map((p) => `<figure class="c-prod">${p.image_url ? `<img src="${esc(p.image_url)}" alt="${esc(p.title)}" loading="lazy" referrerpolicy="no-referrer">` : `<div class="c-prod-noimg">No photo</div>`}<figcaption dir="auto">${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.title || "Product")}</a>` : esc(p.title || "Product")}${p.price ? `<b dir="auto">${esc(p.price)}</b>` : ""}</figcaption></figure>`).join("")}</div>` : ""}
+  </div>`;
+}
+function crmReadProds() {
+  return [...document.querySelectorAll("#cdProdEd [data-prow]")].map((r) => Object.fromEntries([...r.querySelectorAll("[data-pf]")].map((i) => [i.dataset.pf, i.value.trim()])));
+}
+function crmJobHtml(j) {
+  if (!j || CRM.jobHidden === j.id) return "";
+  const pct = j.total ? Math.round((j.done / j.total) * 100) : 100, run = j.status === "running";
+  return `<div class="card c-job" role="status" aria-live="polite"><div class="row gap-8" style="justify-content:space-between;flex-wrap:wrap">
+    <b>${run ? "Fetching products…" : j.status === "stopped" ? "Product fetch stopped" : "Product fetch done"}</b>
+    <span class="subtle">${nf(j.done)} of ${nf(j.total)} stores · ${nf(j.found)} with products · ${nf(j.failed)} nothing found${j.capped ? ` · first ${nf(CRM.meta.products_bulk_cap || 500)} only` : ""}</span>
+    ${run && crmEdit() ? `<button class="btn btn-sm btn-ghost" data-caction="stop-job" data-id="${esc(j.id)}">Stop</button>` : `<button class="btn btn-sm btn-ghost" data-caction="hide-job" data-id="${esc(j.id)}">Hide</button>`}</div>
+    <progress max="100" value="${pct}" aria-label="Progress">${pct}%</progress>
+    ${j.errors?.length ? `<details><summary class="subtle" style="font-size:12px">Why some stores have nothing (latest)</summary><ul class="subtle" style="font-size:12px;margin:6px 0 0">${j.errors.map((e) => `<li><b dir="auto">${esc(e.store)}</b>: ${esc(e.reason)}</li>`).join("")}</ul></details>` : ""}</div>`;
+}
+let crmJobTimer = null;
+function crmPollJob() {
+  clearTimeout(crmJobTimer);
+  const j = CRM.job;
+  if (!j || j.status !== "running") return;
+  crmJobTimer = setTimeout(async () => {
+    if (S.route !== "crm" || !CRM.job) return;
+    try { CRM.job = await api(`${crmP()}/products/jobs/${CRM.job.id}`); } catch { return; }
+    const el = $("#cProdJob"); if (el) el.innerHTML = crmJobHtml(CRM.job);
+    if (CRM.job.status === "running") return crmPollJob();
+    toast(`Products fetched: ${nf(CRM.job.found)} stores with products, ${nf(CRM.job.failed)} with nothing found`);
+    if (CRM.tab === "stores") crmRerender();
+  }, 1500);
 }
 
 /* ------------------------------------------------ Import dialog */
@@ -441,7 +497,7 @@ function crmImportDialog() {
     $("#ciPrev").innerHTML = "Reading…";
     try {
       const p = await api(`${crmP()}/import/preview?platform=${encodeURIComponent($("#ciPlat").value)}`, { method: "POST", body: text, headers: { "Content-Type": "text/csv" } });
-      $("#ciPrev").innerHTML = `<p><b>${nf(p.total)}</b> stores · ${nf(p.with_email)} with email · ${nf(p.with_phone)} with phone · ${nf(p.duplicates)} already in the CRM · ${nf(p.no_contact)} with no email or phone</p>
+      $("#ciPrev").innerHTML = `<p><b>${nf(p.total)}</b> stores · ${nf(p.with_email)} with email · ${nf(p.with_phone)} with phone · ${nf(p.duplicates)} already in the CRM · ${nf(p.no_contact)} with no email or phone${p.with_products ? ` · ${nf(p.with_products)} with product samples` : ""}</p>
         <p class="subtle">Columns found: ${Object.entries(p.columns).map(([k, v]) => `${esc(k)} ← "${esc(v)}"`).join(", ")}</p>
         <p class="subtle">Platforms: ${Object.entries(p.platforms || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${nf(v)}`).join(" · ")}</p>
         <p class="subtle">Categories: ${Object.entries(p.categories).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${nf(v)}`).join(" · ")}</p>
@@ -490,7 +546,8 @@ document.addEventListener("change", async (e) => {
   if (t.id === "cBulkAct") return crmBulkValue();
   if (t.dataset.csel) { t.checked ? CRM.sel.add(t.dataset.csel) : CRM.sel.delete(t.dataset.csel); CRM.allMatching = false; return crmRerender(); }
   if (t.id === "cSelPage") { CRM.list.rows.forEach((r) => (t.checked ? CRM.sel.add(r.id) : CRM.sel.delete(r.id))); CRM.allMatching = false; return crmRerender(); }
-  if (t.closest?.(".c-step") && ["channel", "design_id"].includes(t.dataset.s)) { const steps = crmReadSteps(); $("#ceSteps").innerHTML = steps.map((s, i) => crmStepHtml(s, i)).join(""); }
+  if (t.id === "cePrevStore") { CRM.previewStore = t.value || null; return crmPreview(); }
+  if (t.closest?.(".c-step") && ["channel", "design_id", "wa_header"].includes(t.dataset.s)) { const steps = crmReadSteps(); $("#ceSteps").innerHTML = steps.map((s, i) => crmStepHtml(s, i)).join(""); }
   if (t.dataset.caction === "mycalls") { CRM.myCalls = t.checked; return crmRerender(); }
   if (t.dataset.caction === "mine") { CRM.mine = t.checked; return crmRerender(); }
 });
@@ -601,6 +658,25 @@ document.addEventListener("click", async (e) => {
         CRM.meta.settings = await api(`${crmP()}/settings`, { method: "PUT", body: JSON.stringify({ sender_name: $("#csSender").value, per_tick: $("#csTick").value, email_daily_cap: $("#csEmailCap").value, wa_daily_cap: $("#csWaCap").value, auto_reply: $("#csAuto").checked, auto_deal: $("#csDeal").checked, targets: { reply_pct: $("#tReply").value, meeting_pct: $("#tMeet").value, close_pct: $("#tClose").value, focus_list: $("#tFocus").value } }) });
         return toast("Saved");
       case "run-now": { const r = await api(`${crmP()}/run`, { method: "POST" }); return toast(`${nf(r.sent)} sent, ${nf(r.skipped)} skipped, ${nf(r.waiting)} waiting for tomorrow's cap`); }
+      case "fetch-bulk": {
+        const n = Math.min(CRM.list?.total || 0, CRM.meta.products_bulk_cap || 500);
+        if (!confirm(`Read the own products of ${nf(n)} stores in this view${(CRM.list?.total || 0) > n ? ` (the first ${nf(n)})` : ""}? It runs in the background, 2 stores at a time; sample stores are skipped.`)) return;
+        const r = await api(`${crmP()}/products/fetch`, { method: "POST", body: JSON.stringify(CRM.allMatching || !CRM.sel.size ? { filter: CRM.f } : { ids: [...CRM.sel] }) });
+        CRM.job = r; CRM.jobHidden = null; const el = $("#cProdJob"); if (el) el.innerHTML = crmJobHtml(r); crmPollJob(); return toast(`Fetching products for ${nf(r.total)} stores`);
+      }
+      case "stop-job": CRM.job = await api(`${crmP()}/products/jobs/${id}/stop`, { method: "POST" }); return;
+      case "hide-job": CRM.jobHidden = id; { const el = $("#cProdJob"); if (el) el.innerHTML = ""; } return;
+      case "fetch-one": {
+        b.disabled = true; b.textContent = "Reading the store…";
+        try { const r = await api(`${crmP()}/contacts/${CRM.openId}/products/fetch`, { method: "POST" }); toast(`${r.contact.products_sample.length} products found`); }
+        catch (err) { toast(err.message, true); }
+        await crmOpen(CRM.openId); return crmRerender();
+      }
+      case "edit-prods": { const c = (await api(`${crmP()}/contacts/${CRM.openId}`)).contact; CRM.editProducts = CRM.openId; CRM.prodDraft = structuredClone(c.products_sample || []); return crmOpen(CRM.openId); }
+      case "add-prod": CRM.prodDraft = crmReadProds(); CRM.prodDraft.push({ title: "", price: "", image_url: "", url: "" }); return crmOpen(CRM.openId);
+      case "del-prod": CRM.prodDraft = crmReadProds(); CRM.prodDraft.splice(Number(b.dataset.i), 1); return crmOpen(CRM.openId);
+      case "cancel-prods": CRM.editProducts = null; return crmOpen(CRM.openId);
+      case "save-prods": { await api(`${crmP()}/contacts/${CRM.openId}/products`, { method: "PUT", body: JSON.stringify({ products: crmReadProds() }) }); CRM.editProducts = null; toast("Samples saved"); await crmOpen(CRM.openId); return crmRerender(); }
       // drawer
       case "close": return crmClose();
       case "save-store": {

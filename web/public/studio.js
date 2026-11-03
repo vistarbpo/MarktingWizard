@@ -134,6 +134,7 @@ async function csOpen(id, ch) {
   const i = await api(`${csP()}/items/${id}`);
   CS.openId = id; CS.draft = structuredClone(i);
   CS.chTab = ch || (i.channels.includes(CS.chTab) ? CS.chTab : i.channels[0] || null);
+  if ((i.variants?.email?.blocks || []).some((b) => b.type === "store_products")) await csPreviewStores();
   csDrawer();
 }
 function csDrawer() {
@@ -187,11 +188,11 @@ function csSocialEditor(c, v, edit) {
     ${c.kind !== "text" ? `<div class="field"><label for="veAsset">Image or video link (Drive, Canva, Dropbox… https)</label><input class="input" id="veAsset" value="${esc(v.asset_url || "")}" ${dis}></div>` : ""}
     <div class="field"><label for="veNotes">Notes for whoever posts</label><input class="input" id="veNotes" value="${esc(v.notes || "")}" dir="auto" ${dis}></div></div>`;
 }
-const CS_BLOCKS = { header: "Header (logo)", hero: "Hero (title + text + image)", text: "Text", button: "Button", image: "Image", compare: "Before / after ads", products: "Products (up to 3)", quote: "Quote (real person)", divider: "Divider" };
+const CS_BLOCKS = { header: "Header (logo)", hero: "Hero (title + text + image)", text: "Text", button: "Button", image: "Image", compare: "Before / after ads", products: "Products (up to 3)", store_products: "Store's own products as ads (personalized)", quote: "Quote (real person)", divider: "Divider" };
 function csEmailEditor(v, edit) {
   const dis = edit ? "" : "disabled";
   const blocks = v.blocks || [];
-  const f = (bi, key, label, val, opts = {}) => `<label class="field"><span class="s-small">${label}</span>${opts.area ? `<textarea class="input" rows="${opts.area}" data-eb="${bi}:${key}" dir="auto" ${dis}>${esc(val || "")}</textarea>` : `<input class="input input-sm" data-eb="${bi}:${key}" value="${esc(val || "")}" dir="${opts.ltr ? "ltr" : "auto"}" ${dis}>`}</label>`;
+  const f = (bi, key, label, val, opts = {}) => `<label class="field"><span class="s-small">${label}</span>${opts.area ? `<textarea class="input" rows="${opts.area}" data-eb="${bi}:${key}" dir="auto" ${dis}>${esc(val || "")}</textarea>` : `<input class="input input-sm" data-eb="${bi}:${key}" value="${esc(val ?? "")}" dir="${opts.ltr ? "ltr" : "auto"}" ${opts.num ? `type="number" min="1" max="3"` : ""} ${dis}>`}</label>`;
   return `<div class="cs-email-ed"><div class="stack">
     <div class="field"><label for="veSubj">Subject</label><input class="input" id="veSubj" value="${esc(v.subject || "")}" dir="auto" ${dis}></div>
     <div class="field"><label for="vePre">Preview text (shown after the subject in the inbox)</label><input class="input" id="vePre" value="${esc(v.preheader || "")}" dir="auto" ${dis}></div>
@@ -203,10 +204,11 @@ function csEmailEditor(v, edit) {
       ${b.type === "image" ? f(bi, "image_url", "Image URL (https)", b.image_url, { ltr: true }) + f(bi, "image_alt", "Image description", b.image_alt) + f(bi, "link", "Link (optional)", b.link, { ltr: true }) : ""}
       ${b.type === "compare" ? f(bi, "before_url", "Plain packshot image (https)", b.before_url, { ltr: true }) + f(bi, "after_url", "Designed ad image (https)", b.after_url, { ltr: true }) + f(bi, "caption", "Caption", b.caption) : ""}
       ${b.type === "products" ? [0, 1, 2].map((k) => `<div class="grid-2">${["title", "price", "image_url", "url"].map((key) => `<label class="field"><span class="s-small">Product ${k + 1} ${key.replace("_url", "").replace("url", "link")}</span><input class="input input-sm" data-ebp="${bi}:${k}:${key}" value="${esc(b.items?.[k]?.[key] || "")}" ${dis}></label>`).join("")}</div>`).join("") : ""}
+      ${b.type === "store_products" ? `<p class="subtle s-small">Each store sees up to this many of its own products (Store CRM → product samples) as designed ad cards. Stores without samples get the fallback text.</p>` + f(bi, "title", "Block title", b.title) + f(bi, "count", "Up to how many products (1–3)", b.count ?? 3, { num: true }) + f(bi, "headline", "Headline on each card", b.headline) + f(bi, "cta_label", "Button on each card (optional)", b.cta_label) + f(bi, "cta_url", "Button link (https)", b.cta_url, { ltr: true }) + f(bi, "fallback_text", "Fallback text (stores without product samples)", b.fallback_text, { area: 3 }) : ""}
       ${b.type === "quote" ? f(bi, "text", "Quote (their exact words)", b.text, { area: 2 }) + f(bi, "author", "Name and store (with permission)", b.author) : ""}</div>`).join("")}
     ${edit ? `<div class="row gap-8"><select class="input input-sm" id="ebType" style="width:auto">${Object.entries(CS_BLOCKS).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select><button class="btn btn-sm" data-csact="add-block">Add block</button></div>` : ""}
     <p class="subtle s-small">Placeholders: {{store_name}} {{owner_name}} {{category_ar}} {{sender_name}}. The unsubscribe footer is added automatically. Save to refresh the preview.</p>
-  </div><div class="cs-email-prev"><iframe id="cePreview" src="${csP()}/items/${CS.draft.id}/email?ts=${Date.now()}" title="Email preview" sandbox></iframe>
+  </div><div class="cs-email-prev">${blocks.some((b) => b.type === "store_products") ? `<label class="field" style="margin-bottom:6px"><span class="s-small">Preview as</span><select class="input input-sm" id="csPrevStore"><option value="">Sample store (example.com photos)</option>${(CS.previewStores || []).map((x) => `<option value="${esc(x.id)}" ${String(x.id) === String(CS.previewStore || "") ? "selected" : ""}>${esc(x.store_name)} · ${x.products} product${x.products > 1 ? "s" : ""}</option>`).join("")}</select></label>` : ""}<iframe id="cePreview" src="${csP()}/items/${CS.draft.id}/email?ts=${Date.now()}${CS.previewStore ? `&contact_id=${encodeURIComponent(CS.previewStore)}` : ""}" title="Email preview" sandbox></iframe>
     <div class="row gap-8" style="justify-content:center;margin-top:6px"><button class="btn btn-sm btn-ghost" data-csact="prev-phone">Phone</button><button class="btn btn-sm btn-ghost" data-csact="prev-desk">Desktop</button></div></div></div>`;
 }
 
@@ -293,7 +295,7 @@ document.addEventListener("click", async (e) => {
       case "copy": { csCollect(); const v = CS.draft.variants[CS.chTab]; const text = [v.caption_ar, v.caption_en].filter(Boolean).join("\n\n") + (v.hashtags?.length ? "\n\n" + v.hashtags.join(" ") : ""); await navigator.clipboard.writeText(text).then(() => toast("Caption copied"), () => toast("Couldn't copy: select the text instead", true)); return; }
       case "posted": { const url = prompt("Link to the live post (optional)", "") ?? null; if (url === null) return; const r = await api(`${csP()}/items/${CS.draft.id}/posted`, { method: "POST", body: JSON.stringify({ channel: CS.chTab, url }) }); CS.draft = structuredClone(r); toast("Logged as posted"); await csLoad(); csRerender(); return csDrawer(); }
       case "comment": { const text = $("#ceComment").value.trim(); if (!text) return; const r = await api(`${csP()}/items/${CS.draft.id}/comments`, { method: "POST", body: JSON.stringify({ text }) }); csCollect(); CS.draft.comments = r.comments; return csDrawer(); }
-      case "add-block": { csCollect(); CS.draft.variants.email.blocks.push({ type: $("#ebType").value }); return csDrawer(); }
+      case "add-block": { csCollect(); const type = $("#ebType").value; CS.draft.variants.email.blocks.push({ type, ...(CS.meta.block_defaults?.[type] || {}) }); if (type === "store_products") await csPreviewStores(); return csDrawer(); }
       case "prev-phone": $("#cePreview").style.width = "375px"; return;
       case "prev-desk": $("#cePreview").style.width = "100%"; return;
       case "delete": if (!confirm("Delete this content?")) return; await api(`${csP()}/items/${CS.draft.id}`, { method: "DELETE" }); csClose(); await csLoad(); return csRerender();
@@ -307,7 +309,10 @@ document.addEventListener("click", async (e) => {
     }
   } catch (err) { toast(err.message, true); }
 });
+// Store CRM stores with product photos, for previewing the personalized email.
+async function csPreviewStores() { if (CS.previewStores) return; try { CS.previewStores = await api(`${csP()}/preview-stores`); } catch { CS.previewStores = []; } }
 document.addEventListener("change", (e) => {
+  if (e.target.id === "csPrevStore") { CS.previewStore = e.target.value || null; $("#cePreview").src = `${csP()}/items/${CS.draft.id}/email?ts=${Date.now()}${CS.previewStore ? `&contact_id=${encodeURIComponent(CS.previewStore)}` : ""}`; return; }
   const c = e.target.closest?.("[data-cechan]");
   if (!c || !CS.draft) return;
   csCollect();

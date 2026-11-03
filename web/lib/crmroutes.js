@@ -6,7 +6,8 @@ import { BOARD, CAMPAIGN_TYPES, INTENT_TAGS, OUTBOUND_BENCH, CHANNELS, STEP_CHAN
 import { DEFAULT_SETTINGS } from "./outreach.js";
 import { zTest } from "./roas.js";
 import { creativeSettings, emailDesign } from "./creativeroutes.js";
-import { renderEmail } from "./creative.js";
+import { renderEmail, safeUrl } from "./creative.js";
+import { FETCH_LIMITS, PRODUCT_SOURCES, cleanProducts, withImages } from "./products.js";
 import { PLATFORMS, PLATFORM_LIST, detectPlatform } from "./platforms.js";
 
 const page = (title, body) => `<!doctype html><html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
@@ -70,7 +71,7 @@ export function mountCrmPublic(app, { crm, outreach }) {
   });
 }
 
-export function mountCrm(app, { store, crm, outreach, provider }) {
+export function mountCrm(app, { store, crm, outreach, provider, products }) {
   const P = "/api/workspaces/:ws/crm";
   const W = (req, res) => { const w = store.getWorkspace(req.params.ws); if (!w) res.status(404).json({ detail: "Workspace not found" }); return w; };
   const users = () => store.db.users.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name }));
@@ -82,7 +83,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (!W(req, res)) return;
     const cfg = outreach.cfg;
     res.json({ platforms: PLATFORM_LIST.map(({ id, region, connect }) => ({ id, region, connect })), intent_tags: INTENT_TAGS, stages: STAGES, board: BOARD, types: CAMPAIGN_TYPES, channels: CHANNELS, categories: SALLA_CATEGORIES, onboarding: ONBOARDING_STEPS, intents: INTENTS, users: users(),
-      settings: outreach.settings(req.params.ws),
+      settings: outreach.settings(req.params.ws), product_sources: PRODUCT_SOURCES, products_bulk_cap: FETCH_LIMITS.bulkCap, products_job: products?.latest(req.params.ws) || null,
       connections: { email: cfg.email.ready, email_from: cfg.email.from, imap: cfg.email.imap.ready, whatsapp: cfg.whatsapp.ready, whatsapp_webhook: !!cfg.whatsapp.verify, public_url: cfg.public_url } });
   });
 
@@ -211,6 +212,36 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     res.status(201).json(await outreach.inbound({ channel, from, body, subject: "" }));
   });
 
+  // ---- product samples ("your products as ads")
+  app.post(`${P}/contacts/:id/products/fetch`, async (req, res) => {
+    if (!W(req, res)) return;
+    const c = crm.get(req.params.ws, req.params.id);
+    if (!c) return res.status(404).json({ detail: "Store not found" });
+    if (!c.domain) return res.status(422).json({ detail: "Add the store's link first." });
+    const r = await products.fetchOne(c);
+    res.status(r.ok ? 200 : 422).json({ ok: r.ok, reason: r.reason, source: r.source, contact: crm.get(req.params.ws, c.id), ...(r.ok ? {} : { detail: r.reason }) });
+  });
+  app.put(`${P}/contacts/:id/products`, (req, res) => {
+    if (!W(req, res)) return;
+    const c = crm.get(req.params.ws, req.params.id);
+    if (!c) return res.status(404).json({ detail: "Store not found" });
+    const list = cleanProducts(req.body?.products, c.domain ? `https://${c.domain}/` : undefined);
+    crm.update(req.params.ws, c.id, { products_sample: list, products_source: list.length ? "manual" : "", products_fetched_at: crm.now(), products_error: "" });
+    crm.addNote(req.params.ws, c.id, `Product samples edited: ${list.length} kept`, by(req));
+    res.json(crm.get(req.params.ws, c.id));
+  });
+  app.post(`${P}/products/fetch`, (req, res) => {
+    if (!W(req, res)) return;
+    const b = req.body || {}, ws = req.params.ws;
+    const list = (Array.isArray(b.ids) && b.ids.length ? b.ids.map((id) => crm.get(ws, id)).filter(Boolean) : crm.query(ws, b.filter || {})).filter((c) => c.domain && !c.sample);
+    if (!list.length) return res.status(422).json({ detail: "No stores with a link match (sample stores are skipped)." });
+    const r = products.start(ws, list, { by: by(req) });
+    res.status(r.already ? 409 : 202).json(r.already ? { detail: "A product fetch is already running.", job: r.job } : r.job);
+  });
+  app.get(`${P}/products/jobs/latest`, (req, res) => { if (W(req, res)) res.json(products.latest(req.params.ws)); });
+  app.get(`${P}/products/jobs/:id`, (req, res) => { if (!W(req, res)) return; const j = products.get(req.params.ws, req.params.id); j ? res.json(j) : res.status(404).json({ detail: "Job not found" }); });
+  app.post(`${P}/products/jobs/:id/stop`, (req, res) => { if (!W(req, res)) return; const j = products.stop(req.params.ws, req.params.id); j ? res.json(j) : res.status(404).json({ detail: "Job not found" }); });
+
   // Bulk actions on selected ids or on everything matching a filter.
   app.post(`${P}/bulk`, (req, res) => {
     if (!W(req, res)) return;
@@ -314,7 +345,8 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (b.name !== undefined) o.name = String(b.name).trim().slice(0, 120) || "Untitled campaign";
     if (b.type !== undefined) o.type = CAMPAIGN_TYPES.some((t) => t.id === b.type) ? b.type : "outreach";
     if (b.filter !== undefined) o.filter = cleanFilter(b.filter);
-    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: STEP_CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100), design_id: s.channel === "email" && s.design_id ? String(s.design_id).slice(0, 20) : "" }));
+    if (b.steps !== undefined) o.steps = (b.steps || []).slice(0, 12).map((s) => ({ channel: STEP_CHANNELS.includes(s.channel) ? s.channel : "email", delay_days: Math.max(0, Math.min(90, Number(s.delay_days) || 0)), subject: String(s.subject || "").slice(0, 200), body: String(s.body || "").slice(0, 4000), wa_template: String(s.wa_template || "").trim().slice(0, 100),
+      wa_header: s.channel === "whatsapp" && s.wa_header === "product" ? "product" : "", wa_header_url: s.channel === "whatsapp" && s.wa_header === "product" ? safeUrl(s.wa_header_url) : "", design_id: s.channel === "email" && s.design_id ? String(s.design_id).slice(0, 20) : "" }));
     if (b.daily_limit !== undefined) o.daily_limit = Math.max(1, Math.min(5000, Math.round(Number(b.daily_limit) || 150)));
     if (b.start_at !== undefined) o.start_at = b.start_at ? new Date(b.start_at).toISOString() : null;
     if (b.window !== undefined) o.window = { from: Math.max(0, Math.min(23, Number(b.window.from) || 9)), to: Math.max(1, Math.min(24, Number(b.window.to) || 21)), skip_friday: b.window.skip_friday !== false };
@@ -387,19 +419,45 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     }
     res.json({ enrolled, starts_at, ab: group.length > 1, campaign: crm.campaign(req.params.ws, c.id) });
   });
+  // Preview as one store. By default the first store in the segment that has product samples, so the
+  // founder sees the personalized "your products as ads" version; any store in the segment can be picked.
+  const previewStore = (req, c) => {
+    const seg = c.type === "onboarding" ? crm.contacts(req.params.ws) : crm.query(req.params.ws, c.filter);
+    const picked = req.query.contact_id && crm.get(req.params.ws, req.query.contact_id);
+    return { seg, sample: picked || seg.find((x) => withImages(x).length) || seg[0] || { store_name: "متجر نموذج", owner_name: "", category: "Fashion & abayas", city: "Riyadh", products: 250 } };
+  };
   app.get(`${P}/campaigns/:id/preview`, (req, res) => {
     if (!W(req, res)) return;
     const c = crm.campaign(req.params.ws, req.params.id);
     if (!c) return res.status(404).json({ detail: "Campaign not found" });
-    const sample = (req.query.contact_id && crm.get(req.params.ws, req.query.contact_id)) || (c.type === "onboarding" ? crm.contacts(req.params.ws)[0] : crm.query(req.params.ws, c.filter)[0]) || { store_name: "متجر نموذج", owner_name: "", category: "Fashion & abayas", city: "Riyadh", products: 250 };
+    const { seg, sample } = previewStore(req, c);
     const s = outreach.settings(req.params.ws), company = store.getWorkspace(req.params.ws).brief.company_name;
     const ex = { sender_name: s.sender_name || company, company };
-    res.json({ store: sample.store_name, steps: c.steps.map((st) => {
-      const d = st.design_id ? emailDesign(store, req.params.ws, st.design_id) : null;
-      if (st.design_id && !d) return { ...st, subject: "⚠ Design not approved in Creative Studio", body: "This step will be skipped until the design is approved." };
-      if (d) { const r = renderEmail(d, creativeSettings(store.getWorkspace(req.params.ws)).brand, { vars: { company, contact: sample, extra: ex } }); return { ...st, subject: st.subject ? renderTemplate(st.subject, sample, ex) : r.subject, body: `[Designed email]\n${r.text}` }; }
-      return { ...st, subject: renderTemplate(st.subject, sample, ex), body: renderTemplate(st.body, sample, ex) };
-    }) });
+    res.json({ store: sample.store_name, store_id: sample.id || null, products: withImages(sample).length,
+      stores_with_products: seg.filter((x) => withImages(x).length).slice(0, 30).map((x) => ({ id: x.id, store_name: x.store_name, products: withImages(x).length })),
+      steps: c.steps.map((st, i) => {
+        const d = st.design_id ? emailDesign(store, req.params.ws, st.design_id) : null;
+        if (st.design_id && !d) return { ...st, subject: "⚠ Design not approved in Creative Studio", body: "This step will be skipped until the design is approved." };
+        if (d) { const r = renderEmail(d, creativeSettings(store.getWorkspace(req.params.ws)).brand, { vars: { company, contact: sample, extra: ex } }); return { ...st, subject: st.subject ? renderTemplate(st.subject, sample, ex) : r.subject, body: `[Designed email]\n${r.text}`, email_url: `/api/workspaces/${req.params.ws}/crm/campaigns/${c.id}/steps/${i}/email${sample.id ? `?contact_id=${encodeURIComponent(sample.id)}` : ""}` }; }
+        const out = { ...st, subject: renderTemplate(st.subject, sample, ex), body: renderTemplate(st.body, sample, ex) };
+        if (st.channel === "whatsapp" && st.wa_header === "product") {
+          out.header_image = withImages(sample)[0]?.image_url || safeUrl(st.wa_header_url);
+          if (!out.header_image) out.warning = "This store has no product photo and the step has no fallback image: the step will be skipped for it.";
+        }
+        return out;
+      }) });
+  });
+  // The designed email of one step, as this store would get it (for the preview iframe).
+  app.get(`${P}/campaigns/:id/steps/:i/email`, (req, res) => {
+    const w = W(req, res); if (!w) return;
+    const c = crm.campaign(req.params.ws, req.params.id), st = c?.steps[Number(req.params.i)];
+    const d = st?.design_id && emailDesign(store, req.params.ws, st.design_id);
+    if (!d) return res.status(404).send("No approved design on this step");
+    const { sample } = previewStore(req, c);
+    const s = outreach.settings(req.params.ws), company = w.brief.company_name || "DPA AD", ex = { sender_name: s.sender_name || company, company };
+    const { html } = renderEmail(d, creativeSettings(w).brand, { vars: { company, contact: sample, extra: ex }, footer: { company, address: outreach.cfg.address, unsubscribe: `${outreach.cfg.public_url}/u/preview` } });
+    res.setHeader("Content-Security-Policy", "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'");
+    res.type("html").send(html);
   });
   app.post(`${P}/campaigns/:id/ai-write`, async (req, res) => {
     const w = W(req, res); if (!w) return;

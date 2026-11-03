@@ -87,7 +87,9 @@ export class CrmStore {
       const cur = this.find(wsId, r);
       if (cur) {
         let ch = false;
-        for (const [k, v] of Object.entries(r)) if (v && !cur[k]) { cur[k] = v; ch = true; }
+        for (const [k, v] of Object.entries(r)) if (v && !cur[k] && !k.startsWith("products_")) { cur[k] = v; ch = true; }
+        // Product samples from a CSV fill a store that has none yet; fetched or hand-edited samples are kept.
+        if (r.products_sample?.length && !(cur.products_sample || []).length) { Object.assign(cur, { products_sample: r.products_sample, products_source: r.products_source, products_fetched_at: r.products_fetched_at, products_error: "" }); ch = true; }
         if (r.wa_opt_in && !cur.wa_opt_in) { cur.wa_opt_in = true; ch = true; }
         for (const t of tags) if (!cur.tags.includes(t)) { cur.tags.push(t); ch = true; }
         if (ch) { cur.score = scoreContact(cur); cur.updated_at = this.now(); this.#key(cur); updated++; }

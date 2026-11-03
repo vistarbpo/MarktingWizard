@@ -1,5 +1,6 @@
 // HTTP routes for Creative Studio (module "creative" in Teams & roles).
-import { CHANNELS, CHANNEL_IDS, DEFAULT_BRAND, DEFAULT_PILLARS, STARTER_EMAIL, STATUSES, STATUS_IDS, checkItem, cleanBrand, cleanItem, cleanVariant, ideasPrompt, packText, parseJsonObject, planPrompt, renderEmail, seasonsBetween, writePrompt } from "./creative.js";
+import { withImages } from "./products.js";
+import { CHANNELS, CHANNEL_IDS, DEFAULT_BRAND, DEFAULT_PILLARS, PREVIEW_STORE, STARTER_EMAIL, STORE_PRODUCTS_DEFAULTS, STATUSES, STATUS_IDS, checkItem, cleanBrand, cleanItem, cleanVariant, ideasPrompt, packText, parseJsonObject, planPrompt, renderEmail, seasonsBetween, writePrompt } from "./creative.js";
 
 const C = "creative_items";
 const today = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10); // Riyadh date
@@ -17,7 +18,7 @@ export function emailDesign(store, wsId, id) {
   return i?.variants?.email && ["approved", "scheduled", "published"].includes(i.status) ? i.variants.email : null;
 }
 
-export function mountCreative(app, { store, provider }) {
+export function mountCreative(app, { store, provider, crm = null }) {
   const P = "/api/workspaces/:ws/creative";
   const W = (req, res) => { const w = store.getWorkspace(req.params.ws); if (!w) res.status(404).json({ detail: "Workspace not found" }); return w; };
   const by = (req) => req.user?.name || "you";
@@ -30,7 +31,7 @@ export function mountCreative(app, { store, provider }) {
     const w = W(req, res); if (!w) return;
     const from = today(), to = new Date(Date.now() + 400 * 864e5).toISOString().slice(0, 10);
     res.json({ channels: CHANNELS, statuses: STATUSES, ...creativeSettings(w), seasons: seasonsBetween(new Date(Date.now() - 40 * 864e5).toISOString().slice(0, 10), to), today: from,
-      users: users(), can_approve: canApprove(req, w), ai: provider.name !== "demo" });
+      users: users(), can_approve: canApprove(req, w), ai: provider.name !== "demo", block_defaults: { store_products: STORE_PRODUCTS_DEFAULTS } });
   });
 
   app.get(`${P}/items`, (req, res) => {
@@ -113,16 +114,23 @@ export function mountCreative(app, { store, provider }) {
     res.send(packText(i, req.params.channel));
   });
 
-  // Email preview, rendered with a sample store and the real footer.
+  // Email preview, rendered with a sample store (example.com product photos) and the real footer,
+  // or as a real Store CRM store that has product samples (?contact_id=), to see the personalized version.
   app.get(`${P}/items/:id/email`, (req, res) => {
     const w = W(req, res); if (!w) return;
     const i = store.getOps(C, w.id, req.params.id);
     if (!i?.variants?.email) return res.status(404).send("No email on this item");
     const company = w.brief.company_name || "DPA AD";
-    const { html } = renderEmail(i.variants.email, creativeSettings(w).brand, { vars: { company, contact: { store_name: "متجر نموذج", category: "Fashion & abayas", products: 250 }, extra: { sender_name: company, company } },
+    const contact = (req.query.contact_id && crm?.get(w.id, req.query.contact_id)) || PREVIEW_STORE;
+    const { html } = renderEmail(i.variants.email, creativeSettings(w).brand, { vars: { company, contact, extra: { sender_name: company, company } },
       footer: { company, address: process.env.COMPANY_ADDRESS || "Riyadh, Saudi Arabia", unsubscribe: "https://wizard.dpa.ad/u/preview" } });
     res.setHeader("Content-Security-Policy", "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'");
     res.type("html").send(html);
+  });
+  // Stores to preview "your products as ads" with: Store CRM stores that have product photos.
+  app.get(`${P}/preview-stores`, (req, res) => {
+    const w = W(req, res); if (!w) return;
+    res.json((crm ? crm.contacts(w.id) : []).filter((c) => withImages(c).length).slice(0, 50).map((c) => ({ id: c.id, store_name: c.store_name, products: withImages(c).length })));
   });
   app.get(`${P}/emails`, (req, res) => { const w = W(req, res); if (w) res.json(approvedEmails(store, w.id).map((i) => ({ id: i.id, title: i.title, subject: i.variants.email.subject, status: i.status }))); });
 
