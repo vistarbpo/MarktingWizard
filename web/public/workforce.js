@@ -185,29 +185,41 @@ function wf3Start(d) {
   // Sprites: every agent and person, kept across refreshes so walkers don't jump.
   const all = L.rooms.flatMap((r) => r.desks.map((dk) => ({ ...dk, room: r })));
   for (const dk of all) {
-    const sp = W3.sprites[dk.id] || (W3.sprites[dk.id] = { x: dk.seat[0], y: dk.seat[1], mode: "sit", wait: Math.random() * 6, t: 0 });
+    const sp = W3.sprites[dk.id] || (W3.sprites[dk.id] = { x: dk.seat[0], y: dk.seat[1], mode: "sit", wait: 1 + Math.random() * 12, t: 0 });
     sp.desk = dk; sp.state = dk.kind === "agent" ? wf3State(dk.a) : { id: "human" };
   }
   const targetsFor = (sp) => {
     const r = sp.desk.room, owner = sp.desk.a?.config.owner_id && all.find((x) => x.id === "u" + sp.desk.a.config.owner_id);
     const other = L.rooms[Math.floor(Math.random() * L.rooms.length)];
     const pick = Math.random();
-    return pick < 0.4 && owner ? [owner.seat[0] - 0.6, owner.seat[1] + 0.3] : pick < 0.75 ? [r.hub[0] - Math.random(), r.hub[1] - Math.random() * 0.6] : [other.hub[0] - 0.5, other.hub[1] - 0.4];
+    return pick < 0.4 && owner ? { room: owner.room, pt: [owner.seat[0] - 0.6, owner.seat[1] + 0.3] } : pick < 0.75 ? { room: r, pt: [r.hub[0] - Math.random(), r.hub[1] - Math.random() * 0.6] } : { room: other, pt: [other.hub[0] - 0.5, other.hub[1] - 0.4] };
+  };
+  // Walk through doors and corridors, never through walls: room door → corridor → other room's door.
+  const door = (r) => [r.x0 + W3T.roomW / 2, r.y0 + W3T.roomD - 0.25], out = (r) => [r.x0 + W3T.roomW / 2, r.y0 + W3T.roomD + 0.5];
+  const route = (from, to, pt) => {
+    if (from === to) return [pt];
+    const cx = from.x0 + W3T.roomW + 0.5, a = out(from), b = out(to);
+    return [door(from), a, [cx, a[1]], [cx, b[1]], b, door(to), pt];
   };
   const step = (dt) => {
     for (const sp of Object.values(W3.sprites)) {
       if (!sp.desk) continue;
-      const st = sp.state.id, mobile = !reduce && (st === "busy" || st === "today");
+      // Everyone who isn't paused or stuck moves: busy agents constantly, active ones often, idle ones now and then.
+      const st = sp.state.id, mobile = !reduce && st !== "off" && st !== "error";
       if (sp.mode === "sit") {
         sp.wait -= dt;
-        if (mobile && sp.wait <= 0) { sp.mode = "walk"; sp.to = targetsFor(sp); sp.back = false; }
+        if (mobile && sp.wait <= 0) { const t = targetsFor(sp); sp.mode = "walk"; sp.path = route(sp.desk.room, t.room, t.pt); sp.back = [...route(t.room, sp.desk.room, sp.desk.seat)]; }
         else if (!mobile) { sp.x = sp.desk.seat[0]; sp.y = sp.desk.seat[1]; }
       } else if (sp.mode === "walk" || sp.mode === "return") {
-        const [tx, ty] = sp.mode === "walk" ? sp.to : sp.desk.seat;
-        const dx = tx - sp.x, dy = ty - sp.y, dist = Math.hypot(dx, dy), v = (st === "busy" ? 1.6 : 1.0) * dt;
+        const path = sp.mode === "walk" ? sp.path : sp.back;
+        if (!path?.length) { sp.mode = "sit"; sp.x = sp.desk.seat[0]; sp.y = sp.desk.seat[1]; continue; }
+        const [tx, ty] = path[0];
+        const dx = tx - sp.x, dy = ty - sp.y, dist = Math.hypot(dx, dy), v = (st === "busy" ? 1.8 : 1.1) * dt;
         sp.t += dt;
-        if (dist <= v) { sp.x = tx; sp.y = ty; if (sp.mode === "walk") { sp.mode = "pause"; sp.wait = 1.2 + Math.random() * 2; } else { sp.mode = "sit"; sp.wait = (st === "busy" ? 2 : 10) + Math.random() * (st === "busy" ? 4 : 20); } }
-        else { sp.x += (dx / dist) * v; sp.y += (dy / dist) * v; }
+        if (dist <= v) {
+          sp.x = tx; sp.y = ty; path.shift();
+          if (!path.length) { if (sp.mode === "walk") { sp.mode = "pause"; sp.wait = 1.2 + Math.random() * 2; } else { sp.mode = "sit"; sp.wait = ({ busy: 2, today: 6, idle: 10, human: 18 }[st] ?? 10) + Math.random() * ({ busy: 4, today: 10, idle: 16, human: 25 }[st] ?? 15); } }
+        } else { sp.x += (dx / dist) * v; sp.y += (dy / dist) * v; }
       } else if (sp.mode === "pause") { sp.wait -= dt; if (sp.wait <= 0) sp.mode = "return"; }
     }
   };
@@ -238,6 +250,9 @@ function wf3Start(d) {
       // Name plate on the back wall.
       const [nx, ny] = wf3Iso(x0 + W / 2, y0, 0.45);
       ctx.save(); ctx.translate(nx, ny); ctx.transform(1, 0.5, 0, 1, 0, 0); ctx.fillStyle = dark ? "#fff" : shade(r.color, -0.35); ctx.font = "600 15px Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText(r.tm, 0, 0); ctx.restore();
+      // Door on the front edge: a frame and a mat, so walkers clearly come and go through it.
+      const dxm = x0 + W / 2;
+      poly([wf3Iso(dxm - 0.6, y0 + D - 0.05), wf3Iso(dxm + 0.6, y0 + D - 0.05), wf3Iso(dxm + 0.6, y0 + D + 0.45), wf3Iso(dxm - 0.6, y0 + D + 0.45)], dark ? "#2c3038" : "#d9d3c7");
       // Hub: a round meeting table with a plant.
       const [hx, hy] = wf3Iso(r.hub[0], r.hub[1], 0.35);
       ctx.fillStyle = dark ? "#3a3f4b" : "#d9d3c7"; ctx.beginPath(); ctx.ellipse(hx, hy, 26, 13, 0, 0, Math.PI * 2); ctx.fill();
@@ -287,10 +302,21 @@ function wf3Start(d) {
       }
     }
   };
+  const rails = () => {
+    for (const r of L.rooms) {
+      const { x0, y0 } = r, W = W3T.roomW, D = W3T.roomD, dxm = x0 + W / 2, h = 0.32;
+      ctx.globalAlpha = 0.35;
+      const seg = (xa, xb) => poly([wf3Iso(xa, y0 + D, 0), wf3Iso(xb, y0 + D, 0), wf3Iso(xb, y0 + D, h), wf3Iso(xa, y0 + D, h)], shade(r.color, 0.4), r.color);
+      seg(x0, dxm - 0.6); seg(dxm + 0.6, x0 + W);
+      poly([wf3Iso(x0 + W, y0, 0), wf3Iso(x0 + W, y0 + D, 0), wf3Iso(x0 + W, y0 + D, h), wf3Iso(x0 + W, y0, h)], shade(r.color, 0.5), r.color);
+      ctx.globalAlpha = 1;
+      for (const xx of [dxm - 0.6, dxm + 0.6]) { const [a1, b1] = wf3Iso(xx, y0 + D, 0), [a2, b2] = wf3Iso(xx, y0 + D, 1.0); ctx.strokeStyle = shade(r.color, -0.2); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); }
+    }
+  };
   const loop = (ts) => {
     if (S.route !== "workforce" || !document.body.contains(cv)) return;
     const dt = Math.min(0.05, (ts - (W3.last || ts)) / 1000); W3.last = ts;
-    step(dt); draw(ts / 1000);
+    step(dt); draw(ts / 1000); rails();
     W3.raf = requestAnimationFrame(loop);
   };
   W3.last = 0; W3.raf = requestAnimationFrame(loop);
