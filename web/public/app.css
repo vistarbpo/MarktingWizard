@@ -1453,3 +1453,4 @@ select.iv-multi { height: auto; min-height: 96px; padding: 6px; background-image
   .iv-folders, .iv-adds { grid-template-columns: minmax(0, 1fr); }
   .iv-extend { flex-wrap: wrap; }
 }
+.iv-nw { white-space: nowrap; }

@@ -39,6 +39,7 @@ const CSS = `.wm{margin:0;padding:8px 12px;border-radius:10px;background:var(--s
 .ivt{width:100%;border-collapse:collapse;font-size:14px}.ivt th,.ivt td{text-align:start;padding:8px 6px;border-top:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}.ivt th{color:var(--muted);font-weight:600}
 .tw{overflow-x:auto}.warn{background:#fff4d6;color:#5c4400;border-radius:10px;padding:10px 12px;font-weight:600}.preview img{display:block;max-width:100%;height:auto;border-radius:10px}.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--soft);padding:12px;border-radius:10px;max-height:70vh;overflow:auto;direction:ltr;text-align:left}
 form.pc{display:grid;gap:8px;max-width:340px}form.pc input{font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)}.err{color:#b42318;font-weight:600;margin:0}
+.ivt td.nw{white-space:nowrap}@media(max-width:600px){.ivt thead{display:none}.ivt tr{display:block;border-top:1px solid var(--border);padding:8px 0}.ivt td{display:block;border:0;padding:2px 0}.ivt td.nw:before{content:attr(data-l) " "}}
 ul.items li{display:flex;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;border-top:1px solid var(--border);padding:8px 0}ul.items li:first-child{border-top:0}.kindl{color:var(--muted);font-size:13px}`;
 
 export function mountInvestorsPublic(app, { store, investors, env = process.env }) {
@@ -125,7 +126,7 @@ export function mountInvestorsPublic(app, { store, investors, env = process.env 
     if (it.kind === "snapshot") {
       const s = tg.snapshot;
       inner = `${s.sample || s.includes_sample ? `<p class="warn" role="note">${h(t.sample)}</p>` : ""}<p class="muted">${h(t.frozen)} ${h(s.as_of)}.</p>
-        <div class="tw"><table class="ivt"><thead><tr><th>${h(t.metric)}</th><th>${h(t.value)}</th><th>${h(t.source)}</th><th>${h(t.asOf)}</th></tr></thead><tbody>${s.metrics.map((m) => `<tr><td>${h(m.name)}</td><td><b>${h(m.display)}</b>${m.note && m.display === NO_DATA ? "" : m.note ? `<br><span class="muted">${h(m.note)}</span>` : ""}</td><td class="muted">${h(m.source || "–")}</td><td class="muted">${h(m.as_of)}</td></tr>`).join("")}</tbody></table></div>`;
+        <div class="tw"><table class="ivt"><thead><tr><th>${h(t.metric)}</th><th>${h(t.value)}</th><th>${h(t.source)}</th><th>${h(t.asOf)}</th></tr></thead><tbody>${s.metrics.map((m) => `<tr><td>${h(m.name)}</td><td><b>${h(m.display)}</b>${m.note && m.display === NO_DATA ? "" : m.note ? `<br><span class="muted">${h(m.note)}</span>` : ""}</td><td class="muted">${h(m.source || "–")}</td><td class="muted nw" data-l="${h(t.asOf)}">${h(m.as_of)}</td></tr>`).join("")}</tbody></table></div>`;
     } else if (it.kind === "update") {
       inner = `<div class="body" dir="auto">${renderMarkdown(stripRefs(tg.update.text).replace(/^# .*\n/, ""))}</div>`;
     } else if (it.kind === "link") {
