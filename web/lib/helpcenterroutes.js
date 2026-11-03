@@ -10,16 +10,16 @@ import { publicBase } from "./media.js";
 import { AGENT_ID, CATEGORIES, COLL, CONTENT_KEYS, NEXT, STALE_DAYS, STATUSES, VISIBILITY, catName, cleanArticle, cleanSettings, contentHash, ensureHelp, freshness,
   excerpt, gapList, hasLang, isLive, logPush, people, plainText, recordVote, renderMarkdown, reviewBlock, searchArticles, settingsOf, siteWorkspace, slugFrom, sourceFacts, todayOf, uniqueSlug, voteCounts } from "./helpcenter.js";
 
-const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+import { h, langOf, linkFor, newNonce, publicPage, sendPublic } from "./publicsite.js";
+
 const T = {
   ar: { help: "مركز المساعدة", search: "ابحث في المقالات", go: "بحث", home: "الرئيسية", article: "مقالة", articles: "مقالات", noArticles: "ما فيه مقالات منشورة بعد.", results: "نتائج البحث عن", none: "ما لقينا شي. جرّب كلمات ثانية.",
     helpful: "هل أفادتك هذه المقالة؟", yes: "نعم", no: "لا", thanks: "شكراً على رأيك!", need: "تحتاج مساعدة أكثر؟", chat: "كلّمنا في المحادثة", mail: "راسلنا بالإيميل", updated: "آخر مراجعة", related: "مقالات ذات صلة",
-    other: "English", onlyOther: "هذه المقالة متوفرة بالإنجليزي فقط حالياً.", notFound: "الصفحة غير موجودة", notFoundText: "ما لقينا هذه الصفحة. ارجع لمركز المساعدة أو ابحث.", categories: "الأقسام" },
+    whatsNew: "ما الجديد", onlyOther: "هذه المقالة متوفرة بالإنجليزي فقط حالياً.", notFound: "الصفحة غير موجودة", notFoundText: "ما لقينا هذه الصفحة. ارجع لمركز المساعدة أو ابحث.", categories: "الأقسام" },
   en: { help: "Help center", search: "Search articles", go: "Search", home: "Home", article: "article", articles: "articles", noArticles: "No published articles yet.", results: "Results for", none: "Nothing found. Try other words.",
     helpful: "Was this article helpful?", yes: "Yes", no: "No", thanks: "Thanks for your feedback!", need: "Still need help?", chat: "Chat with us", mail: "Email us", updated: "Last reviewed", related: "Related articles",
-    other: "العربية", onlyOther: "This article is only available in Arabic for now.", notFound: "Page not found", notFoundText: "We couldn't find this page. Go back to the help center or search.", categories: "Topics" },
+    whatsNew: "What's new", onlyOther: "This article is only available in Arabic for now.", notFound: "Page not found", notFoundText: "We couldn't find this page. Go back to the help center or search.", categories: "Topics" },
 };
-const hex = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v || "")) ? v : d);
 
 export function mountHelpPublic(app, { store, help, env = process.env }) {
   ensureHelp(store);
@@ -30,50 +30,23 @@ export function mountHelpPublic(app, { store, help, env = process.env }) {
     if (hits.size > 5000) for (const [k, v] of hits) if (!v.some((x) => t - x < windowMs)) hits.delete(k);
     return list.length > max;
   };
-  const langOf = (req) => (req.query.lang === "en" ? "en" : "ar");
   const live = (w) => store.listOps(COLL.articles, w.id).filter(isLive);
-  const send = (res, html, status = 200, { cache = true, nonce } = {}) => {
-    res.status(status).set({ "Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "strict-origin-when-cross-origin",
-      "Content-Security-Policy": `default-src 'none'; style-src 'nonce-${nonce}'; img-src 'self' https: data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
-      "Cache-Control": cache && status === 200 ? "public, max-age=60" : "no-store" }).send(html);
-  };
+  const send = (res, html, status = 200, opts = {}) => sendPublic(res, html, status, opts);
   const ctx = (req) => {
     const w = siteWorkspace(store), lang = langOf(req), t = T[lang];
-    const q = (p, extra = {}) => { const s = new URLSearchParams({ ...(lang === "en" ? { lang: "en" } : {}), ...extra }).toString(); return s ? `${p}?${s}` : p; };
-    return { w, lang, t, q, nonce: crypto.randomBytes(12).toString("base64") };
+    return { w, lang, t, q: linkFor(lang), nonce: newNonce() };
   };
   const supportLink = (w, t) => {
     if (w.support?.widget_enabled && w.support.widget_key) return `<a class="btn" href="/support/${encodeURIComponent(w.support.widget_key)}">${h(t.chat)}</a>`;
     const e = settingsOf(w).contact_email;
     return e ? `<a class="btn" href="mailto:${h(e)}">${h(t.mail)}</a>` : "";
   };
+  // The shared public shell (publicsite.js), with the search form and a link to the Changelog.
   function page(c, { title, body, path, desc = "", noindex = false }) {
-    const { w, lang, t, nonce } = c, company = w?.brief?.company_name || "DPA AD";
-    const brand = w?.creative?.brand?.colors || {}, primary = hex(brand.primary, "#1f5eff"), accent = hex(brand.accent, "#ff7a1a");
-    const other = lang === "ar" ? "en" : "ar";
+    const { lang, t, nonce } = c, other = lang === "ar" ? "en" : "ar";
     const switchHref = `${path}${other === "en" ? (path.includes("?") ? "&" : "?") + "lang=en" : ""}`;
-    return `<!doctype html><html lang="${lang}" dir="${lang === "ar" ? "rtl" : "ltr"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${h(title ? `${title} · ` : "")}${h(company)} ${h(t.help)}</title>${desc ? `<meta name="description" content="${h(desc.slice(0, 160))}">` : ""}${noindex ? `<meta name="robots" content="noindex">` : ""}
-<style nonce="${nonce}">:root{color-scheme:light dark;--p:${primary};--a:${accent};--bg:#f7f7f5;--card:#fff;--text:#16181d;--muted:#5d636e;--border:#e3e4e8;--soft:#eef2ff}
-@media(prefers-color-scheme:dark){:root{--bg:#111316;--card:#1a1d22;--text:#eceef2;--muted:#a2a8b3;--border:#2c3038;--soft:#1f2533}}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;font:16px/1.65 system-ui,-apple-system,"Segoe UI",Tahoma,"Noto Sans Arabic",sans-serif;background:var(--bg);color:var(--text)}
-a{color:var(--p)}a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--p);outline-offset:2px}
-header{background:var(--card);border-bottom:1px solid var(--border)}.wrap{max-width:860px;margin:0 auto;padding:0 16px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0}.brand{font-weight:700;text-decoration:none;color:var(--text);font-size:17px;min-width:0;overflow-wrap:anywhere}.brand span{color:var(--p)}
-.lang{font-size:14px;white-space:nowrap}.hero{padding:8px 0 18px}.hero h1{margin:0 0 10px;font-size:24px;line-height:1.3}
-form.s{display:flex;gap:8px}form.s input{flex:1;min-width:0;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)}
-.btn,button{font:inherit;font-size:15px;padding:9px 16px;border-radius:10px;border:1px solid var(--p);background:var(--p);color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
-.btn.ghost,button.ghost{background:transparent;color:var(--p)}main{padding:20px 0 40px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;min-width:0;overflow-wrap:anywhere}a.card{display:block;text-decoration:none;color:var(--text)}a.card:hover{border-color:var(--p)}
-.card b{display:block;font-size:16px}.muted{color:var(--muted);font-size:14px}ul.list{list-style:none;margin:0;padding:0;display:grid;gap:8px}ul.list a{display:block}
-.crumb{font-size:14px;color:var(--muted);margin-bottom:8px}.crumb a{color:var(--muted)}article h1{font-size:26px;line-height:1.3;margin:0 0 6px}
-.body h2{font-size:20px;margin:24px 0 8px}.body h3{font-size:17px;margin:20px 0 6px}.body h4{font-size:16px;margin:16px 0 4px}.body img{max-width:100%;height:auto;border-radius:10px}
-.body pre{background:var(--soft);padding:12px;border-radius:10px;overflow-x:auto;direction:ltr;text-align:left}.body code{background:var(--soft);padding:1px 5px;border-radius:6px;font-size:.92em}.body pre code{padding:0;background:none}
-.body ul,.body ol{padding-inline-start:22px}.note{background:var(--soft);border-radius:10px;padding:10px 12px;font-size:14px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-main>*+*{margin-top:16px}.body>:first-child{margin-top:0}.body>:last-child{margin-bottom:0}footer{color:var(--muted);font-size:13px;padding:20px 16px 28px;border-top:1px solid var(--border)}h2.t{font-size:18px;margin:0 0 10px}</style></head><body>
-<header><div class="wrap"><div class="top"><a class="brand" href="${h(c.q("/help"))}">${h(company)} <span>· ${h(t.help)}</span></a><a class="lang" href="${h(switchHref)}" hreflang="${other}" lang="${other}">${h(t.other)}</a></div>
-<div class="hero"><form class="s" role="search" method="get" action="/help/search"><input type="search" name="q" placeholder="${h(t.search)}" aria-label="${h(t.search)}" maxlength="200" value="${h(c.query || "")}">${lang === "en" ? `<input type="hidden" name="lang" value="en">` : ""}<button type="submit">${h(t.go)}</button></form></div></div></header>
-<main class="wrap">${body}</main><footer class="wrap">© ${h(company)}${w?.brief?.website ? ` · <a href="${h(w.brief.website)}" rel="noopener">${h(String(w.brief.website).replace(/^https?:\/\//, ""))}</a>` : ""}</footer></body></html>`;
+    const hero = `<div class="hero"><form class="s" role="search" method="get" action="/help/search"><input type="search" name="q" placeholder="${h(t.search)}" aria-label="${h(t.search)}" maxlength="200" value="${h(c.query || "")}">${lang === "en" ? `<input type="hidden" name="lang" value="en">` : ""}<button type="submit">${h(t.go)}</button></form></div>`;
+    return publicPage({ w: c.w, lang, nonce, title, section: t.help, homeHref: c.q("/help"), switchHref, nav: [{ href: c.q("/changelog"), text: t.whatsNew }], hero, body, desc, noindex });
   }
   const notFound = (res, c) => send(res, page(c, { title: c.t.notFound, path: "/help", noindex: true, body: `<div class="card"><h1>${h(c.t.notFound)}</h1><p>${h(c.t.notFoundText)}</p><a class="btn" href="${h(c.q("/help"))}">${h(c.t.help)}</a></div>` }), 404, { nonce: c.nonce });
   const titleOf = (a, lang) => a[`title_${lang}`] || a[`title_${lang === "ar" ? "en" : "ar"}`];

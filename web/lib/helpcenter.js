@@ -103,19 +103,19 @@ export function logPush(a, by, text, now = Date.now()) {
   if (a.log.length > 100) a.log.splice(0, a.log.length - 100);
 }
 // Publishing needs a reviewer who isn't the author (the Owner may self-publish unless switched off in settings).
-export function reviewBlock(article, user, settings = DEFAULT_SETTINGS) {
+export function reviewBlock(article, user, settings = DEFAULT_SETTINGS, moduleName = "Help center") {
   if (!user) return "Sign in first.";
   if (String(article.author_id || "") !== String(user.id)) return null;
   if (isOwner(user) && settings.owner_self_publish !== false) return null;
-  return "The reviewer must be a different person than the author. Ask someone else with Help center Edit to review and publish it.";
+  return `The reviewer must be a different person than the author. Ask someone else with ${moduleName} Edit to review and publish it.`;
 }
 export const isLive = (a) => a.status === "published" && a.visibility === "public" && (hasLang(a, "ar") || hasLang(a, "en"));
 
 // ---- safe markdown subset → HTML (everything escaped first; no user HTML ever reaches the page)
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const unesc = (s) => s.replace(/&amp;/g, "&");
-// Links: https or this site's /help pages. Images: /media/<file> (Creative Studio media) or https.
-export const okLink = (u) => /^https:\/\/[^\s<>"'`]+$/i.test(u) || /^\/help(?:\/[a-z0-9/-]*)?(?:\?[a-z0-9=&_-]*)?$/i.test(u);
+// Links: https or this site's /help and /changelog pages. Images: /media/<file> (Creative Studio media) or https.
+export const okLink = (u) => /^https:\/\/[^\s<>"'`]+$/i.test(u) || /^\/(?:help|changelog)(?:\/[a-z0-9/-]*)?(?:\?[a-z0-9=&_-]*)?$/i.test(u);
 export const okImage = (u) => /^\/media\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|gif)$/i.test(u) || /^https:\/\/[^\s<>"'`]+$/i.test(u);
 const emph = (s) => s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
 function inline(raw) {
@@ -231,7 +231,7 @@ export function gapList(store, w, now = Date.now()) {
 }
 
 // ---- AI Help writer: drafts only
-const numbersIn = (s) => (String(s || "").match(/\d+(?:[.,]\d+)*/g) || []).map((n) => n.replace(/,/g, ""));
+export const numbersIn = (s) => (String(s || "").match(/\d+(?:[.,]\d+)*/g) || []).map((n) => n.replace(/,/g, ""));
 const priceFacts = () => PLANS.map((p) => `${p.name}: from USD ${p.usd}/month (SAR ${Math.round(p.usd * SAR_PER_USD)}), up to ${Number.isFinite(p.max) ? p.max : "unlimited"} products`).join("; ") + "; yearly billing = 10 × monthly. Draft prices: confirm before publishing.";
 export function sourceFacts(store, w, { source, support_article_id = null, ticket_ids = [], category = null }) {
   if (source === "support_article") {
@@ -267,7 +267,7 @@ Reply with JSON only: {"title_ar":"...","body_ar":"...","title_en":"...","body_e
 ${JSON.stringify(f.sources, null, 1).slice(0, 12000)}
 </sources>${prices}`;
 }
-function parseJson(raw) { try { return JSON.parse(/\{[\s\S]*\}/.exec(String(raw || ""))?.[0] || "null"); } catch { return null; } }
+export function parseJson(raw) { try { return JSON.parse(/\{[\s\S]*\}/.exec(String(raw || ""))?.[0] || "null"); } catch { return null; } }
 const allowedNumbers = (f) => new Set([...numbersIn(JSON.stringify(f.sources)), ...(f.category === "billing" ? numbersIn(priceFacts()) : []), "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 export function checkDraft(raw, f) {
   const j = parseJson(raw);
@@ -291,9 +291,9 @@ export function draftFallback(f) {
     body_ar: `## السؤال\n${qs.map((q) => `- ${q.replace(/\n+/g, " ")}`).join("\n") || "- [ADD]"}\n\n## الحل\n${as.map((a) => `- ${a.replace(/\n+/g, " ")}`).join("\n") || "- [ADD]"}\n\n[ADD الخطوات بالترتيب]`,
     body_en: `## The question\n- [ADD the question in English]\n\n## The answer\n- [ADD the steps in English]` };
 }
-export function translatePrompt(a, from, to) {
-  return `<task title="Help article translation">
-You are DPA AD's AI Help writer. Translate this help article from ${from === "ar" ? "Arabic" : "English"} to ${to === "ar" ? "Saudi Arabic (friendly, clear)" : "plain English"}, keeping the meaning, the steps, the markdown and every link exactly. Do not add or remove facts or numbers; keep [ADD] markers.
+export function translatePrompt(a, from, to, { who = "DPA AD's AI Help writer", what = "help article", task = "Help article translation" } = {}) {
+  return `<task title="${task}">
+You are ${who}. Translate this ${what} from ${from === "ar" ? "Arabic" : "English"} to ${to === "ar" ? "Saudi Arabic (friendly, clear)" : "plain English"}, keeping the meaning, the steps, the markdown and every link exactly. Do not add or remove facts or numbers; keep [ADD] markers.
 Reply with JSON only: {"title":"...","body":"..."}
 </task>
 <article>
