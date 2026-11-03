@@ -5,6 +5,7 @@ import { STAGES, summary as salesSummary } from "./sales.js";
 import { SOP, periodFor } from "./sop.js";
 import { supportSummary } from "./support.js";
 import { financeSnapshot } from "./finance.js";
+import { billingForFinance } from "./billing.js";
 import { opsSnapshot } from "./ops.js";
 import { productSnapshot } from "./product.js";
 import { roasSummary } from "./roas.js";
@@ -42,7 +43,7 @@ export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
   ];
   const aiTotal = work.reduce((a, w) => a + w.ai, 0), peopleTotal = work.reduce((a, w) => a + w.people, 0);
 
-  const fin = financeSnapshot({ expenses: store.listExpenses(id), income: store.listOps("finance_income", id), cash: store.listCash(id), deals, roles, settings: ws.finance, now: new Date(now) });
+  const fin = financeSnapshot({ expenses: store.listExpenses(id), income: store.listOps("finance_income", id), cash: store.listCash(id), deals, roles, settings: ws.finance, now: new Date(now), billing: billingForFinance(store, id, new Date(now)) });
 
   const ops = opsSnapshot({ tasks: store.listOps("ops_tasks", id), deadlines: store.listOps("ops_deadlines", id), vendors: store.listOps("ops_vendors", id), incidents: store.listOps("ops_incidents", id), now: new Date(now) });
 

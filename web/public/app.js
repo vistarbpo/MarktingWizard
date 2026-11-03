@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance" };
+  pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance" };
 // Pages that open for more than one module: the best level among them (each tab checks its own module).
 const ROUTE_ANY = { people: ["team", "payroll"] };
 const LEVEL_RANK = { none: 0, view: 1, edit: 2 };

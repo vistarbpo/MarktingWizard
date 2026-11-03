@@ -18,6 +18,10 @@
 //      BACKUP_S3_PREFIX (default marketing-wizard/), BACKUP_S3_PATH_STYLE (1/0) (Cloudflare R2, Backblaze B2, AWS S3, Hostinger…)
 //      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15; uses the SMTP_* mailbox), BACKUP_MEDIA=0 (leave media out), BACKUP_MEDIA_MAX_MB (default 200)
 // Status page (/status, public): self-checks PUBLIC_URL/healthz every 5 minutes (localhost when PUBLIC_URL is unset).
+// Billing & customers (optional; Test mode by default: no card links, no ZATCA calls, reminders logged not sent):
+//      MOYASAR_SECRET_KEY (card payment links), MOYASAR_WEBHOOK_SECRET (shared secret on the /hooks/moyasar webhook)
+//      BILLING_USAGE_TOKEN (Bearer token for the product to POST renders to /hooks/billing/usage)
+//      ZATCA_ENV (sandbox | simulation | production), ZATCA_CSID, ZATCA_CSID_SECRET (after ZATCA onboarding; Live also needs signing)
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./lib/app.js";
@@ -36,6 +40,7 @@ app.locals.outreach.start(); // Store CRM: sends due messages every minute, read
 app.locals.studio.start(); // Creative Studio: publishes due posts every minute, comments every 15 minutes, results every 6 hours
 app.locals.backups.start(); // Backups: checks every minute, runs nightly from 02:00 Riyadh (catches up after a restart)
 app.locals.status.start({ url: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/$/, "") + "/healthz" }); // status page uptime self-check every 5 minutes
+app.locals.billing.start(); // Billing: hourly run issues due invoices, ends trials, bills overage, sends dunning reminders
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>
   console.log(`Marketing Wizard listening on ${port} (provider ${provider.name}, login ${password ? "on" : "NOT SET"})`));

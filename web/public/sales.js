@@ -219,7 +219,7 @@ async function salesOpen(id) {
       <div class="card s-fact"><span class="eyebrow">Best plan</span><b>${d.plan}</b><span class="subtle s-small num">${usd(d.plan_usd)}/mo · SAR ${d.plan_sar.toLocaleString("en-US")}</span></div>
       <div class="card s-fact"><span class="eyebrow">Quiet for</span><b class="num">${d.days_quiet} ${d.days_quiet === 1 ? "day" : "days"}</b></div>
     </div>
-    <div class="card card-pad stack"><h3>Stage</h3><div class="s-stages">${SALES.meta.stages.map((s) => `<button class="chip ${s.id === d.stage ? "active" : ""}" aria-pressed="${s.id === d.stage}" data-sstage-set="${s.id}">${s.name}</button>`).join("")}</div></div>
+    <div class="card card-pad stack"><h3>Stage</h3><div class="s-stages">${SALES.meta.stages.map((s) => `<button class="chip ${s.id === d.stage ? "active" : ""}" aria-pressed="${s.id === d.stage}" data-sstage-set="${s.id}">${s.name}</button>`).join("")}</div>${d.stage === "paying" && typeof blCreateButton === "function" ? `<div>${blCreateButton("deal", d.id)}</div>` : ""}</div>
     <div class="card card-pad stack s-nextbox ${d.next.owner}">
       <span class="eyebrow">${d.next.owner === "you" ? "Next step · needs you" : "Next step · AI drafts it, you review and send"}</span>
       <p style="font-weight:500">${esc(d.next.text)}</p>
