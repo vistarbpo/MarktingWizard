@@ -884,3 +884,30 @@ details > summary { cursor: pointer; }
 .cp-card code { overflow-wrap: anywhere; word-break: break-word; }
 .cp-card details > div { display: flex; flex-direction: column; }
 .cm-dialog input[type=file] { min-width: 0; max-width: 100%; } .cm-dialog { overflow-x: hidden; }
+
+/* ---- Minimal sidebar with folding groups */
+.shell { grid-template-columns: 232px minmax(0, 1fr); }
+.sidebar { gap: var(--s-4); padding: var(--s-4) var(--s-3); }
+.nav { gap: 1px; }
+.nav a, .nav-g { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text-2); font: 500 var(--fs-sm) var(--font); cursor: pointer; border: 0; background: none; width: 100%; text-align: left; }
+.nav a svg, .nav-g svg { flex: none; color: var(--text-3); }
+.nav a:hover, .nav-g:hover { background: var(--surface-2); color: var(--text); }
+.nav a.active { background: var(--accent-soft); color: var(--accent); }
+.nav a.active svg { color: var(--accent); }
+.nav-sec.here > .nav-g { color: var(--text); } .nav-sec.here > .nav-g svg { color: var(--accent); }
+.nav-chev { margin-left: auto; width: 7px; height: 7px; border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3); transform: rotate(-45deg); transition: transform .15s; }
+.nav-sec.open > .nav-g .nav-chev { transform: rotate(45deg); }
+.nav-items { display: none; flex-direction: column; gap: 1px; margin: 1px 0 4px 19px; padding-left: 10px; border-left: 1px solid var(--border); }
+.nav-sec.open > .nav-items { display: flex; }
+.nav-items a { padding: 6px 10px; font-weight: 450; }
+.nav-top + .nav-sec, .nav-sec + .nav-top { margin-top: 0; }
+.nav > a:nth-child(2) { margin-bottom: 8px; }
+.brand { font-size: var(--fs-sm); }
+.ws-switch .eyebrow { display: none; }
+#whoami { padding: 0 var(--s-1) var(--s-1); }
+/* Calmer pages: lighter cards and headers */
+.card { box-shadow: none; }
+.topbar { padding-top: var(--s-4); padding-bottom: var(--s-4); }
+.s-kpi .eyebrow { letter-spacing: .04em; }
+@media (prefers-reduced-motion: reduce) { .nav-chev { transition: none; } }
+.shell.nav-open ~ .ak-fab { display: none; }

@@ -94,14 +94,53 @@ const ROUTE_MODULE = { command: "command", sop: "sop", overview: "marketing", br
   pipeline: "sales", crm: "crm", studio: "creative", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", ops: "ops", team: "team", access: "admin" };
 const levelFor = (route) => (S.me ? S.me.perms[ROUTE_MODULE[route] || "command"] || "none" : "edit");
 const canSee = (route) => levelFor(route) !== "none";
+/* ---------------------------------------------------------------- sidebar menu
+   One list drives the menu. A group folds open; the group holding the current page opens itself.
+   Pages that aren't loaded (module not built) or that the role can't see are left out. */
+const NAV = [
+  { route: "command", label: "Home", icon: "home" },
+  { route: "sop", label: "SOP", icon: "check" },
+  { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["results", "ROAS results"]] },
+  { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"]] },
+  { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
+  { route: "product", label: "Product", icon: "box" },
+  { route: "finance", label: "Finance", icon: "coin" },
+  { route: "ops", label: "Operations", icon: "gear" },
+  { group: "team", label: "Team", icon: "people", items: [["workforce", "AI Workforce"], ["team", "Hiring"], ["people", "Attendance & payroll"]] },
+  { group: "settings", label: "Settings", icon: "lock", items: [["access", "Teams & roles"], ["compliance", "Security & compliance"]] },
+];
+const NAV_ICON = {
+  home: "M3 8.5 10 3l7 5.5V17a1 1 0 0 1-1 1h-4v-5H8v5H4a1 1 0 0 1-1-1z", check: "M4 10.5 8 14l8-8", trend: "M3 14l5-5 3 3 6-6M13 6h4v4",
+  chat: "M4 4h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", spark: "M10 2.5l1.8 5.7 5.7 1.8-5.7 1.8L10 17.5l-1.8-5.7L2.5 10l5.7-1.8z",
+  box: "M3 6.5 10 3l7 3.5v7L10 17l-7-3.5zM3 6.5 10 10l7-3.5M10 10v7", coin: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 3v8m-2.5-6h3.75a1.5 1.5 0 0 1 0 3h-2.5a1.5 1.5 0 0 0 0 3H12.5",
+  gear: "M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0-4v2m0 10v2m7-7h-2M5 10H3m11.9-4.9-1.4 1.4M6.5 13.5l-1.4 1.4m0-9.8 1.4 1.4m7 7 1.4 1.4",
+  people: "M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-4.5 8a4.5 4.5 0 0 1 9 0M13.5 9a2.5 2.5 0 1 0 0-5M14 12.5a4 4 0 0 1 3.5 4.5", lock: "M5 9h10v8H5zM7 9V6.5a3 3 0 0 1 6 0V9",
+};
+const navOpen = () => { try { return JSON.parse(localStorage.getItem("nav.open") || "{}"); } catch { return {}; } };
+function buildNav() {
+  const nav = $("#nav"); if (!nav) return;
+  const ok = (r) => ROUTES[r] && canSee(r), open = navOpen();
+  const icon = (k) => `<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="${NAV_ICON[k] || ""}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  nav.innerHTML = NAV.map((n) => {
+    if (n.route) return ok(n.route) ? `<a data-route="${n.route}" class="nav-top">${icon(n.icon)}<span>${esc(n.label)}</span></a>` : "";
+    const items = n.items.filter(([r]) => ok(r));
+    if (!items.length) return "";
+    if (items.length === 1) return `<a data-route="${items[0][0]}" class="nav-top">${icon(n.icon)}<span>${esc(items[0][1])}</span></a>`;
+    const here = items.some(([r]) => r === S.route), isOpen = here || open[n.group];
+    return `<div class="nav-sec ${isOpen ? "open" : ""} ${here ? "here" : ""}" data-navsec="${n.group}"><button type="button" class="nav-g" aria-expanded="${!!isOpen}">${icon(n.icon)}<span>${esc(n.label)}</span><i class="nav-chev"></i></button>
+      <div class="nav-items">${items.map(([r, l]) => `<a data-route="${r}">${esc(l)}</a>`).join("")}</div></div>`;
+  }).join("");
+  nav.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.route === S.route));
+}
+document.addEventListener("click", (e) => {
+  const g = e.target.closest(".nav-g"); if (!g) return;
+  const sec = g.parentElement, open = navOpen(), on = !sec.classList.contains("open");
+  sec.classList.toggle("open", on); g.setAttribute("aria-expanded", on);
+  open[sec.dataset.navsec] = on; try { localStorage.setItem("nav.open", JSON.stringify(open)); } catch {}
+});
+
 function applyAccess() {
-  document.querySelectorAll("#nav a").forEach((a) => (a.hidden = !canSee(a.dataset.route)));
-  // Hide group headings with nothing visible under them.
-  document.querySelectorAll("#nav .nav-group").forEach((g) => {
-    let n = g.nextElementSibling, any = false;
-    while (n && !n.classList.contains("nav-group")) { if (n.tagName === "A" && !n.hidden) any = true; n = n.nextElementSibling; }
-    g.hidden = !any;
-  });
+  buildNav();
   const who = $("#whoami");
   if (who && S.me) who.innerHTML = `<button class="btn btn-sm btn-ghost who-btn" data-action="account" title="Your account">${esc(S.me.user.name)}<span class="subtle">${esc(S.me.role)}</span></button>`;
 }
@@ -118,7 +157,7 @@ async function onRoute() {
 }
 
 function render() {
-  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === S.route));
+  buildNav();
   $("#wsSelect").innerHTML = S.workspaces.map((w) => `<option value="${w.id}" ${S.ws && S.ws.id === w.id ? "selected" : ""}>${esc(w.brief.company_name)}</option>`).join("")
     || `<option value="">No workspaces</option>`;
   $("#pageActions").innerHTML = "";
