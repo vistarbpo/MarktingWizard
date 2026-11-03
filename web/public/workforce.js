@@ -19,7 +19,7 @@ function wfOffice(d) {
   const initials = (n) => n.split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const rooms = teams.map((tm) => {
     const ag = d.agents.filter((a) => a.team === tm);
-    const people = d.people.filter((p) => ag.some((a) => a.config.owner_id === p.id));
+    const people = d.people.filter((p) => p.room === tm);
     const color = WF_TEAM_COLOR[tm] || "var(--accent)";
     const desks = [
       ...people.map((p) => `<div class="of-desk human" title="${esc(p.name)} · ${esc(p.role)}"><div class="of-av" style="background:${color}">${esc(initials(p.name))}</div><div class="of-table"><i class="of-screen"></i></div><span class="of-name">${esc(p.name.split(" ")[0])}</span><span class="of-role">${esc(p.role)}</span></div>`),
@@ -154,12 +154,12 @@ const W3 = { raf: 0, sprites: {}, hits: [], scale: 1, last: 0, hover: null };
 const W3T = { tw: 64, th: 32, z: 44, roomW: 7, roomD: 7, gap: 1, cols: 3 };
 function wf3Iso(x, y, z = 0) { return [(x - y) * W3T.tw / 2 + W3.ox, (x + y) * W3T.th / 2 + W3.oy - z * W3T.z]; }
 function wf3Layout(d) {
-  const teams = ["Leadership", ...new Set(d.agents.map((a) => a.team).filter((t) => t !== "Leadership"))];
+  const teams = ["Leadership", ...new Set([...d.agents.map((a) => a.team), ...d.people.map((p) => p.room), ...(d.hiring || []).map((h) => h.room)].filter((t) => t && t !== "Leadership"))];
   const rooms = teams.map((tm, i) => {
     const col = i % W3T.cols, row = Math.floor(i / W3T.cols);
     const x0 = col * (W3T.roomW + W3T.gap), y0 = row * (W3T.roomD + W3T.gap);
-    const ag = d.agents.filter((a) => a.team === tm), people = d.people.filter((p) => ag.some((a) => a.config.owner_id === p.id));
-    const members = [...people.map((p) => ({ kind: "human", id: "u" + p.id, name: p.name, role: p.role })), ...ag.map((a) => ({ kind: "agent", id: a.id, a }))];
+    const ag = d.agents.filter((a) => a.team === tm), people = d.people.filter((p) => p.room === tm), hires = (d.hiring || []).filter((h) => h.room === tm);
+    const members = [...people.map((p) => ({ kind: "human", id: "u" + p.id, name: p.name, role: p.role })), ...ag.map((a) => ({ kind: "agent", id: a.id, a })), ...hires.map((h) => ({ kind: "hire", id: "h" + h.id, name: h.title, status: h.status }))];
     const desks = members.slice(0, 9).map((m, k) => { const dx = x0 + 0.6 + (k % 3) * 2.1, dy = y0 + 0.7 + Math.floor(k / 3) * 2.1; return { ...m, dx, dy, seat: [dx + 0.7, dy + 1.25] }; });
     return { tm, x0, y0, color: WF_TEAM_COLOR[tm] || "#1f5eff", desks, hub: [x0 + W3T.roomW - 1.1, y0 + W3T.roomD - 0.9] };
   });
@@ -168,8 +168,8 @@ function wf3Layout(d) {
   return { rooms, X, Y, w: (X + Y) * W3T.tw / 2 + 40, h: (X + Y) * W3T.th / 2 + 140, ox: Y * W3T.tw / 2 + 20, oy: 90 };
 }
 function wf3Office(d) {
-  return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>The office</h2><p class="subtle s-small">Agents (✦ desks) walk to people and other teams while they work; glowing screens are busy right now. Hover to see who's who, click to open.</p></div>
-    <div class="of-legend"><span><i class="lg busy"></i>Working now</span><span><i class="lg today"></i>Active today</span><span><i class="lg idle"></i>Idle</span><span><i class="lg off"></i>Paused</span><span><i class="lg error"></i>Needs a look</span></div></div>
+  return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>The office</h2><p class="subtle s-small">${d.people.length} ${d.people.length === 1 ? "person" : "people"} and ${d.agents.filter((a) => !a.config.paused && a.config.level > 0).length} AI agents at work${(d.hiring || []).length ? ` · ${(d.hiring || []).length} desk${d.hiring.length === 1 ? "" : "s"} waiting for a hire` : ""}. Agents walk through doors to people and other teams; glowing screens are busy right now. Hover for who's who, click an agent to open it.</p></div>
+    <div class="of-legend"><span>👤 Person</span><span>✦ AI agent</span><span><i class="lg busy"></i>Working now</span><span><i class="lg today"></i>Active today</span><span><i class="lg idle"></i>Idle</span><span><i class="lg off"></i>Paused</span><span><i class="lg error"></i>Needs a look</span><span><i class="lg" style="background:#f59e0b"></i>Hiring</span></div></div>
     <div class="o3-wrap" id="o3Wrap"><canvas id="o3Canvas" aria-label="AI Workforce office: ${d.agents.length} agents and ${d.people.length} people"></canvas><div class="o3-tip" id="o3Tip" hidden></div></div></div>`;
 }
 function wf3Start(d) {
@@ -184,7 +184,7 @@ function wf3Start(d) {
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   // Sprites: every agent and person, kept across refreshes so walkers don't jump.
   const all = L.rooms.flatMap((r) => r.desks.map((dk) => ({ ...dk, room: r })));
-  for (const dk of all) {
+  for (const dk of all.filter((x) => x.kind !== "hire")) {
     const sp = W3.sprites[dk.id] || (W3.sprites[dk.id] = { x: dk.seat[0], y: dk.seat[1], mode: "sit", wait: 1 + Math.random() * 12, t: 0 });
     sp.desk = dk; sp.state = dk.kind === "agent" ? wf3State(dk.a) : { id: "human" };
   }
@@ -266,15 +266,16 @@ function wf3Start(d) {
     items.sort((a, b) => a.k - b.k);
     for (const it of items) {
       if (it.desk) {
-        const dk = it.desk, st = dk.kind === "agent" ? wf3State(dk.a).id : "human", c = it.room.color;
+        const dk = it.desk, st = dk.kind === "agent" ? wf3State(dk.a).id : dk.kind === "hire" ? "off" : "human", c = it.room.color;
         box(dk.dx, dk.dy, 1.4, 0.7, 0.36, dark ? "#4a4f5c" : "#fbfaf7", dark ? "#343842" : "#d8d4cb", dark ? "#2b2e36" : "#c8c3b8");
         const I = wf3Iso;
         poly([I(dk.dx + 0.3, dk.dy + 0.18, 0.4), I(dk.dx + 1.05, dk.dy + 0.18, 0.4), I(dk.dx + 1.05, dk.dy + 0.18, 0.86), I(dk.dx + 0.3, dk.dy + 0.18, 0.86)], screenColor(st, t), "#111");
         if (st === "busy") { ctx.fillStyle = "rgba(74,222,128,.18)"; const [gx, gy] = I(dk.dx + 0.68, dk.dy + 0.3, 0.6); ctx.beginPath(); ctx.arc(gx, gy, 22, 0, Math.PI * 2); ctx.fill(); }
         const [lx, ly] = I(dk.dx + 0.7, dk.dy + 1.95, 0);
         ctx.fillStyle = dark ? "rgba(255,255,255,.75)" : "rgba(0,0,0,.6)"; ctx.font = "600 11px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
-        ctx.fillText(dk.kind === "agent" ? dk.a.name.replace(/^AI |^Ask DPA AD \(|\)$/g, "") : dk.name.split(" ")[0], lx, ly);
-        W3.hits.push({ id: dk.id, x: lx, y: ly - 40, r: 34, dk });
+        ctx.fillText(dk.kind === "agent" ? dk.a.name.replace(/^AI |^Ask DPA AD \(|\)$/g, "") : dk.kind === "hire" ? dk.name.slice(0, 20) : dk.name.split(" ")[0], lx, ly);
+        if (dk.kind === "hire") { const [sx, sy] = I(dk.dx + 0.7, dk.dy + 1.25, 0.9); ctx.fillStyle = "#f59e0b"; ctx.beginPath(); ctx.roundRect(sx - 24, sy - 10, 48, 18, 5); ctx.fill(); ctx.fillStyle = "#fff"; ctx.font = "700 10px Inter, system-ui, sans-serif"; ctx.fillText(dk.status === "open" ? "HIRING" : "PLANNED", sx, sy + 3); }
+        W3.hits.push({ id: dk.id, x: lx, y: ly - 40, r: 34, dk, room: it.room });
       } else {
         const sp = it.sp, dk = sp.desk, st = sp.state.id, c = dk.room.color, moving = sp.mode === "walk" || sp.mode === "return";
         const bob = moving ? Math.abs(Math.sin(sp.t * 9)) * 3 : 0, sit = sp.mode === "sit" ? 6 : 0;
@@ -329,7 +330,8 @@ function wf3Start(d) {
     if (!h) { tip.hidden = true; return; }
     const dk = h.dk, b = cv.getBoundingClientRect();
     tip.innerHTML = dk.kind === "agent" ? `<b>${esc(dk.a.name)}</b><span>${esc(dk.a.team)} · level ${dk.a.config.paused ? 0 : dk.a.config.level} · ${esc(wf3State(dk.a).label)}</span>${dk.a.stats.last_note?.note ? `<span dir="auto">Last: ${esc(dk.a.stats.last_note.note.slice(0, 60))}</span>` : ""}`
-      : `<b>${esc(dk.name)}</b><span>${esc(dk.role)} · owns agents in ${esc(h.dk.room?.tm || "this team")}</span>`;
+      : dk.kind === "hire" ? `<b>${esc(dk.name)}</b><span>${dk.status === "open" ? "Open role: hiring now" : "Planned role"} · ${esc(h.room?.tm || "")}</span><span>See Team → Hiring</span>`
+      : `<b>${esc(dk.name)}</b><span>${esc(dk.role)} · ${esc(h.room?.tm || dk.room?.tm || "")}</span>`;
     tip.style.left = Math.min(e.clientX - b.left + 14, b.width - 220) + "px"; tip.style.top = e.clientY - b.top + 14 + "px"; tip.hidden = false;
   };
   cv.onmouseleave = () => { tip.hidden = true; };

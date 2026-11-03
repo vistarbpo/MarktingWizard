@@ -1,6 +1,14 @@
 // HTTP routes for AI Workforce (module "workforce" in Teams & roles).
 import { AGENTS, LEVELS, PRICES, agentDef } from "./agents.js";
 
+// Which office room a person or a hiring role sits in, from their team or department name.
+const roomFor = (t) => {
+  const s = String(t || "").toLowerCase();
+  return /customer|support|success/.test(s) ? "Customer Success" : /leadership|founder|\bceo\b|chief/.test(s) ? "Leadership" : /sales|growth/.test(s) ? "Sales"
+    : /market|creative|content|design/.test(s) ? "Marketing" : /product|engineer|develop|tech/.test(s) ? "Product" : /financ|account/.test(s) ? "Finance"
+    : /oper|ops|admin/.test(s) ? "Operations" : /people|hr|recruit|hiring/.test(s) ? "People" : null;
+};
+
 export function workforceSummary(store, wf) {
   const users = store.db.users.filter((u) => u.active);
   const agents = AGENTS.map((d) => ({ ...d, config: wf.config(d.id), stats: wf.stats(d.id) }));
@@ -24,7 +32,15 @@ export function workforceSummary(store, wf) {
       cost_month: Math.round(cost * 100) / 100, budget_month: Math.round(budget), runs_month: agents.reduce((s, a) => s + a.stats.runs_month, 0),
       quality: judged ? Math.round((accepted / judged) * 1000) / 10 : null, judged },
     needs, prices: PRICES,
-    people: users.map((u) => ({ id: u.id, name: u.name, role: store.db.roles.find((r) => r.id === u.role_id)?.name || u.role_id, owns: AGENTS.filter((d) => wf.config(d.id).owner_id === u.id).map((d) => d.name) })),
+    people: users.map((u) => {
+      const owns = AGENTS.filter((d) => wf.config(d.id).owner_id === u.id);
+      const teams = (u.team_ids || []).map((t) => store.db.teams.find((x) => x.id === t)?.name).filter(Boolean);
+      return { id: u.id, name: u.name, role: store.db.roles.find((r) => r.id === u.role_id)?.name || u.role_id, owns: owns.map((d) => d.name),
+        room: owns[0]?.team || roomFor(teams.join(" ")) || ({ owner: "Leadership", admin: "Leadership", finance: "Finance", creative: "Marketing", manager: "Sales" })[u.role_id] || "People" };
+    }),
+    // Open and planned human roles from Team & hiring, shown as empty desks in their room.
+    hiring: (store.db.hr_roles || []).filter((r) => r.kind === "human" && ["open", "planned"].includes(r.status)).slice(0, 20)
+      .map((r) => ({ id: r.id, title: r.title, status: r.status, room: roomFor(`${r.department || ""} ${r.title || ""}`) || "People" })),
   };
 }
 

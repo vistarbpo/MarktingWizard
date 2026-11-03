@@ -1973,3 +1973,9 @@ test("auto-publish is the AI Publisher's level in AI Workforce (one switch, two 
   const acc = await json(`/api/workspaces/${ws.id}/creative/accounts`);
   assert.equal(acc.can_auto_publish, false); assert.equal(acc.settings.auto_publish, false);
 });
+
+test("AI workforce office: every person gets a room, open roles show as hiring desks", async () => {
+  const s = await json("/api/workforce");
+  assert.ok(s.people.every((p) => typeof p.room === "string" && p.room));
+  assert.ok(Array.isArray(s.hiring));
+});
