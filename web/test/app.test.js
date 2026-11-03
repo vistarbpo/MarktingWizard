@@ -1563,3 +1563,21 @@ test("studio: Meta webhook verifies, rejects bad signatures, turns DMs into tick
     try { assert.equal((await fetch(t2.b + "/hooks/meta", { method: "POST", headers: { "Content-Type": "application/json", "X-Hub-Signature-256": sig(body, "") }, body })).status, 401); } finally { t2.close(); }
   } finally { t.close(); }
 });
+
+test("studio: variant media ids, saved reel spec and per-channel media checks", async () => {
+  const { cleanVariant } = await import("../lib/creative.js");
+  const { mediaChecks, sniff, extFrom } = await import("../lib/media.js");
+  const v = cleanVariant("ig_reel", { media: ["5", "5", "../x", 7], cover_id: "9", reel: { scenes: [{ media_id: "5", text: "مشهد", duration: 99, motion: "spin" }], audio_id: "8", volume: 3 } });
+  assert.deepEqual(v.media, ["5", "7"]); assert.equal(v.cover_id, "9");
+  assert.deepEqual(v.reel.scenes[0], { media_id: "5", text: "مشهد", duration: 15, motion: "zoom_in" }); assert.equal(v.reel.volume, 1);
+  assert.equal(cleanVariant("ig_post", { reel: { scenes: [] } }).reel, undefined);
+  assert.equal(sniff(MP3), "mp3"); assert.equal(sniff(JPG), "jpg"); assert.equal(sniff(Buffer.from("<html>hello there")), "");
+  assert.equal(extFrom("a.JPEG"), "jpg"); assert.equal(extFrom("blob", "audio/x-m4a"), "m4a"); assert.equal(extFrom("a.gif"), "");
+  const files = { 1: { kind: "image", ext: "png" }, 2: { kind: "video", ext: "mp4", width: 1920, height: 1080, duration: 75 }, 3: { kind: "audio", ext: "mp3" }, 4: { kind: "image", ext: "jpg", ai_generated: true } };
+  const item = { channels: ["ig_post", "yt_short", "ig_carousel", "tiktok"], variants: { ig_post: { media: ["1"] }, yt_short: { media: ["2"] }, ig_carousel: { media: ["4"] }, tiktok: { media: ["3", "99"] } } };
+  const out = mediaChecks(item, (id) => files[id]).map((c) => `${c.level}:${c.channel}:${c.text}`);
+  assert.ok(out.some((t) => /^bad:ig_post:.*JPEG/.test(t)));
+  assert.ok(out.some((t) => /^bad:yt_short:.*under 60/.test(t)) && out.some((t) => /^warn:yt_short:.*landscape/.test(t)));
+  assert.ok(out.some((t) => /^warn:ig_carousel:.*2 to 10/.test(t)) && out.some((t) => /ig_carousel:.*AI label/.test(t)));
+  assert.ok(out.some((t) => /^bad:tiktok:.*deleted/.test(t)) && out.some((t) => /^bad:tiktok:.*audio files/.test(t)));
+});

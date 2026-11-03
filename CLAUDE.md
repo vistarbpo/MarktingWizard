@@ -14,8 +14,8 @@ npm run sop:md                                           # regenerate docs/SOP.m
 ```
 
 - **Deploy:** push to `main` on GitHub `vistarbpo/MarktingWizard`. Hostinger auto-deploys `main` (root dir `web`, entry `server.js`, Node 22, Express). Check a deploy by fetching `https://wizard.dpa.ad/app.css` for a new CSS rule, plus `/healthz`. Other pages need a login.
-- **Env vars** live in hPanel (Websites → wizard.dpa.ad → Node.js → Environment variables), never in git: `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, optional `MWIZ_MODEL`, `DATA_DIR`, and the Store CRM channels (`SMTP_*`, `MAIL_FROM`, `MAIL_REPLY_TO`, `IMAP_*`, `WA_TOKEN`, `WA_PHONE_ID`, `WA_VERIFY_TOKEN`, `WA_APP_SECRET`, `PUBLIC_URL`, `COMPANY_ADDRESS`, `INBOUND_SECRET`). The full list is commented at the top of `web/server.js`.
-- **Data** is not in git: `DATA_DIR` (default `~/marketing-wizard-data`) holds `db.json` (everything except the CRM) and `crm.json` (stores, campaigns, messages; batched writes, flushed on SIGTERM). There are **no backups yet**.
+- **Env vars** live in hPanel (Websites → wizard.dpa.ad → Node.js → Environment variables), never in git: `DASHBOARD_PASSWORD`, `ANTHROPIC_API_KEY`, optional `MWIZ_MODEL`, `DATA_DIR`, and the Store CRM channels (`SMTP_*`, `MAIL_FROM`, `MAIL_REPLY_TO`, `IMAP_*`, `WA_TOKEN`, `WA_PHONE_ID`, `WA_VERIFY_TOKEN`, `WA_APP_SECRET`, `PUBLIC_URL`, `COMPANY_ADDRESS`, `INBOUND_SECRET`) and Creative Studio publishing (`TOKEN_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, optional `META_GRAPH_VERSION`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, optional `LINKEDIN_ORG_ID` and `LINKEDIN_VERSION`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `YOUTUBE_AUDITED`, `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_AUDITED`). Set `TOKEN_KEY` before connecting accounts: without it the token key comes from `DASHBOARD_PASSWORD`, and rotating the password means reconnecting every account. The full list is commented at the top of `web/server.js`.
+- **Data** is not in git: `DATA_DIR` (default `~/marketing-wizard-data`) holds `db.json` (everything except the CRM) and `crm.json` (stores, campaigns, messages; batched writes, flushed on SIGTERM), plus `media/` (Creative Studio uploads and renders, served publicly at `/media/<random>.<ext>`). There are **no backups yet**.
 - Without `ANTHROPIC_API_KEY` the app runs a demo provider (sidebar shows "Demo mode").
 - To stop a local server: `for p in $(pgrep -f "^node server.js"); do kill $p; done`. Don't use `pkill -f "node server.js"`: it kills the shell running it.
 
@@ -60,6 +60,11 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
 - **Creative Studio:**
   - `creative.js`: channels and their limits, statuses, pillars, the Saudi season calendar, brand kit, content items and variants, rule-based checks before approval, the email renderer (blocks → table HTML, RTL), AI prompts.
   - `creativeroutes.js`: routes, approvals (approver roles in the brand kit), "download and post" log, and `emailDesign()` which Store CRM uses to send approved designed emails.
+  - `media.js`: media library (`creative_media`): streamed uploads to `DATA_DIR/media`, type allowlist plus byte sniffing, size limits (images 10 MB, video 150 MB, audio 30 MB; audio needs "I have the rights"), and `mediaChecks()` (JPEG for Instagram, Shorts under 60 s, AI label).
+  - `social.js`: platform APIs behind an injected `fetchImpl`: AES-256-GCM token sealing, signed OAuth state (person + cookie), OAuth for Meta, LinkedIn, Google/YouTube and TikTok, publishers (Instagram image/carousel/reel/story, Facebook Page, LinkedIn, YouTube resumable, TikTok FILE_UPLOAD), metrics, comments, Send API, Meta webhook parsing. Uncertain endpoint details are marked `// verify against current docs`.
+  - `publisher.js`: `createPublisher()` (`app.locals.studio`, started in `server.js`): scheduler every minute, results every 6 h, comments every 15 min. Test mode by default; `canAutoPublish(ws)` is the one auto-publish check (off by default); only approved or scheduled items publish; 3 tries then stop; `creative_publish_log`, `social_accounts`.
+  - `studioroutes.js`: `mountStudioPublic` (`/media/*`, `/hooks/meta`) before the login wall; `mountStudio` (media, accounts, `/oauth/<provider>/start|callback`, publish now, retry, results, and support replies on comment/DM tickets sent back through Meta).
+  - Browser side: `studio-render.js` (8 canvas templates, reel encoder: WebCodecs H.264 + AAC, `mp4-muxer@5.1.3` from jsDelivr), `studio-media.js` (Assets tab, attach, template designer, reel builder), `studio-publish.js` (Accounts, Publishing, Results). Rendering is in the browser because Hostinger can't run Chrome or ffmpeg. AAC audio encoding needs Chrome/Edge on Windows or Mac (Linux Chrome has none).
 - `web/public/`: one script per module sharing globals from `app.js` (`S`, `$`, `api`, `esc`, `md`, `toast`, `fmtDate`, `ROUTES`, `render`, `levelFor`). Each file registers `ROUTES.<route> = { title, crumb, render }` and ends with `if (S.route === "<route>" && S.ws) render();`. New modules need a nav link and a `<script>` tag in `index.html`, plus an entry in `ROUTE_MODULE` in `app.js`.
 - **Permissions:** add a module to `MODULES` in `access.js` and map its API segment in `moduleFor()`. The server enforces None/View/Edit per role, the menu hides what's refused, and the Command Center redacts other modules.
 
@@ -83,7 +88,11 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   - Starter $199, Growth $449, Scale $1,299, Enterprise from $4,000, by SKU count; yearly billing at 2 months free.
   - Draft render limits: Scale 15,000/month then $10 per extra 1,000; Enterprise 50,000/month then $8 per extra 1,000.
   - Prices live in `PLANS` in `web/lib/sales.js` and in `docs/dpa-ad-pricing.md`; when they're final, change both and the CRM call script in `crm.js`.
-- **Creative Studio** (`docs/creative-studio-plan.md`): **phase 1 is built**: calendar, board, ideas, email designer used by CRM campaigns, brand kit, approvals, download-and-post. Phases 2–4 (rendering images and reels, direct publishing, personalized "your products" emails) wait on the founder decisions in section 7 of that doc.
+- **Creative Studio** (`docs/creative-studio-plan.md`): **phases 1–3 are built**, plus comments and DMs into AI Support:
+  - phase 1: calendar, board, ideas, email designer used by CRM campaigns, brand kit, approvals, download-and-post
+  - phases 2–3: media library, 8 image templates, reel builder (rendered in the browser), connected accounts by OAuth, publishing to Instagram, Facebook, LinkedIn, YouTube and TikTok, publish log with retries, results every 6 h
+  - publishing is **Test mode by default** and auto-publish is off: switch to Live in Studio → Accounts only after the platforms' app reviews (listed in the plan doc, section 8)
+  - still planned (phase 4): "your products as ads" emails (needs DPA AD's render API) and content A/B tests
 - **Sales system:** `docs/dpa-ad-sales-system.md`, DPA AD's own funnel targets (editable in Store CRM → Settings). External masterclass notes were only a reference.
 - **Still to do:**
   1. Nightly backups of `DATA_DIR` and a download-backup button.
@@ -92,6 +101,7 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   4. Error alerts (e.g. Sentry).
   5. Password-reset email and two-step login.
   6. Move to MySQL if the CRM grows past a few hundred thousand messages.
+  7. Live end-to-end test of each platform's publishing once the developer apps exist (every API call is only tested with mocks so far).
 - **The owner's own to-dos:**
   - create a personal Owner login and rotate `DASHBOARD_PASSWORD`
   - set up the cold-email domain, mailbox, SPF/DKIM/DMARC and warm-up
