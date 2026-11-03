@@ -45,6 +45,8 @@ import { createLegal, legalNeeds, loadSampleLegal, removeSampleLegal } from "./l
 import { mountLegal } from "./legalroutes.js";
 import { createHelp, helpForSupport, helpNeeds, loadSampleHelp, removeSampleHelp } from "./helpcenter.js";
 import { mountHelp, mountHelpPublic } from "./helpcenterroutes.js";
+import { changelogNeeds, createChangelog, loadSampleChangelog, removeSampleChangelog } from "./changelog.js";
+import { mountChangelog, mountChangelogPublic } from "./changelogroutes.js";
 import { publicBase } from "./media.js";
 import { loadSampleSuccess, mountSuccess, mountSuccessPublic, removeSampleSuccess, successNeeds } from "./successroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
@@ -58,9 +60,9 @@ const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
 // Command Center need labels → the module a person needs View on to see them.
-const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", "AI Workforce": "workforce" };
+const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", Changelog: "product", "AI Workforce": "workforce" };
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, changelogOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -81,6 +83,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const meetings = createMeetings({ store, provider, workforce, ...meetingsOptions }); // Meetings → tasks: the AI Meeting secretary drafts action items from notes
   const partners = createPartners({ store, provider, workforce, ...partnersOptions });
   const help = createHelp({ store, provider, workforce, ...helpOptions }); // Help center: public /help site; AI Help writer drafts only
+  const changelog = createChangelog({ store, provider, workforce, ...changelogOptions }); // Changelog: public /changelog site and feeds; AI Release notes writer drafts only
   const legal = createLegal({ store, provider, workforce, ...legalOptions }); // Legal & documents: vault, renewals, templates; AI Legal assistant drafts only // Partners & referrals: links, attribution, commissions; AI Partnerships manager drafts only
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
@@ -105,7 +108,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help; app.locals.changelog = changelog;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -206,6 +209,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountSuccessPublic(app, { store, success }); // public survey answers at /s/:token
   mountPartnersPublic(app, { store, partners, env }); // referral links /r/:code and the partner portal /p/:token
   mountHelpPublic(app, { store, help, env }); // the public help site /help (published articles only)
+  mountChangelogPublic(app, { store, env }); // the public changelog /changelog, RSS and JSON Feed (published entries only)
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -245,6 +249,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountPartners(app, { store, crm, outreach, partners, env });
   mountLegal(app, { store, crm, legal, env });
   mountHelp(app, { store, help, env });
+  mountChangelog(app, { store, crm, outreach, changelog, env });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -968,7 +973,9 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.get("/api/workspaces/:ws/product", (req, res) => {
     const w = ws(req, res); if (!w) return;
     const d = prodData(w.id);
-    res.json({ ...d, snapshot: productSnapshot(d), docs: store.listOps("product_docs", w.id).map(({ text, ...x }) => x).sort((a, b) => b.created_at.localeCompare(a.created_at)) });
+    const entries = (store.db.changelog_entries || []).filter((e) => e.workspace_id === w.id && e.release_id);
+    const changelog = Object.fromEntries(entries.map((e) => [e.release_id, { id: e.id, status: e.status }])); // release id → its changelog entry
+    res.json({ ...d, changelog, snapshot: productSnapshot(d), docs: store.listOps("product_docs", w.id).map(({ text, ...x }) => x).sort((a, b) => b.created_at.localeCompare(a.created_at)) });
   });
   app.post("/api/workspaces/:ws/product/items", (req, res) => {
     const w = ws(req, res); if (!w) return;
@@ -1011,6 +1018,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (!store.deleteOps("product_items", w.id, req.params.id)) return res.status(404).json({ detail: "Item not found" });
     for (const f of store.listOps("product_feedback", w.id)) if (f.item_id === req.params.id) f.item_id = null;
     for (const r of store.listOps("product_releases", w.id)) r.item_ids = (r.item_ids || []).filter((x) => x !== req.params.id);
+    for (const e of store.listOps("changelog_entries", w.id)) if (e.item_ids?.includes(req.params.id)) e.item_ids = e.item_ids.filter((x) => x !== req.params.id);
     store.save();
     res.status(204).end();
   });
@@ -1020,7 +1028,9 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const text = String(req.body?.text || "").trim().slice(0, 2000);
     if (!text) return res.status(422).json({ detail: "Write the feedback first" });
     const item = req.body?.item_id ? store.getOps("product_items", w.id, req.body.item_id) : null;
-    res.status(201).json(store.addOps("product_feedback", w.id, { text, source: ["support", "sales", "manual"].includes(req.body?.source) ? req.body.source : "manual", customer: String(req.body?.customer || "").slice(0, 120), item_id: item?.id || null, dismissed: false }));
+    const crmStore = req.body?.store_id ? crm.get(w.id, String(req.body.store_id)) : null; // optional Store CRM store (the Changelog can tell it when its request ships)
+    if (req.body?.store_id && !crmStore) return res.status(422).json({ detail: "Unknown Store CRM store" });
+    res.status(201).json(store.addOps("product_feedback", w.id, { text, source: ["support", "sales", "manual"].includes(req.body?.source) ? req.body.source : "manual", customer: String(req.body?.customer || crmStore?.store_name || "").slice(0, 120), item_id: item?.id || null, dismissed: false, ...(crmStore ? { store_id: crmStore.id } : {}) }));
   });
   app.post("/api/workspaces/:ws/product/feedback/import-support", (req, res) => {
     const w = ws(req, res); if (!w) return;
@@ -1096,7 +1106,13 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     } else if (b.status === "draft") o.status = "draft";
     res.json(store.updateOps("product_releases", w.id, r.id, o));
   });
-  app.delete("/api/workspaces/:ws/product/releases/:id", (req, res) => { const w = ws(req, res); if (!w) return; store.deleteOps("product_releases", w.id, req.params.id) ? res.status(204).end() : res.status(404).json({ detail: "Release not found" }); });
+  app.delete("/api/workspaces/:ws/product/releases/:id", (req, res) => {
+    const w = ws(req, res); if (!w) return;
+    if (!store.deleteOps("product_releases", w.id, req.params.id)) return res.status(404).json({ detail: "Release not found" });
+    for (const e of store.listOps("changelog_entries", w.id)) if (e.release_id === req.params.id) e.release_id = null; // the entry keeps its text
+    store.save();
+    res.status(204).end();
+  });
   // AI documents: specs and release notes
   app.get("/api/workspaces/:ws/product/docs/:id", (req, res) => { const w = ws(req, res); if (!w) return; const d = store.getOps("product_docs", w.id, req.params.id); d ? res.json(d) : res.status(404).json({ detail: "Not found" }); });
   app.post("/api/workspaces/:ws/product/items/:id/ai/spec", async (req, res) => {
@@ -1221,6 +1237,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (can("okr") && user) { d.okr = okrHome(store, crm, w, permsOf(user), okr.now()); d.needs = [...okrNeeds(store, w, { user, now: okr.now() }), ...d.needs]; } else d.okr = null;
     if (can("meetings") && user) d.needs = [...meetingsNeeds(store, w, { user, now: meetings.now() }), ...d.needs]; // overdue meeting action items, notes waiting for review
     if (can("legal")) d.needs = [...legalNeeds(store, w, { user, now: legal.now() }), ...d.needs]; // expiring within 30 days, expired, notice deadlines within 14 days, overdue obligations (restricted only for Owner/Admin)
+    if (can("product")) d.needs = [...changelogNeeds(store, w, { now: changelog.now() }), ...d.needs]; // shipped releases with no changelog entry after 3 days, entries in review for 3+ days
     if (can("helpcenter")) d.needs = [...helpNeeds(store, w, { now: help.now() }), ...d.needs]; // articles not reviewed in 180 days, 3+ "not helpful" in 30 days, ticket topics (5+) with no article
     if (can("partners")) d.needs = [...partnersNeeds(store, crm, w, { now: partners.now() }), ...d.needs]; // statements to approve, approved and unpaid, quiet signed partners
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
@@ -1249,10 +1266,11 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     counts.meetings = loadSampleMeetings(store, crm, w.id).meetings; // two sample meetings with notes and a rule-based draft
     counts.partners = loadSamplePartners(store, crm, w.id, partners.now()).partners; // two sample partners with clicks and one draft statement
     counts.help_articles = loadSampleHelp(store, w.id, help.now()).articles; // three published help articles (AR + EN) and one draft
+    counts.changelog_entries = loadSampleChangelog(store, w.id, changelog.now()).entries; // three published changelog entries and one draft for the sample release
     counts.legal_documents = loadSampleLegal(store, w, legal.now()).documents; // an NDA draft and a vendor contract expiring in 20 days
     res.status(201).json(counts);
   });
-  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleHelp(store, w.id), ...removeSampleData(store, w.id) }); });
+  app.delete("/api/workspaces/:ws/sample-data", (req, res) => { const w = ws(req, res); if (w) res.json({ ...removeSampleSuccess({ store, crm }, w), ...removeSampleMeetings(store, w.id), ...removeSamplePartners(store, w.id), ...removeSampleLegal(store, w.id), ...removeSampleHelp(store, w.id), ...removeSampleChangelog(store, w.id), ...removeSampleData(store, w.id) }); });
 
   // ---- support (logged-in)
   app.get("/api/support/meta", (req, res) => res.json({ categories: SUPPORT_CATEGORIES, channels: CHANNELS, statuses: TICKET_STATUS, escalation_rules: ESCALATION_RULES }));

@@ -80,7 +80,7 @@ export function moduleFor(method, path) {
   if (seg === undefined) return method === "GET" ? null : method === "DELETE" ? "admin" : "marketing"; // read / edit brief / delete
   return ({ notes: "marketing", kpis: "marketing", gaps: "marketing", assets: "marketing", run: "marketing", export: "marketing",
     deals: "sales", product: "product", support: "support", roas: "results", finance: "finance", ops: "ops", hr: "team", people: "team", payroll: "payroll", billing: "billing", success: "success", customers: "support",
-    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", intel: "intel", okr: "okr", meetings: "meetings", partners: "partners", legal: "legal", helpcenter: "helpcenter", "sample-data": "admin" })[seg] || "admin";
+    sop: "sop", command: "command", crm: "crm", creative: "creative", ads: "ads", intel: "intel", okr: "okr", meetings: "meetings", partners: "partners", legal: "legal", helpcenter: "helpcenter", changelog: "product", "sample-data": "admin" })[seg] || "admin";
 }
 
 // One short line for the activity log.
