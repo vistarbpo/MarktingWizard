@@ -9,6 +9,8 @@ import { creativeSettings, emailDesign } from "./creativeroutes.js";
 import { renderEmail, safeUrl } from "./creative.js";
 import { FETCH_LIMITS, PRODUCT_SOURCES, cleanProducts, withImages } from "./products.js";
 import { PLATFORMS, PLATFORM_LIST, detectPlatform } from "./platforms.js";
+// An hour typed by a person: 0 is a real value (midnight), only empty or invalid falls back.
+const hourOr = (v, d) => (v === "" || v === null || v === undefined || !Number.isFinite(Number(v)) ? d : Number(v));
 
 const page = (title, body) => `<!doctype html><html lang="ar" dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{font-family:system-ui,Tahoma,sans-serif;background:#f6f6f4;color:#111;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}.c{background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:32px;max-width:440px;text-align:center}button{background:#1f5eff;color:#fff;border:0;border-radius:8px;padding:10px 20px;font-size:15px;cursor:pointer}p{color:#555;line-height:1.6}</style></head><body><div class="c">${body}</div></body></html>`;
@@ -355,7 +357,7 @@ export function mountCrm(app, { store, crm, outreach, provider, workforce = null
       wa_header: s.channel === "whatsapp" && s.wa_header === "product" ? "product" : "", wa_header_url: s.channel === "whatsapp" && s.wa_header === "product" ? safeUrl(s.wa_header_url) : "", design_id: s.channel === "email" && s.design_id ? String(s.design_id).slice(0, 20) : "" }));
     if (b.daily_limit !== undefined) o.daily_limit = Math.max(1, Math.min(5000, Math.round(Number(b.daily_limit) || 150)));
     if (b.start_at !== undefined) o.start_at = b.start_at ? new Date(b.start_at).toISOString() : null;
-    if (b.window !== undefined) o.window = { from: Math.max(0, Math.min(23, Number(b.window.from) || 9)), to: Math.max(1, Math.min(24, Number(b.window.to) || 21)), skip_friday: b.window.skip_friday !== false };
+    if (b.window !== undefined) o.window = { from: Math.max(0, Math.min(23, hourOr(b.window.from, 9))), to: Math.max(1, Math.min(24, hourOr(b.window.to, 21))), skip_friday: b.window.skip_friday !== false };
     if (b.stop_on_reply !== undefined) o.stop_on_reply = !!b.stop_on_reply;
     if (o.type === "onboarding") o.trigger = "stage:onboarding";
     return o;

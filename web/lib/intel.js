@@ -38,7 +38,7 @@ const DAY = 864e5;
 
 const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
 const isoDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) && !Number.isNaN(Date.parse(v));
-export const todayOf = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
+export const todayOf = (now = Date.now()) => new Date(+new Date(now) + 3 * 3600e3).toISOString().slice(0, 10); // Riyadh day (UTC+3)
 export function cleanUrl(v) {
   let s = str(v, 500);
   if (!s) return "";
@@ -318,7 +318,7 @@ export function ruleBrief(src, lang = "en") {
     sec(T.cust, by((i) => i.kind.startsWith("deal_") || i.type === "customer_request" || i.type === "win_loss")) +
     `\n## ${T.todo}\n- ${T.so}: [ADD]\n- ${T.act}: [ADD]\n`;
 }
-export const weekStart = (now = Date.now()) => { const d = new Date(now); const day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10); };
+export const weekStart = (now = Date.now()) => { const d = new Date(+new Date(now) + 3 * 3600e3); /* Riyadh week */ const day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10); };
 
 // ---- Command Center ------------------------------------------------------------------------------------------
 export function intelNeeds(store, w) {

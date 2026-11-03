@@ -4010,7 +4010,7 @@ test("intel signals: quick add with validation, filters and themes, import from 
     assert.equal((await k.j(`${k.X}/signals`, { title: "x", type: "rumour" })).status, 422);
     assert.equal((await k.j(`${k.X}/signals`, { title: "x", type: "trend", source_url: "ftp://x" })).status, 422);
     const s = (await k.j(`${k.X}/signals`, { title: "Snap catalog feed rule change", type: "platform_change", platform: "Snap", tags: "Catalog Feeds, video", impact: "high", module: "product", source_url: "https://businesshelp.snapchat.com/x" })).body;
-    assert.deepEqual(s.tags, ["catalog-feeds", "video"]); assert.equal(s.date, new Date().toISOString().slice(0, 10));
+    assert.deepEqual(s.tags, ["catalog-feeds", "video"]); assert.equal(s.date, new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10)); // Riyadh day
     await k.j(`${k.X}/signals`, { title: "More stores ask for video", type: "trend", tags: ["video"], impact: "low", date: "2026-01-02" });
     const d = (await k.j(`${k.X}/signals`)).body;
     assert.equal(d.total, 2); assert.deepEqual(d.themes.tags[0], { tag: "video", n: 2, high: 1 }); assert.equal(d.themes.types.find((t) => t.id === "trend").n, 1);
@@ -4941,4 +4941,14 @@ test("meetings: AI Meeting secretary agent, roles, Ask DPA AD tools, data reques
     for (const coll of ["meetings_meetings", "meetings_items"]) assert.equal(k.st.db[coll].filter((y) => y.workspace_id === k.w.id).length, 0, coll);
     assert.deepEqual(k.st.db.meetings_meetings.map((y) => y.id), ["zm"]);
   } finally { k.done(); }
+});
+
+test("CRM campaign window keeps hour 0 (midnight) instead of falling back to 9", async () => {
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+  const c = await (await post(`${P}/campaigns`, { name: "Window 0", type: "outreach", window: { from: 0, to: 24, skip_friday: false }, steps: [{ channel: "email", delay_days: 0, subject: "S", body: "B" }] })).json();
+  assert.deepEqual(c.window, { from: 0, to: 24, skip_friday: false });
+  const d = await (await post(`${P}/campaigns`, { name: "Window default", type: "outreach", window: { from: "", to: null }, steps: [{ channel: "email", delay_days: 0, subject: "S", body: "B" }] })).json();
+  assert.deepEqual([d.window.from, d.window.to], [9, 21]);
+  for (const x of [c, d]) await call(`${P}/campaigns/${x.id}`, { method: "DELETE" });
 });

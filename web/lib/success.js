@@ -226,7 +226,7 @@ export function renewalRows(customers, today, records = [], horizon = 90) {
 export function onboardingRow(c, contact, today, s = DEFAULT_SETTINGS) {
   if (!contact) return { customer_id: c.id, store_name: c.store_name, linked: false, days: daysBetween(c.start_date, today) };
   const done = contact.onboarding || {}, at = contact.onboarding_at || {};
-  const steps = ONBOARDING_STEPS.map((st) => ({ id: st.id, name: st.name, done: !!done[st.id], at: at[st.id] ? String(at[st.id]).slice(0, 10) : null }));
+  const steps = ONBOARDING_STEPS.map((st) => ({ id: st.id, name: st.name, done: !!done[st.id], at: at[st.id] ? (/T/.test(String(at[st.id])) && !Number.isNaN(Date.parse(at[st.id])) ? riyadhDay(new Date(at[st.id])) : String(at[st.id]).slice(0, 10)) : null }));  // Riyadh day, not the UTC date
   const count = steps.filter((x) => x.done).length;
   // Last progress: the latest step ticked (the CRM records when), else the customer's start date.
   const last = [c.start_date, ...steps.map((x) => x.at).filter(Boolean)].sort().at(-1);
