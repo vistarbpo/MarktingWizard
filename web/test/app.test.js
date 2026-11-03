@@ -970,3 +970,15 @@ test("pricing: render limits with billed overage or a hard stop", async () => {
   const old = cleanPricing({ plans: DEFAULT_PRICING.plans.map(({ render_limit, overage_per_1k, ...p }) => p) }, { ...DEFAULT_PRICING, plans: DEFAULT_PRICING.plans.map(({ render_limit, overage_per_1k, ...p }) => p) });
   assert.equal(old.plans[2].render_limit, 15000); assert.equal(old.plans[0].render_limit, 0);
 });
+
+test("home board: greeting data, outreach funnel and role-aware sections", async () => {
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/crm`;
+  await post(`${P}/sample`);
+  const d = await json(`/api/workspaces/${ws.id}/command`);
+  assert.ok(d.outreach.stores >= 240);
+  for (const k of ["contacted", "replied", "qualified", "onboarding", "active", "sent_week", "calls", "inbox_open", "running", "mode"]) assert.ok(k in d.outreach, k);
+  assert.ok(d.close && "verdict" in d.close);
+  assert.equal(d.me.name, ""); // team-password owner has no first name
+  await json(`${P}/sample`, { method: "DELETE" });
+});

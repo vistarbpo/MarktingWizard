@@ -1103,7 +1103,9 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     const ok = (label) => !MOD[label] || can(MOD[label]);
     if (!can("finance")) d.finance = { hidden: true, runway_months: null, cash_sar: 0, cash_as_of: null, net_burn_sar: 0, month_costs_sar: 0, cash_zero_month: null };
     if (!can("team")) d.team = { ...d.team, payroll_sar: 0, candidates: 0, hidden: true };
-    if (!can("sales")) { d.revenue = { ...d.revenue, open_value: 0, expected_mrr: 0, hidden: true }; }
+    if (!can("sales")) { d.revenue = { ...d.revenue, open_value: 0, expected_mrr: 0, hidden: true }; d.close = null; }
+    if (!can("crm")) d.outreach = null;
+    d.me = { name: req.user.id === "owner" ? "" : req.user.name.split(" ")[0] };
     d.needs = d.needs.filter((n) => ok(n.module));
     d.feed = d.feed.filter((f) => ok(f.module));
     d.work = { ...d.work, modules: d.work.modules.filter((m) => ok(m.module)) };

@@ -11,15 +11,17 @@ const cMoney = (n) => {
   return "$" + Math.round(n).toLocaleString("en-US");
 };
 const cNum = (v, unit) => unit === "$" ? cMoney(v) : unit === "%" ? `${+v.toFixed(1)}%` : `${+Number(v).toFixed(2)}${unit && !["$", "%"].includes(unit) ? " " + unit : ""}`;
-const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f" };
+const MOD_COLOR = { Marketing: "#8a7cf0", Sales: "var(--accent)", Support: "var(--good)", Hiring: "var(--warn)", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", "Store CRM": "#0a7fa8", Outreach: "#0a7fa8" };
 
 async function renderCommand(view) {
   view.innerHTML = `<p class="muted">Loading…</p>`;
   const [d, sopData] = await Promise.all([api(`/api/workspaces/${S.ws.id}/command`), api(`/api/workspaces/${S.ws.id}/sop`)]);
   $("#pageActions").innerHTML = `${d.has_samples ? `<span class="badge warn">Sample data loaded</span><button class="btn btn-sm btn-ghost btn-danger" data-cmd="unsample">Remove sample data</button>` : `<button class="btn btn-sm" data-cmd="sample">Load sample data</button>`}<span class="subtle s-small">Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><button class="btn btn-sm" data-cmd="refresh">Refresh</button>`;
   view.innerHTML = `${d.has_samples ? `<div class="notice" style="margin-bottom:16px">You're looking at sample data in every module (names start with "Sample ·"). Remove it from the top-right before entering real data, so reports and AI drafts only use your real numbers.</div>` : ""}<div class="cc">
+    ${ccHello(d)}
     ${ccGoal(d)}
     ${ccNeeds(d)}
+    ${ccGrowth(d)}
     ${ccTiles(d)}
     ${ccSopFull(sopData)}
     ${ccWork(d)}
@@ -28,6 +30,41 @@ async function renderCommand(view) {
     ${ccKpis(d)}
     ${ccFeed(d)}
   </div>`;
+}
+
+/* ---- Greeting and the day in one line */
+function ccHello(d) {
+  const now = new Date(), h = (now.getUTCHours() + 3) % 24; // Riyadh, UTC+3
+  const hello = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  const day = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Riyadh" });
+  const o = d.outreach, chips = [];
+  if (d.needs.length) chips.push([`${d.needs.length} need${d.needs.length === 1 ? "s" : ""} you`, "warn", ""]);
+  if (o?.calls) chips.push([`${o.calls} call${o.calls === 1 ? "" : "s"} to make`, "warn", "crm"]);
+  if (o?.inbox_open) chips.push([`${o.inbox_open} store repl${o.inbox_open === 1 ? "y" : "ies"} in the inbox`, o.inbox_person ? "warn" : "", "crm"]);
+  if (o) chips.push([o.mode === "live" ? `Outreach live · ${o.running} campaign${o.running === 1 ? "" : "s"}` : "Outreach in test mode", o.mode === "live" ? "good" : "", "crm"]);
+  if (!d.finance.hidden && d.finance.runway_months != null) chips.push([`${d.finance.runway_months} mo runway`, d.finance.runway_months < 6 ? "bad" : "", "finance"]);
+  return `<section class="cc-hello cc-span-12"><div><h2>${hello}${d.me?.name ? ", " + esc(d.me.name) : ""}</h2><span class="subtle s-small">${esc(day)} · ${esc(d.company)}</span></div>
+    <div class="cc-chips">${chips.map(([t, tone, r]) => `<${r ? `button type="button" data-go="${r}"` : "span"} class="badge ${tone}">${esc(t)}</${r ? "button" : "span"}>`).join("")}${chips.length ? "" : `<span class="badge good">All clear</span>`}</div></section>`;
+}
+
+/* ---- Growth funnel: from the store database to paying customers, across CRM and Sales */
+function ccGrowth(d) {
+  const o = d.outreach;
+  if (!o) return "";
+  if (!o.stores) return `<section class="card card-pad cc-span-12 clickable" data-go="crm"><span class="eyebrow">Growth funnel</span><p class="muted s-small" style="margin-top:8px">Import your Salla / Zid store list in Store CRM to see the whole funnel here, from the database to paying stores.</p></section>`;
+  const steps = [["Stores in CRM", o.stores, "crm"], ["Contacted", o.contacted, "crm"], ["Replied", o.replied, "crm"], ["Qualified", o.qualified, "pipeline"], ["Customers", o.onboarding + o.active, "crm"]];
+  const max = Math.max(1, steps[0][1]);
+  const pct = (a, b) => (b && a <= b ? (a / b) * 100 : null);
+  const closeOk = d.close && d.close.verdict !== "too early";
+  const fmt = (x) => (x == null ? "–" : x < 1 && x > 0 ? x.toFixed(1) + "%" : Math.round(x) + "%");
+  return `<section class="card card-pad cc-span-12">
+    <div class="row between" style="flex-wrap:wrap;gap:8px"><span class="eyebrow">Growth funnel · Store CRM → Sales</span>
+      <span class="subtle s-small">${o.sent_week.toLocaleString("en-US")} messages this week · reply rate ${o.reply_rate == null ? "–" : o.reply_rate + "%"} · ${o.running} campaign${o.running === 1 ? "" : "s"} running${closeOk ? ` · close rate ${Math.round(d.close.rate * 100)}%` : ""}</span></div>
+    <div class="cc-growth">${steps.map(([label, n, r], i) => `${i ? `<div class="cc-g-conv"><b class="num">${fmt(pct(n, steps[i - 1][1]))}</b><span class="subtle">→</span></div>` : ""}
+      <button type="button" class="cc-g-step" data-go="${r}"><span class="s-small muted">${label}</span><b class="num">${Number(n).toLocaleString("en-US")}</b>
+        <span class="cc-g-bar"><i style="width:${Math.max(2, (Math.log10(n + 1) / Math.log10(max + 1)) * 100)}%"></i></span></button>`).join("")}</div>
+    <p class="subtle s-small">Stores from the CRM only; customers = onboarding + active. Bars use a log scale so small numbers stay visible; percentages are step to step.${d.revenue.paying ? ` Sales has ${d.revenue.paying} paying store${d.revenue.paying === 1 ? "" : "s"} in total, including deals added there directly.` : ""}</p>
+  </section>`;
 }
 
 /* ---- Path to the ARR goal: a log-scale track from $0 to $100M ARR */
@@ -78,15 +115,16 @@ function ccNeeds(d) {
 function ccTiles(d) {
   const r = d.revenue, s = d.support, t = d.team;
   const tile = (label, val, sub, route, tone = "") => `<button type="button" class="card s-kpi cc-tile ${tone}" data-go="${route}"><span class="eyebrow">${label}</span><b class="num">${val}</b><span class="subtle">${sub}</span></button>`;
+  const o = d.outreach;
   return `<div class="cc-tiles cc-span-12">
     ${d.finance.hidden ? "" : tile("Runway", d.finance.runway_months == null ? (d.finance.month_costs_sar ? "∞" : "–") : d.finance.runway_months + " mo", d.finance.cash_as_of ? `SAR ${Math.round(d.finance.cash_sar).toLocaleString("en-US")} cash · burn ${Math.round(d.finance.net_burn_sar).toLocaleString("en-US")}/mo` : "add your bank balance in Finance", "finance", d.finance.runway_months != null && d.finance.runway_months < 6 ? "warn" : "")}
-    ${tile("Open deals", r.open_deals, `${cMoney(r.open_value)}/mo if all close`, "pipeline")}
-    ${tile("Operations", d.ops.open_tasks, `open tasks · ${d.ops.ai_owned_pct == null ? "–" : d.ops.ai_owned_pct + "%"} AI-owned${d.ops.open_incidents ? ` · ${d.ops.open_incidents} incident${d.ops.open_incidents === 1 ? "" : "s"}` : ""}`, "ops", d.ops.open_incidents || d.ops.overdue ? "warn" : "")}
+    ${o ? tile("Outreach", o.reply_rate == null ? "–" : o.reply_rate + "%", `reply rate · ${o.sent_week.toLocaleString("en-US")} sent this week${o.mode === "live" ? "" : " (test)"}`, "crm", o.calls || o.inbox_person ? "warn" : "") : ""}
+    ${r.hidden ? "" : tile("Pipeline", r.open_deals, `open deals · ${cMoney(r.open_value)}/mo if all close${d.close && d.close.verdict !== "too early" ? ` · close ${Math.round(d.close.rate * 100)}%` : ""}`, "pipeline", d.close?.verdict === "broken" ? "bad" : "")}
     ${tile("ROAS lift", d.roas.lift == null ? "–" : `${d.roas.lift > 0 ? "+" : ""}${Math.round(d.roas.lift * 100)}%`, d.roas.stores ? `designed ${d.roas.designed ?? "–"}x vs plain ${d.roas.plain ?? "–"}x · ${esc(d.roas.verdict)}` : "import store ad results to prove it", "results", d.roas.lift != null && d.roas.lift < 0 ? "warn" : "")}
+    ${tile("Support", s.open, `open · ${s.needs_you} need you · ${s.ai_resolved_pct == null ? "–" : s.ai_resolved_pct + "%"} solved by AI`, "support", s.needs_you ? "warn" : "")}
+    ${tile("Operations", d.ops.open_tasks, `open tasks · ${d.ops.ai_owned_pct == null ? "–" : d.ops.ai_owned_pct + "%"} AI-owned${d.ops.open_incidents ? ` · ${d.ops.open_incidents} incident${d.ops.open_incidents === 1 ? "" : "s"}` : ""}`, "ops", d.ops.open_incidents || d.ops.overdue ? "warn" : "")}
     ${tile("Product", `${d.product.now} · ${d.product.next}`, `Now · Next${d.product.last_release ? " · last " + esc(d.product.last_release) : ""}${d.product.feedback_unlinked ? ` · ${d.product.feedback_unlinked} requests to group` : ""}`, "product")}
-    ${tile("Support open", s.open, `${s.needs_you} need you · chat ${s.chat_on ? "on" : "off"}`, "support", s.needs_you ? "warn" : "")}
-    ${tile("Resolved by AI", s.ai_resolved_pct == null ? "–" : s.ai_resolved_pct + "%", "support, this week", "support")}
-        ${tile("Data completeness", d.data_completeness + "%", d.gaps[0] ? esc(d.gaps[0].question) : "everything filled in", "overview", d.data_completeness < 70 ? "warn" : "")}
+    ${tile("Data completeness", d.data_completeness + "%", d.gaps[0] ? esc(d.gaps[0].question) : "everything filled in", "overview", d.data_completeness < 70 ? "warn" : "")}
   </div>`;
 }
 

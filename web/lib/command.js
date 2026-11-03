@@ -87,8 +87,29 @@ export function commandSnapshot(store, ws, now = Date.now(), crm = null) {
 
   const gaps = dataGaps(ws.brief, notes, kpis.length, Object.keys(byKpi).length);
 
+  // Store CRM: the top of the growth funnel, and what's waiting on people there.
+  const outreach = (() => {
+    if (!crm) return null;
+    const cs = crm.contacts(id), ms = crm.db.messages.filter((m) => m.workspace_id === id);
+    const weekOut = ms.filter((m) => m.direction === "out" && ["sent", "test"].includes(m.status) && within(m.at, 7, now));
+    const weekIn = ms.filter((m) => m.direction === "in" && within(m.at, 7, now));
+    const touched = new Set(weekOut.map((m) => m.contact_id)), answered = new Set(weekIn.map((m) => m.contact_id));
+    const st = (list) => cs.filter((c) => list.includes(c.stage)).length;
+    return {
+      stores: cs.length, contacted: cs.filter((c) => c.last_contacted_at).length, replied: cs.filter((c) => c.last_reply_at).length,
+      qualified: st(["qualified", "onboarding", "active", "churned"]), onboarding: st(["onboarding"]), active: st(["active"]),
+      sent_week: weekOut.length, replies_week: weekIn.length, reply_rate: touched.size ? Math.round((answered.size / touched.size) * 1000) / 10 : null,
+      inbox_open: ms.filter((m) => m.direction === "in" && !m.handled).length, inbox_person: ms.filter((m) => m.direction === "in" && !m.handled && m.needs_person).length,
+      calls: ms.filter((m) => m.channel === "call" && m.status === "todo").length,
+      running: crm.campaigns(id).filter((c) => c.status === "running").length,
+      mode: crm.db.settings[id]?.mode || "test",
+    };
+  })();
+
   return {
     company: ws.brief.company_name,
+    outreach,
+    close: sales.close,
     goal: { arr_goal: ARR_GOAL, arr, next_milestone: next, milestones: MILESTONES, pct_of_goal: arr / ARR_GOAL },
     revenue: { paying_mrr: sales.paying_mrr, expected_mrr: sales.expected_mrr, paying: sales.paying_count, open_deals: sales.open_count, open_value: sales.open_value, funnel },
     work: { modules: work, ai: aiTotal, people: peopleTotal, ai_share: aiTotal + peopleTotal ? Math.round((aiTotal / (aiTotal + peopleTotal)) * 100) : null },
