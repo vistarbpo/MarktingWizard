@@ -91,7 +91,7 @@ function go(route, param = null) {
 
 /* ---------------------------------------------------------------- access */
 const ROUTE_MODULE = { command: "command", okr: "okr", meetings: "meetings", sop: "sop",overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
-  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", partners: "partners", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance", legal: "legal", helpcenter: "helpcenter", changelog: "product" };
+  pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", partners: "partners", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance", legal: "legal", helpcenter: "helpcenter", changelog: "product", investors: "investors" };
 // Pages that open for more than one module: the best level among them (each tab checks its own module).
 const ROUTE_ANY = { people: ["team", "payroll"] };
 const LEVEL_RANK = { none: 0, view: 1, edit: 2 };
@@ -112,7 +112,7 @@ const NAV = [
   { route: "finance", label: "Finance", icon: "coin" },
   { route: "ops", label: "Operations", icon: "gear" },
   { group: "team", label: "Team", icon: "people", items: [["workforce", "AI Workforce"], ["team", "Hiring"], ["people", "Attendance & payroll"]] },
-  { group: "settings", label: "Settings", icon: "lock", items: [["access", "Teams & roles"], ["compliance", "Security & compliance"], ["legal", "Legal & documents"]] },
+  { group: "settings", label: "Settings", icon: "lock", items: [["access", "Teams & roles"], ["compliance", "Security & compliance"], ["legal", "Legal & documents"], ["investors", "Investor room"]] },
 ];
 const NAV_ICON = {
   cal: "M4 5h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm-1 4h14M7 3v4m6-4v4M6.5 12.5h3",

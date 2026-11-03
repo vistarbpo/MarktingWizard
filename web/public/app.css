@@ -1397,3 +1397,59 @@ textarea.cl-body { width: 100%; height: auto; min-height: 140px; font-size: var(
   .cl-row, .cl-li { flex-direction: column; align-items: stretch; }
   .cl-row-side { justify-content: flex-start; max-width: none; }
 }
+
+/* Investor room: prefix iv- */
+.iv-tabs { flex-wrap: wrap; width: fit-content; max-width: 100%; }
+.iv-body { margin-top: 16px; min-width: 0; }
+.iv-stack { margin-top: 16px; }
+.iv-banner { margin: 0 0 16px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); color: var(--text-2); overflow-wrap: anywhere; }
+.iv-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); align-items: start; margin-top: 12px; }
+.iv-form .field label { display: flex; flex-direction: column; gap: 6px; }
+.iv-wide { grid-column: 1 / -1; }
+.iv-ta { width: 100%; height: auto; min-height: 64px; padding: 8px 10px; font-size: var(--fs-sm); }
+.iv-big { min-height: 420px; font-family: var(--mono); font-size: var(--fs-xs); margin-top: 6px; }
+select.iv-multi { height: auto; min-height: 96px; padding: 6px; background-image: none; }
+.iv-flex { flex-wrap: wrap; }
+.iv-wrap { overflow-wrap: anywhere; min-width: 0; }
+.iv-url { overflow-wrap: anywhere; word-break: break-all; font-family: var(--mono); font-size: var(--fs-xs); margin: 6px 0 0; }
+.iv-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.iv-card { cursor: pointer; }
+.iv-empty { margin: 4px; }
+.iv-link { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: start; }
+.iv-link:hover { text-decoration: underline; }
+.iv-head { min-width: 0; overflow-wrap: anywhere; }
+.iv-h { margin: 6px 0 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.iv-h3 { margin: 0 0 8px; }
+.iv-mt { margin-top: 12px; }
+.iv-m0 { margin: 0; }
+.iv-dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; margin: 12px 0 0; }
+.iv-dl dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.iv-ul { list-style: none; margin: 0; padding: 0; }
+.iv-ul0 { list-style: none; margin: 0; padding: 0; }
+.iv-li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid var(--border); padding: 8px 0; min-width: 0; overflow-wrap: anywhere; }
+.iv-ul .iv-li:first-child { border-top: 0; }
+.iv-linkrow { min-width: 0; overflow-wrap: anywhere; }
+.iv-folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--s-3); }
+.iv-adds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-3); margin-top: 12px; }
+.iv-form1 { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md); min-width: 0; }
+.iv-form1 .input { width: 100%; }
+.iv-fs { border: 0; margin: 0; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.iv-fs legend { padding: 0; margin-bottom: 6px; font-weight: 500; }
+.iv-fs .chip { flex: 0 0 auto; width: auto; }
+.iv-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 14px; text-align: start; border: 1px solid var(--border); font: inherit; color: inherit; cursor: pointer; width: 100%; }
+.iv-row:hover { border-color: var(--accent); }
+.iv-gap8 > * + * { margin-top: 8px; }
+.iv-self-end { align-self: flex-end; }
+.iv-sum { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.iv-warn { margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-md); background: var(--warn-soft); color: var(--text); }
+.iv-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); align-items: start; }
+.iv-two > :only-child { grid-column: 1 / -1; }
+.iv-doc { max-width: none; }
+.iv-table td:first-child, .iv-table th:first-child { width: 32px; }
+.iv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 760px) {
+  .iv-form, .iv-two { grid-template-columns: minmax(0, 1fr); }
+  .iv-li { flex-direction: column; align-items: stretch; }
+  .iv-folders, .iv-adds { grid-template-columns: minmax(0, 1fr); }
+  .iv-extend { flex-wrap: wrap; }
+}
