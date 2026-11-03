@@ -90,7 +90,7 @@ function go(route, param = null) {
 }
 
 /* ---------------------------------------------------------------- access */
-const ROUTE_MODULE = { command: "command", okr: "okr", sop: "sop",overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
+const ROUTE_MODULE = { command: "command", okr: "okr", meetings: "meetings", sop: "sop",overview: "marketing", brief: "marketing", knowledge: "marketing", kpis: "marketing", playbooks: "marketing", library: "marketing",
   pipeline: "sales", crm: "crm", studio: "creative", ads: "ads", intel: "intel", workforce: "workforce", product: "product", support: "support", results: "results", finance: "finance", billing: "billing", success: "success", ops: "ops", team: "team", people: "team", access: "admin", compliance: "compliance" };
 // Pages that open for more than one module: the best level among them (each tab checks its own module).
 const ROUTE_ANY = { people: ["team", "payroll"] };
@@ -104,6 +104,7 @@ const NAV = [
   { route: "command", label: "Home", icon: "home" },
   { route: "sop", label: "SOP", icon: "check" },
   { route: "okr", label: "Goals & review", icon: "target" },
+  { route: "meetings", label: "Meetings", icon: "cal" },
   { group: "grow", label: "Grow", icon: "trend", items: [["crm", "Store CRM"], ["pipeline", "Sales pipeline"], ["studio", "Creative Studio"], ["ads", "Paid Ads"], ["intel", "Market intel"], ["results", "ROAS results"]] },
   { group: "customers", label: "Customers", icon: "chat", items: [["support", "AI Support"], ["billing", "Billing & customers"], ["success", "Customer success"]] },
   { group: "brain", label: "Marketing brain", icon: "spark", items: [["overview", "Overview"], ["brief", "Brief"], ["knowledge", "Knowledge"], ["kpis", "KPIs"], ["playbooks", "Playbooks"], ["library", "Library"]] },
@@ -114,6 +115,7 @@ const NAV = [
   { group: "settings", label: "Settings", icon: "lock", items: [["access", "Teams & roles"], ["compliance", "Security & compliance"]] },
 ];
 const NAV_ICON = {
+  cal: "M4 5h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm-1 4h14M7 3v4m6-4v4M6.5 12.5h3",
   home: "M3 8.5 10 3l7 5.5V17a1 1 0 0 1-1 1h-4v-5H8v5H4a1 1 0 0 1-1-1z", target: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 3.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm0 3.5h.01",check: "M4 10.5 8 14l8-8", trend: "M3 14l5-5 3 3 6-6M13 6h4v4",
   chat: "M4 4h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", spark: "M10 2.5l1.8 5.7 5.7 1.8-5.7 1.8L10 17.5l-1.8-5.7L2.5 10l5.7-1.8z",
   box: "M3 6.5 10 3l7 3.5v7L10 17l-7-3.5zM3 6.5 10 10l7-3.5M10 10v7", coin: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 3v8m-2.5-6h3.75a1.5 1.5 0 0 1 0 3h-2.5a1.5 1.5 0 0 0 0 3H12.5",

@@ -173,13 +173,13 @@ export function mountMeetings(app, { store, crm = null, outreach = null, success
       const next = [];
       for (const src of b.items.slice(0, 60)) {
         const cur = d.items.find((x) => x.id === String(src.id));
-        if (cur?.state === "created") { next.push(cur); continue; }
+        if (cur && cur.state !== "draft") { next.push(cur); continue; }
         const { f, err } = cleanItemEdit(w, m, src, cur);
         if (err.length) return res.status(422).json({ detail: err.join("; ") });
         next.push(cur ? { ...cur, ...f } : { id: store.newId(), text: "", owner_id: null, owner_name: "", due: null, target: "ops", kr_id: null, source: "", state: "draft", added: true, ...f });
         if (!next.at(-1).text) return res.status(422).json({ detail: "An action item needs its text." });
       }
-      for (const cur of d.items) if (cur.state === "created" && !next.some((x) => x.id === cur.id)) next.push(cur); // created items can't be dropped
+      for (const cur of d.items) if (cur.state !== "draft" && !next.some((x) => x.id === cur.id)) next.push(cur); // created and skipped items stay
       d.items = next;
     }
     d.edited_by = by(req);
