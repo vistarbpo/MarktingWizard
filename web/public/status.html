@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DPA AD status</title>
+<meta name="description" content="Live status of DPA AD: dashboard, ad rendering, publishing, store integrations, email and WhatsApp.">
+<style>
+:root { --bg:#f7f7f5; --card:#fff; --text:#16181d; --muted:#5f6570; --border:#e4e4e0; --ok:#1a7f4b; --ok-soft:#e3f4ea; --deg:#a15c00; --deg-soft:#fbf0dd; --out:#c0362c; --out-soft:#fbe7e5; --mnt:#2f5fd0; --mnt-soft:#e6edfc; --none:#d9d9d4; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#101114; --card:#17191d; --text:#ececea; --muted:#9ba1ab; --border:#2a2d33; --ok:#4cc489; --ok-soft:#14291e; --deg:#e0a447; --deg-soft:#2d2213; --out:#f07167; --out-soft:#321716; --mnt:#7ea2ff; --mnt-soft:#18213a; --none:#2f3238; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg:#101114; --card:#17191d; --text:#ececea; --muted:#9ba1ab; --border:#2a2d33; --ok:#4cc489; --ok-soft:#14291e; --deg:#e0a447; --deg-soft:#2d2213; --out:#f07167; --out-soft:#321716; --mnt:#7ea2ff; --mnt-soft:#18213a; --none:#2f3238; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+.brand i { width: 22px; height: 22px; border-radius: 6px; background: #1f5eff; display: inline-block; }
+.tools { display: flex; gap: 8px; }
+.tools button { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px; }
+.banner { border-radius: 12px; padding: 18px 20px; font-weight: 600; font-size: 17px; margin-bottom: 20px; display: flex; gap: 10px; align-items: center; }
+.banner.operational { background: var(--ok-soft); color: var(--ok); } .banner.degraded { background: var(--deg-soft); color: var(--deg); }
+.banner.outage { background: var(--out-soft); color: var(--out); } .banner.maintenance { background: var(--mnt-soft); color: var(--mnt); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+.comp { padding: 16px 20px; border-top: 1px solid var(--border); }
+.comp:first-child { border-top: 0; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.name { font-weight: 600; }
+.state { font-size: 13px; font-weight: 600; }
+.state.operational { color: var(--ok); } .state.degraded { color: var(--deg); } .state.outage { color: var(--out); } .state.maintenance { color: var(--mnt); }
+.bar { display: flex; gap: 2px; height: 34px; margin: 10px 0 6px; }
+.bar span { flex: 1 1 0; min-width: 0; border-radius: 2px; background: var(--none); }
+.bar .operational { background: var(--ok); } .bar .degraded { background: var(--deg); } .bar .outage { background: var(--out); } .bar .maintenance { background: var(--mnt); }
+.legend { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; gap: 8px; }
+.note { color: var(--muted); font-size: 13px; margin-top: 4px; }
+h2 { font-size: 16px; margin: 28px 0 10px; }
+.inc { padding: 16px 20px; border-top: 1px solid var(--border); }
+.inc:first-child { border-top: 0; }
+.inc h3 { margin: 0 0 4px; font-size: 15px; }
+.upd { margin: 8px 0 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--border); }
+.upd b { text-transform: capitalize; }
+.muted { color: var(--muted); font-size: 13px; }
+footer { margin-top: 32px; color: var(--muted); font-size: 12px; text-align: center; }
+.l30 { display: none; }
+@media (max-width: 600px) { .bar span:nth-child(-n+60) { display: none; } .l90 { display: none; } .l30 { display: inline; } .banner { font-size: 15px; } .comp, .inc { padding: 14px 16px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><i aria-hidden="true"></i><span id="t-title">DPA AD status</span></div>
+    <div class="tools"><button id="lang" type="button">العربية</button><button id="theme" type="button" aria-label="Switch light or dark"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button></div>
+  </header>
+  <div id="app"><p class="muted" id="t-loading">Loading…</p></div>
+  <footer id="foot"></footer>
+</div>
+<script>
+"use strict";
+(function () {
+  const T = {
+    en: { title: "DPA AD status", loading: "Loading…", operational: "Operational", degraded: "Degraded performance", outage: "Outage", maintenance: "Maintenance", nodata: "No data",
+      all_ok: "All systems operational", some: "Some systems are having problems", major: "Major outage", mnt: "Maintenance in progress", ago: "90 days ago", ago30: "30 days ago", today: "Today", uptime: "uptime", no_uptime: "uptime not measured yet",
+      current: "Current incidents", past: "Past incidents (90 days)", none_past: "No incidents in the last 90 days.", none_now: "", investigating: "Investigating", identified: "Identified", monitoring: "Monitoring", resolved: "Resolved",
+      updated: "Updated", since: "Tracked since", error: "Status is unavailable right now. Try again in a minute.", affects: "Affects" },
+    ar: { title: "حالة خدمات DPA AD", loading: "جارٍ التحميل…", operational: "تعمل بشكل طبيعي", degraded: "أداء منخفض", outage: "انقطاع", maintenance: "صيانة", nodata: "لا توجد بيانات",
+      all_ok: "كل الخدمات تعمل بشكل طبيعي", some: "بعض الخدمات تواجه مشكلة", major: "انقطاع كبير", mnt: "صيانة جارية", ago: "قبل ٩٠ يوم", ago30: "قبل ٣٠ يوم", today: "اليوم", uptime: "وقت التشغيل", no_uptime: "لم يُقَس وقت التشغيل بعد",
+      current: "الأعطال الحالية", past: "الأعطال السابقة (٩٠ يوم)", none_past: "لا توجد أعطال خلال آخر ٩٠ يوم.", none_now: "", investigating: "نتحقق من المشكلة", identified: "عرفنا السبب", monitoring: "نراقب الوضع", resolved: "تم الحل",
+      updated: "آخر تحديث", since: "بدأ القياس", error: "الحالة غير متاحة الآن. حاول بعد دقيقة.", affects: "يؤثر على" },
+  };
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+  let lang = store.get("st-lang") || ((navigator.language || "").startsWith("ar") ? "ar" : "en");
+  let data = null;
+  const t = (k) => T[lang][k] || T.en[k] || k;
+  const pick = (o) => (o && (o[lang] || o.en || o.ar)) || "";
+  const when = (iso) => new Date(iso).toLocaleString(lang === "ar" ? "ar-SA" : "en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Riyadh" });
+  const day = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(lang === "ar" ? "ar-SA" : "en-GB", { day: "numeric", month: "short" });
+  const headline = (s) => ({ operational: t("all_ok"), degraded: t("some"), outage: t("major"), maintenance: t("mnt") })[s] || t("all_ok");
+  const compName = (id) => pick(data.components.find((c) => c.id === id)?.name) || id;
+  function incident(i) {
+    return `<div class="inc"><h3 dir="auto">${esc(pick(i.title))}</h3>
+      <div class="muted">${esc(t(i.impact))} · ${esc(t("affects"))}: ${i.components.map((c) => esc(compName(c))).join(lang === "ar" ? "، " : ", ")} · ${esc(when(i.started_at))}${i.resolved_at ? " → " + esc(when(i.resolved_at)) : ""}</div>
+      ${i.updates.map((u) => `<div class="upd"><b>${esc(t(u.state))}</b> <span class="muted">${esc(when(u.at))}</span><div dir="auto">${esc(pick(u.text))}</div></div>`).join("")}</div>`;
+  }
+  function render() {
+    document.documentElement.lang = lang; document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
+    document.title = t("title"); document.getElementById("t-title").textContent = t("title");
+    document.getElementById("lang").textContent = lang === "ar" ? "English" : "العربية";
+    const app = document.getElementById("app");
+    if (!data) return;
+    if (data.error) { app.innerHTML = `<div class="banner outage">${esc(t("error"))}</div>`; return; }
+    app.innerHTML = `<div class="banner ${esc(data.overall)}" role="status">${esc(headline(data.overall))}</div>
+      ${data.incidents.active.length ? `<h2>${esc(t("current"))}</h2><div class="card">${data.incidents.active.map(incident).join("")}</div>` : ""}
+      <div class="card" style="margin-top:16px">${data.components.map((c) => `<div class="comp">
+        <div class="row"><span class="name">${esc(pick(c.name))}</span><span class="state ${esc(c.state)}">${esc(t(c.state))}</span></div>
+        <div class="bar" role="img" aria-label="${esc(pick(c.name))}: ${esc(c.uptime_pct == null ? t("no_uptime") : c.uptime_pct + "% " + t("uptime"))}">${c.days.map((d) => `<span class="${esc(d.state)}" title="${esc(day(d.date))}: ${esc(t(d.state))}"></span>`).join("")}</div>
+        <div class="legend"><span><span class="l90">${esc(t("ago"))}</span><span class="l30">${esc(t("ago30"))}</span></span><span>${esc(c.uptime_pct == null ? t("no_uptime") : c.uptime_pct + "% " + t("uptime"))}</span><span>${esc(t("today"))}</span></div>
+      </div>`).join("")}</div>
+      <h2>${esc(t("past"))}</h2>
+      <div class="card">${data.incidents.past.length ? data.incidents.past.map(incident).join("") : `<div class="inc muted">${esc(t("none_past"))}</div>`}</div>`;
+    document.getElementById("foot").textContent = `${t("updated")}: ${when(data.updated_at)} · ${t("since")}: ${when(data.tracked_since)}`;
+  }
+  async function load() {
+    try { const r = await fetch("/status.json", { cache: "no-store" }); data = r.ok ? await r.json() : { error: true }; }
+    catch { data = data || { error: true }; }
+    render();
+  }
+  document.getElementById("lang").onclick = () => { lang = lang === "ar" ? "en" : "ar"; store.set("st-lang", lang); render(); };
+  document.getElementById("theme").onclick = () => {
+    const root = document.documentElement, dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark"; store.set("st-theme", root.dataset.theme);
+  };
+  const th = store.get("st-theme"); if (th) document.documentElement.dataset.theme = th;
+  render(); load(); setInterval(load, 60e3);
+})();
+</script>
+</body>
+</html>

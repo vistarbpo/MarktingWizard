@@ -12,6 +12,12 @@
 //      LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_ORG_ID (company page, once approved), LINKEDIN_VERSION
 //      GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, YOUTUBE_AUDITED=1 (after Google's audit; until then uploads are private)
 //      TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_AUDITED=1 (after TikTok's audit; until then posts are SELF_ONLY)
+// Backups (Security & compliance; nightly 02:00 Riyadh into DATA_DIR/backups, last 14 nightly + 8 weekly):
+//      BACKUP_KEY (required to encrypt and to send off-site; 64 hex chars from `openssl rand -hex 32`; keep a copy safe)
+//      BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_KEY, BACKUP_S3_SECRET, BACKUP_S3_REGION (default us-east-1),
+//      BACKUP_S3_PREFIX (default marketing-wizard/), BACKUP_S3_PATH_STYLE (1/0) (Cloudflare R2, Backblaze B2, AWS S3, Hostinger…)
+//      BACKUP_EMAIL_TO, BACKUP_EMAIL_MAX_MB (default 15; uses the SMTP_* mailbox), BACKUP_MEDIA=0 (leave media out), BACKUP_MEDIA_MAX_MB (default 200)
+// Status page (/status, public): self-checks PUBLIC_URL/healthz every 5 minutes (localhost when PUBLIC_URL is unset).
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./lib/app.js";
@@ -28,6 +34,8 @@ const port = process.env.PORT || 3000;
 const app = createApp({ store, provider, password });
 app.locals.outreach.start(); // Store CRM: sends due messages every minute, reads the mailbox every 3 minutes
 app.locals.studio.start(); // Creative Studio: publishes due posts every minute, comments every 15 minutes, results every 6 hours
+app.locals.backups.start(); // Backups: checks every minute, runs nightly from 02:00 Riyadh (catches up after a restart)
+app.locals.status.start({ url: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/$/, "") + "/healthz" }); // status page uptime self-check every 5 minutes
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { app.locals.crm.flush(); process.exit(0); });
 app.listen(port, () =>
   console.log(`Marketing Wizard listening on ${port} (provider ${provider.name}, login ${password ? "on" : "NOT SET"})`));

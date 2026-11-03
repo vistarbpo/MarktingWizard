@@ -51,6 +51,9 @@ export const AGENTS = [
     job: "Writes job posts, screens candidates against the role, drafts messages.", levels: { 1: "Screens and drafts; a person interviews and decides." } },
   { id: "roas_analyst", name: "AI Results analyst", team: "Customer Success", module: "results", route: "results", max: 1, level: 1, budget: 10,
     job: "Turns ROAS results into case studies (real numbers only).", levels: { 1: "Drafts; a person gets the store's permission and publishes." } },
+  { id: "compliance_officer", name: "AI Compliance officer", team: "Leadership", module: "compliance", route: "compliance", max: 1, level: 1, budget: 10,
+    job: "Drafts security policies and customer-facing status-page updates, and flags overdue data requests and breach deadlines.",
+    levels: { 1: "Drafts and flags; a person edits, approves and publishes." } },
 ];
 export const AGENT_IDS = AGENTS.map((a) => a.id);
 export const agentDef = (id) => AGENTS.find((a) => a.id === id);
@@ -59,6 +62,7 @@ export const agentDef = (id) => AGENTS.find((a) => a.id === id);
 export function agentFor(method, path) {
   const p = path.split("?")[0];
   if (p.startsWith("/api/public/support")) return "support_agent";
+  if (p.startsWith("/api/compliance")) return "compliance_officer";
   const seg = p.split("/").filter(Boolean)[3] || "";
   if (seg === "creative") return /\/(plan|ideas)$/.test(p) ? "creative_strategist" : "creative_copywriter";
   if (seg === "crm") return /ai-write/.test(p) ? "crm_sequence_writer" : "crm_triage";

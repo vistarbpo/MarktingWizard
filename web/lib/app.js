@@ -23,6 +23,9 @@ import { createPublisher } from "./publisher.js";
 import { socialConfig } from "./social.js";
 import { mountStudio, mountStudioPublic } from "./studioroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
+import { createBackups } from "./backup.js";
+import { createStatus } from "./status.js";
+import { complianceNeeds, mountCompliance, mountCompliancePublic } from "./complianceroutes.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
 import { CATEGORIES as FIN_CATEGORIES, CAT_IDS, FIN_TASKS, INCOME_IDS, INCOME_TYPES, financePrompt, financeSnapshot, importPrompt, parseImport } from "./finance.js";
@@ -33,7 +36,7 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {} }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -43,6 +46,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const products = createProducts({ crm, ...productOptions }); // product samples per store (fetch jobs)
   const studio = createPublisher({ store, provider, cfg: socialConfig(process.env, password),
     publisherLevel: () => workforce.level("creative_publisher"), setPublisherLevel: (on, by) => workforce.set("creative_publisher", { level: on ? 2 : 1, paused: false }, by), ...studioOptions }); // Creative Studio publishing
+  const backups = createBackups({ store, crm, env, ...backupOptions }); // nightly encrypted backups (Security & compliance)
+  const status = createStatus({ store, ...statusOptions }); // public status page
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -66,7 +71,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -161,6 +166,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
 
   mountCrmPublic(app, { crm, outreach });
   mountStudioPublic(app, { store, studio });
+  mountCompliancePublic(app, { status });
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -188,6 +194,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountCreative(app, { store, provider, workforce, crm });
   mountStudio(app, { store, provider, studio });
   mountWorkforce(app, { store, workforce });
+  mountCompliance(app, { store, crm, provider, workforce, backups, status, password, env });
 
   // ---- Ask DPA AD: the assistant on every page
   let aiClient = assistantClient;
@@ -1150,13 +1157,14 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const d = { ...commandSnapshot(store, w, Date.now(), crm), has_samples: hasSampleData(store, w.id) };
     // The overview only shows what this person's role may see in each module.
     const can = (m) => levelOk(req.perms[m], "view");
-    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative" };
+    const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", Compliance: "compliance" };
     if (!can("creative")) d.creative = null;
     if (can("workforce")) {
       const wsum = workforceSummary(store, workforce);
       d.workforce = { agents: wsum.totals.active, autonomous: wsum.totals.autonomous, people: wsum.totals.people, cost_month: wsum.totals.cost_month, budget_month: wsum.totals.budget_month, quality: wsum.totals.quality };
       d.needs = [...wsum.needs.filter((n) => !n.soft).slice(0, 3).map((n) => ({ module: "AI Workforce", route: "workforce", param: null, title: "AI Workforce", text: n.text })), ...d.needs];
     }
+    if (can("compliance")) d.needs = [...complianceNeeds({ store, backups }).slice(0, 4), ...d.needs];
     const ok = (label) => !MOD[label] || can(MOD[label]);
     if (!can("finance")) d.finance = { hidden: true, runway_months: null, cash_sar: 0, cash_as_of: null, net_burn_sar: 0, month_costs_sar: 0, cash_zero_month: null };
     if (!can("team")) d.team = { ...d.team, payroll_sar: 0, candidates: 0, hidden: true };
