@@ -6723,3 +6723,320 @@ test("changelog: AI Release notes writer agent, module mapping, Ask DPA AD tools
     assert.deepEqual(k.st.db.changelog_entries.map((y) => y.id), ["zc"]); assert.equal(k.st.db.changelog_notices.length, 0);
   } finally { k.done(); }
 });
+
+// ---------------------------------------------------------------- Investor room
+async function ivKit({ clock = "2026-11-03T09:00:00Z", assistantClient = null, env = { PUBLIC_URL: "https://wizard.dpa.ad" } } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-iv-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const seen = [];
+  const prov = { name: "test", model: "test", async generate(a) { seen.push(a.prompt); return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const clk = () => (t == null ? Date.now() : t);
+  const app2 = createApp({ store: st, provider: prov, password: "pw-iv", assistantClient, env, investorsOptions: { clock: clk }, legalOptions: { clock: clk } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-iv" });
+  const as = async (c, p, m = "GET", body) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const W = `/api/workspaces/${w.id}`, X = `${W}/investors`;
+  const user = async (role, tag = role) => { const email = `iv-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Iv ${tag}`, email, password: `iv-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `iv-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  // Public share-link pages: no cookie unless given; a user agent to check the browser family.
+  const pub = async (p, { cookie: c = "", method = "GET", body, ua = "Mozilla/5.0 Chrome/120.0 Safari/537.36" } = {}) => { const r = await fetch(b2 + p, { method, redirect: "manual", headers: { ...(c ? { cookie: c } : {}), "user-agent": ua, ...(body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}) }, body }); return { status: r.status, text: await r.text(), headers: r.headers }; };
+  const upload = async (c, p, buf) => { const r = await fetch(b2 + p, { method: "POST", headers: { "Content-Type": "application/octet-stream", cookie: c }, body: buf }); const txt = await r.text(); let b = null; try { b = JSON.parse(txt); } catch { b = txt; } return { status: r.status, body: b }; };
+  const events = () => st.db.agent_events.filter((x) => x.agent_id === "investor_relations");
+  const tokenOf = (l) => l.url.split("/i/")[1];
+  return { app: app2, st, w, W, X, j, as, ck, user, pub, upload, b2, seen, events, tokenOf, dir: d, crm: app2.locals.crm,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+const IV_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+
+test("investor room CRM: investors with validation, stages and pipeline counts, notes and change log, linked meetings, round committed sum from committed investors only, [CONFIRM] terms until confirmed, delete", async () => {
+  const k = await ivKit();
+  try {
+    assert.equal((await k.j(`${k.X}/investors`, {})).status, 422);
+    assert.match((await k.j(`${k.X}/investors`, { name: "X", stage: "dating" })).body.detail, /stage must be one of/);
+    assert.match((await k.j(`${k.X}/investors`, { name: "X", check_min_usd: 500000, check_max_usd: 100000 })).body.detail, /more than/);
+    assert.match((await k.j(`${k.X}/investors`, { name: "X", contact: { email: "nope" } })).body.detail, /email is not valid/);
+    const round = (await k.j(`${k.X}/rounds`, { name: "Seed", target_usd: 1500000, valuation_cap_usd: 12000000 })).body;
+    assert.equal(round.terms_flag, "[CONFIRM]"); assert.equal(round.terms_confirmed, false); assert.equal(round.committed_usd, 0);
+    const mt = (await k.j(`${k.W}/meetings`, { title: "Intro call with Raed", date: "2026-11-02", time: "10:00", type: "investor" })).body;
+    const a = (await k.j(`${k.X}/investors`, { name: "Raed Ventures", kind: "fund", stage: "intro", check_min_usd: 100000, check_max_usd: 500000, thesis: "Seed SaaS in KSA", intro_path: "Via Sara (Salla)", next_step: "Send deck", next_step_date: "2026-11-05", contact: { name: "Raed", email: "raed@raed.vc", phone: "+966 50 111 2222" }, round_id: round.id, meeting_ids: [mt.id] })).body;
+    assert.equal(a.stage_name, "Intro"); assert.equal(a.round_name, "Seed"); assert.equal(a.overdue, false); assert.equal(a.owner_id, "owner");
+    assert.match((await k.j(`${k.X}/investors`, { name: "Bad", meeting_ids: ["nope"] })).body.detail, /meeting_ids not found/);
+    const b = (await k.j(`${k.X}/investors`, { name: "Noura Angel", kind: "angel", stage: "committed", committed_usd: 100000, round_id: round.id })).body;
+    const c = (await k.j(`${k.X}/investors`, { name: "Gulf Fund", stage: "diligence", committed_usd: 50000, round_id: round.id })).body;
+    await k.j(`${k.X}/investors`, { name: "Committed, no amount yet", stage: "committed", round_id: round.id });
+    // Committed = typed amounts of investors at Committed only (the diligence one doesn't count).
+    let r = (await k.j(`${k.X}/rounds`)).body.rounds[0];
+    assert.equal(r.committed_usd, 100000); assert.equal(r.committed_count, 2); assert.equal(r.committed_missing, 1); assert.equal(r.in_play, 2);
+    const up = (await k.j(`${k.X}/investors/${a.id}`, { stage: "committed", committed_usd: 250000 }, "PUT")).body;
+    assert.equal(up.stage, "committed");
+    r = (await k.j(`${k.X}/rounds`)).body.rounds[0];
+    assert.equal(r.committed_usd, 350000);
+    // Terms: [CONFIRM] until a person confirms; editing them asks again.
+    r = (await k.j(`${k.X}/rounds/${round.id}/confirm-terms`, {})).body;
+    assert.equal(r.terms_confirmed, true); assert.equal(r.terms_flag, "");
+    r = (await k.j(`${k.X}/rounds/${round.id}`, { valuation_cap_usd: 15000000 }, "PUT")).body;
+    assert.equal(r.terms_confirmed, false); assert.equal(r.terms_flag, "[CONFIRM]");
+    const noTerms = (await k.j(`${k.X}/rounds`, { name: "Pre-seed" })).body;
+    assert.equal((await k.j(`${k.X}/rounds/${noTerms.id}/confirm-terms`, {})).status, 422);
+    // Notes, log, pipeline counts, search, linked meeting.
+    assert.equal((await k.j(`${k.X}/investors/${c.id}/notes`, { text: "" })).status, 422);
+    await k.j(`${k.X}/investors/${c.id}/notes`, { text: "Asked for the cohort data" });
+    const det = (await k.j(`${k.X}/investors/${a.id}`)).body;
+    assert.deepEqual(det.meetings.map((m) => m.title), ["Intro call with Raed"]);
+    assert.ok(det.log.some((l) => /stage → Committed/.test(l.text) && /committed amount → USD 250,000/.test(l.text)));
+    const list = (await k.j(`${k.X}/investors`)).body;
+    assert.equal(list.total, 4); assert.equal(list.by_stage.committed, 3); assert.equal(list.by_stage.diligence, 1);
+    assert.deepEqual((await k.j(`${k.X}/investors?q=gulf`)).body.investors.map((i) => i.name), ["Gulf Fund"]);
+    assert.equal((await k.j(`${k.X}/investors/${c.id}`)).body.notes[0].text, "Asked for the cohort data");
+    // Overdue next step.
+    await k.j(`${k.X}/investors/${c.id}`, { next_step: "Share cohort data", next_step_date: "2026-11-01" }, "PUT");
+    assert.equal((await k.j(`${k.X}/investors`)).body.overdue, 1);
+    // Deleting a round unlinks its investors; deleting an investor removes its links.
+    await k.j(`${k.X}/rounds/${noTerms.id}`, undefined, "DELETE");
+    assert.equal((await k.j(`${k.X}/investors/${b.id}`, undefined, "DELETE")).status, 204);
+    assert.equal((await k.j(`${k.X}/investors/${b.id}`)).status, 404);
+    assert.ok(k.st.db.audit.some((x) => /added investor "Raed Ventures"/.test(x.summary) && x.module === "investors"));
+  } finally { k.done(); }
+});
+
+test("investor room permissions: Owner edit, Admin view, everyone else none (404 on every route), ensureRoles adds the module, assistant tools carry the module", async () => {
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  assert.ok(MODULE_IDS.includes("investors"));
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.investors])), { owner: "edit", admin: "view", manager: "none", member: "none", finance: "none", creative: "none", viewer: "none" });
+  assert.equal(moduleFor("POST", "/api/workspaces/1/investors/links/3/revoke"), "investors");
+  const k = await ivKit();
+  try {
+    const inv = (await k.j(`${k.X}/investors`, { name: "Raed Ventures" })).body;
+    for (const role of ["manager", "member", "finance", "creative", "viewer"]) {
+      const u = await k.user(role);
+      for (const [p, m] of [[`${k.X}/meta`, "GET"], [`${k.X}/investors`, "GET"], [`${k.X}/investors/${inv.id}`, "GET"], [`${k.X}/metrics`, "GET"], [`${k.X}/investors`, "POST"], [`${k.X}/links`, "POST"], [`${k.X}/room`, "GET"]]) {
+        const r = await k.as(u.ck, p, m, m === "POST" ? { name: "x" } : undefined);
+        assert.equal(r.status, 404, `${role} ${m} ${p}`);
+      }
+      assert.equal((await k.as(u.ck, "/api/me")).body.perms.investors, "none");
+    }
+    const adm = await k.user("admin");
+    assert.equal((await k.as(adm.ck, `${k.X}/investors`)).status, 200);
+    assert.equal((await k.as(adm.ck, `${k.X}/investors`, "POST", { name: "x" })).status, 403);
+    assert.equal((await k.as(adm.ck, `${k.X}/meta`)).body.me.edit, false);
+    // An older roles list without the module gets the defaults.
+    for (const r of k.st.db.roles) delete r.perms.investors;
+    k.st.ensureRoles();
+    assert.equal(k.st.db.roles.find((r) => r.id === "admin").perms.investors, "view"); assert.equal(k.st.db.roles.find((r) => r.id === "viewer").perms.investors, "none");
+    const { TOOLS } = await import("../lib/assistant.js");
+    const lt = TOOLS.find((t) => t.name === "list_investors"), nt = TOOLS.find((t) => t.name === "add_investor_note");
+    assert.equal(lt.module, "investors"); assert.ok(!lt.write); assert.equal(nt.module, "investors"); assert.equal(nt.write, true); assert.equal(nt.risk, "low"); assert.equal(typeof nt.preview, "function");
+  } finally { k.done(); }
+});
+
+test("investor room metrics pack: every empty source says No data yet (never 0 or an estimate); live values from Finance (MRR from logged income without Billing); a frozen snapshot never changes", async () => {
+  const k = await ivKit();
+  try {
+    const empty = (await k.j(`${k.X}/metrics`)).body.metrics;
+    assert.equal(empty.length, 18);
+    for (const m of empty) { assert.equal(m.value, null, m.id); assert.equal(m.display, "No data yet", m.id); assert.ok(m.note, m.id); }
+    assert.ok(!empty.some((m) => /^\$?(SAR )?0(\.0)?%?$/.test(m.display)), "no zero shown for missing data");
+    assert.ok(empty.every((m) => m.as_of === "2026-11-03"));
+    // A paying deal in Sales alone is an estimate: MRR still says No data yet.
+    await k.j(`${k.W}/deals`, { name: "Oud Store", skus: 300, stage: "paying" });
+    const est = (await k.j(`${k.X}/metrics`)).body.metrics, m0 = (id) => est.find((m) => m.id === id);
+    assert.equal(m0("mrr_sar").value, null); assert.match(m0("mrr_sar").note, /estimate isn't shown/); assert.equal(m0("paying_stores").value, 1); assert.match(m0("paying_stores").source, /Sales/);
+    // Finance data: logged subscription income, cash, cost of revenue and salaries.
+    await k.j(`${k.W}/finance/income`, { source: "Oud Store", amount_sar: 3750, type: "subscription", recurring: "monthly" });
+    await k.j(`${k.W}/finance/cash`, { date: "2026-11-01", balance_sar: 100000 });
+    await k.j(`${k.W}/finance/expenses`, { vendor: "Hosting", amount_sar: 1000, category: "hosting", recurring: "monthly" });
+    await k.j(`${k.W}/finance/expenses`, { vendor: "Team", amount_sar: 10000, category: "salaries", recurring: "monthly" });
+    const live = (await k.j(`${k.X}/metrics`)).body.metrics, m = (id) => live.find((x) => x.id === id);
+    assert.equal(m("mrr_sar").value, 3750); assert.equal(m("mrr_sar").display, "SAR 3,750"); assert.match(m("mrr_sar").source, /Finance: recurring income/);
+    assert.equal(m("arr_usd").value, 12000); assert.equal(m("arr_usd").display, "$12,000");
+    assert.equal(m("gross_margin_pct").value, 73.3);
+    assert.equal(m("cash_sar").value, 100000); assert.equal(m("cash_sar").as_of, "2026-11-01");
+    assert.equal(m("gross_burn_sar").value, 11000); assert.equal(m("net_burn_sar").value, 7250);
+    assert.equal(m("runway_months").value, 13.8); assert.equal(m("runway_months").display, "13.8 months");
+    assert.equal(m("mrr_growth_mom_pct").value, null); assert.match(m("mrr_growth_mom_pct").note, /Billing/);
+    assert.equal(m("pipeline_usd").value, null); assert.equal(m("nps_90d").display, "No data yet");
+    await k.j(`${k.W}/hr/roles`, { title: "Founder & CEO", kind: "human", status: "active" });
+    await k.j(`${k.W}/hr/roles`, { title: "Product Engineer", kind: "human", status: "open" });
+    assert.match((await k.j(`${k.X}/metrics`)).body.metrics.find((x) => x.id === "headcount").display, /^1 person · \d+ AI agents$/);
+    // Freeze a pack of three metrics.
+    assert.equal((await k.j(`${k.X}/snapshots`, { metric_ids: ["mrr_sar", "bogus"] })).status, 422);
+    assert.equal((await k.j(`${k.X}/snapshots`, { metric_ids: [] })).status, 422);
+    const s = (await k.j(`${k.X}/snapshots`, { label: "October board pack", metric_ids: ["mrr_sar", "runway_months", "nps_90d"] })).body;
+    assert.deepEqual(s.metrics.map((x) => x.id), ["mrr_sar", "nps_90d", "runway_months"]); assert.equal(s.as_of, "2026-11-03"); assert.equal(s.label, "October board pack"); assert.equal(s.includes_sample, false);
+    const frozen = JSON.stringify(s.metrics);
+    // Later changes don't alter it; it can't be edited.
+    await k.j(`${k.W}/finance/cash`, { date: "2026-11-03", balance_sar: 250000 });
+    await k.j(`${k.W}/finance/income`, { source: "Another store", amount_sar: 1875, type: "subscription", recurring: "monthly" });
+    assert.equal((await k.j(`${k.X}/metrics`)).body.metrics.find((x) => x.id === "mrr_sar").value, 5625);
+    const again = (await k.j(`${k.X}/snapshots/${s.id}`)).body;
+    assert.equal(JSON.stringify(again.metrics), frozen); assert.equal(again.metrics[0].value, 3750);
+    assert.equal((await k.j(`${k.X}/snapshots/${s.id}`, { label: "changed", metrics: [] }, "PUT")).status, 409);
+    assert.equal(JSON.stringify(k.st.db.investors_snapshots.find((x) => x.id === s.id).metrics), frozen);
+    assert.ok(k.st.db.audit.some((x) => /froze metrics snapshot "October board pack" \(3 metrics\)/.test(x.summary)));
+  } finally { k.done(); }
+});
+
+test("investor room data room: Legal documents (restricted only by Owner/Admin with the share-restricted tick), snapshots, approved updates only, https links, uploads in private storage (sniffed, never /media/), audit log", async () => {
+  const k = await ivKit();
+  try {
+    const L = `${k.W}/legal`;
+    const doc = (await k.j(`${L}/documents`, { title: "Articles of association", type: "articles" })).body;
+    const cap = (await k.j(`${L}/documents`, { title: "Cap table", type: "cap_table" })).body;
+    assert.equal(cap.confidentiality, "restricted");
+    const nofile = (await k.j(`${L}/documents`, { title: "CR certificate", type: "cr" })).body;
+    for (const d of [doc, cap]) assert.equal((await k.upload(k.ck, `${L}/documents/${d.id}/versions?filename=x.png`, IV_PNG)).status, 201);
+    const R = `${k.X}/room/items`;
+    assert.equal((await k.j(R, { folder: "attic", kind: "link", url: "https://x.example", title: "x" })).status, 422);
+    const it1 = (await k.j(R, { folder: "legal", kind: "legal_doc", ref_id: doc.id })).body;
+    assert.equal(it1.title, "Articles of association"); assert.equal(it1.available, true); assert.equal(it1.restricted, false);
+    assert.equal((await k.j(R, { folder: "legal", kind: "legal_doc", ref_id: nofile.id })).status, 422);
+    assert.match((await k.j(R, { folder: "legal", kind: "legal_doc", ref_id: cap.id })).body.detail, /Tick "share restricted"/);
+    const it2 = (await k.j(R, { folder: "legal", kind: "legal_doc", ref_id: cap.id, share_restricted: true })).body;
+    assert.equal(it2.restricted, true);
+    assert.ok(k.st.db.audit.some((x) => /added "Cap table" to the data room \(Legal, restricted document shared on purpose\)/.test(x.summary)));
+    // A Team lead given Investor room edit still can't share a restricted document (it doesn't exist for them).
+    k.st.db.roles.find((r) => r.id === "manager").perms.investors = "edit"; k.st.save();
+    const lead = await k.user("manager", "lead");
+    assert.equal((await k.as(lead.ck, R, "POST", { folder: "legal", kind: "legal_doc", ref_id: cap.id, share_restricted: true })).status, 404);
+    assert.ok(!(await k.as(lead.ck, `${k.X}/meta`)).body.legal_documents.some((d) => d.id === cap.id));
+    assert.equal((await k.as(lead.ck, R, "POST", { folder: "legal", kind: "legal_doc", ref_id: doc.id })).status, 201);
+    // An Admin with edit can, with the tick.
+    k.st.db.roles.find((r) => r.id === "admin").perms.investors = "edit"; k.st.save();
+    const adm = await k.user("admin");
+    assert.equal((await k.as(adm.ck, R, "POST", { folder: "legal", kind: "legal_doc", ref_id: cap.id })).status, 422);
+    assert.equal((await k.as(adm.ck, R, "POST", { folder: "legal", kind: "legal_doc", ref_id: cap.id, share_restricted: true })).status, 201);
+    // If a shared normal document later becomes restricted, it isn't served until shared again on purpose.
+    await k.j(`${L}/documents/${doc.id}`, { confidentiality: "restricted" }, "PUT");
+    assert.equal((await k.j(`${k.X}/room`)).body.folders.find((f) => f.id === "legal").items.find((x) => x.id === it1.id).available, false);
+    await k.j(`${L}/documents/${doc.id}`, { confidentiality: "normal" }, "PUT");
+    // Snapshots, updates (approved only) and links.
+    const s = (await k.j(`${k.X}/snapshots`, { label: "Pack" })).body;
+    const it3 = (await k.j(R, { folder: "financials", kind: "snapshot", ref_id: s.id })).body;
+    assert.equal(it3.title, "Pack");
+    assert.equal((await k.j(`${k.X}/snapshots/${s.id}`, undefined, "DELETE")).status, 409);
+    const u = (await k.j(`${k.X}/updates`, { month: "2026-10", snapshot_id: s.id })).body;
+    assert.match((await k.j(R, { folder: "company", kind: "update", ref_id: u.id })).body.detail, /Only an approved/);
+    assert.equal((await k.j(R, { folder: "market", kind: "link", url: "http://insecure.example", title: "x" })).status, 422);
+    assert.equal((await k.j(R, { folder: "market", kind: "link", url: "javascript:alert(1)", title: "x" })).status, 422);
+    const it4 = (await k.j(R, { folder: "market", kind: "link", url: "https://example.com/market-report", title: "Market report" })).body;
+    assert.equal(it4.url, "https://example.com/market-report");
+    // Uploads: bytes sniffed, stored in DATA_DIR/legal under a random name, never under /media/.
+    const bad = await k.upload(k.ck, `${k.X}/room/files?folder=company&filename=deck.pdf`, Buffer.from("not a pdf at all"));
+    assert.equal(bad.status, 415);
+    const up = await k.upload(k.ck, `${k.X}/room/files?folder=company&filename=team.png&title=Team%20photo`, IV_PNG);
+    assert.equal(up.status, 201); assert.equal(up.body.kind, "file"); assert.equal(up.body.title, "Team photo"); assert.equal(up.body.ext, "png");
+    const file = k.st.db.investors_items.find((x) => x.id === up.body.id).file.file;
+    assert.ok(fs.existsSync(path.join(k.dir, "legal", file))); assert.ok(!fs.existsSync(path.join(k.dir, "media", file)));
+    assert.notEqual((await fetch(`${k.b2}/media/${file}`)).status, 200);
+    // Editing and removing items; the file goes with its item.
+    assert.equal((await k.j(`${R}/${it4.id}`, { title: "Market sizing report", folder: "market" }, "PUT")).body.title, "Market sizing report");
+    assert.equal((await k.j(`${R}/${up.body.id}`, undefined, "DELETE")).status, 204);
+    assert.ok(!fs.existsSync(path.join(k.dir, "legal", file)));
+    const room = (await k.j(`${k.X}/room`)).body;
+    assert.deepEqual(room.folders.map((f) => f.id), ["company", "financials", "product", "legal", "team", "market"]);
+    assert.ok(k.st.db.audit.some((x) => /removed "Team photo" from the data room/.test(x.summary)));
+    assert.ok(k.st.db.audit.some((x) => /uploaded "Team photo" to the data room \(Company\)/.test(x.summary)));
+  } finally { k.done(); }
+});
+
+test("investor room share links: expiry, hashed passcode, allowed folders and items, download flag, revoke; watermark on every page, no scripts, noindex; 404/410 neutral; every view logged with a hashed IP and browser family; rate limit", async () => {
+  const k = await ivKit();
+  try {
+    const inv = (await k.j(`${k.X}/investors`, { name: "Raed <Ventures>" })).body;
+    const s = (await k.j(`${k.X}/snapshots`, { label: "Pack", metric_ids: ["mrr_sar", "cash_sar"] })).body;
+    const R = `${k.X}/room/items`;
+    const snapItem = (await k.j(R, { folder: "financials", kind: "snapshot", ref_id: s.id })).body;
+    const linkItem = (await k.j(R, { folder: "market", kind: "link", url: "https://example.com/report", title: "Market report" })).body;
+    const img = (await k.upload(k.ck, `${k.X}/room/files?folder=company&filename=team.png&title=Team`, IV_PNG)).body;
+    const txt = (await k.upload(k.ck, `${k.X}/room/files?folder=team&filename=bios.txt&title=Bios`, Buffer.from("Founder bio: ten years in ecommerce."))).body;
+    // Validation.
+    const L = `${k.X}/links`;
+    assert.match((await k.j(L, { investor_id: inv.id, expires_on: "2026-11-01", folders: ["company"] })).body.detail, /in the past/);
+    assert.match((await k.j(L, { investor_id: inv.id, expires_on: "2028-01-01", folders: ["company"] })).body.detail, /at most 365 days/);
+    assert.match((await k.j(L, { investor_id: inv.id, expires_on: "2026-12-01" })).body.detail, /at least one folder or item/);
+    assert.match((await k.j(L, { investor_id: inv.id, expires_on: "2026-12-01", folders: ["company"], passcode: "12" })).body.detail, /4 to 64/);
+    const l = (await k.j(L, { investor_id: inv.id, expires_on: "2026-12-01", folders: ["financials", "company"], item_ids: [txt.id], download: false })).body;
+    assert.equal(l.state, "active"); assert.equal(l.has_passcode, false); assert.ok(!("passcode" in l)); assert.match(l.url, /^https:\/\/wizard\.dpa\.ad\/i\/[A-Za-z0-9_-]{32}$/); assert.equal(l.items_shared, 3);
+    assert.ok(k.st.db.audit.some((x) => /created a data room share link for "Raed <Ventures>" \(expires 2026-12-01, view only\)/.test(x.summary)));
+    const T = `/i/${k.tokenOf(l)}`;
+    // The room: watermark, allowed items only, headers, no scripts, escaped names.
+    const room = await k.pub(T);
+    assert.equal(room.status, 200);
+    assert.match(room.text, /Shared with Raed &lt;Ventures&gt; · 2026-11-03/); assert.ok(!room.text.includes("<Ventures>"));
+    assert.match(room.text, /Pack/); assert.match(room.text, />Team</); assert.match(room.text, /Bios/); assert.ok(!room.text.includes("Market report"));
+    assert.ok(!/<script/i.test(room.text)); assert.match(room.text, /<meta name="robots" content="noindex">/);
+    assert.match(room.headers.get("content-security-policy"), /default-src 'none'/); assert.ok(!/script-src/.test(room.headers.get("content-security-policy")));
+    assert.match(room.headers.get("x-robots-tag"), /noindex/); assert.equal(room.headers.get("cache-control"), "no-store"); assert.equal(room.headers.get("referrer-policy"), "no-referrer"); assert.equal(room.headers.get("x-frame-options"), "DENY");
+    assert.ok((await k.pub(`${T}?lang=ar`)).text.includes('dir="rtl"'));
+    // Item pages carry the watermark; items not on the link are 404.
+    const sp = await k.pub(`${T}/item/${snapItem.id}`);
+    assert.equal(sp.status, 200); assert.match(sp.text, /Shared with Raed &lt;Ventures&gt; · 2026-11-03/); assert.match(sp.text, /No data yet/); assert.match(sp.text, /Frozen snapshot/); assert.match(sp.text, /data:image\/svg\+xml/);
+    assert.equal((await k.pub(`${T}/item/${linkItem.id}`)).status, 404);
+    const tp = await k.pub(`${T}/item/${txt.id}`);
+    assert.match(tp.text, /Founder bio: ten years in ecommerce\./); assert.match(tp.text, /Viewing only/); assert.ok(!/dl=1/.test(tp.text));
+    // Files: inline view for images and text; download refused while the link is view only.
+    const ip = await k.pub(`${T}/f/${img.id}`);
+    assert.equal(ip.status, 200); assert.equal(ip.headers.get("content-type"), "image/png"); assert.match(ip.headers.get("content-disposition"), /^inline/); assert.match(ip.headers.get("content-security-policy"), /sandbox/);
+    assert.equal((await k.pub(`${T}/f/${img.id}?dl=1`)).status, 403);
+    assert.equal((await k.pub(`${T}/f/${linkItem.id}`)).status, 404);
+    await k.j(`${L}/${l.id}`, { download: true }, "PUT");
+    const dl = await k.pub(`${T}/f/${img.id}?dl=1`);
+    assert.equal(dl.status, 200); assert.match(dl.headers.get("content-disposition"), /^attachment; filename="team.png"/);
+    assert.match((await k.pub(`${T}/item/${img.id}`)).text, /dl=1/);
+    // Every view logged: investor, item, action, time, hashed IP + day, browser family. No raw IP.
+    const views = k.st.db.investors_views.filter((v) => v.link_id === l.id);
+    assert.equal(views.length, 7);
+    assert.deepEqual([...new Set(views.map((v) => v.action))].sort(), ["download", "open", "view"]);
+    assert.ok(views.every((v) => v.investor_id === inv.id && v.day === "2026-11-03" && /^[A-Za-z0-9_-]{16}$/.test(v.ip_hash) && v.ua === "Chrome"));
+    assert.ok(!JSON.stringify(views).includes("127.0.0.1"));
+    assert.ok(views.some((v) => v.item_id === img.id && v.action === "download"));
+    assert.ok(views.some((v) => v.item_id === null && v.action === "view"));
+    // Passcode: stored hashed; the form first, a wrong code 401, the right one sets a cookie for this link's path only.
+    const pl = (await k.j(L, { investor_id: inv.id, expires_on: "2026-11-20", folders: ["company"], passcode: "cedar-2026" })).body;
+    assert.equal(pl.has_passcode, true);
+    const raw = k.st.db.investors_links.find((x) => x.id === pl.id);
+    assert.ok(raw.passcode.hash && raw.passcode.salt); assert.ok(!JSON.stringify(raw).includes("cedar-2026"));
+    const PT = `/i/${k.tokenOf(pl)}`;
+    const form = await k.pub(PT);
+    assert.equal(form.status, 200); assert.match(form.text, /This data room is protected/); assert.ok(!form.text.includes(">Team<")); assert.match(form.text, /<form class="pc" method="post"/);
+    assert.equal((await k.pub(`${PT}/item/${img.id}`)).status, 303);
+    assert.equal((await k.pub(`${PT}/f/${img.id}`)).status, 303);
+    const wrong = await k.pub(PT, { method: "POST", body: "passcode=nope" });
+    assert.equal(wrong.status, 401); assert.match(wrong.text, /isn&#39;t right/);
+    const right = await k.pub(PT, { method: "POST", body: "passcode=cedar-2026" });
+    assert.equal(right.status, 303);
+    const sc = right.headers.get("set-cookie");
+    assert.match(sc, new RegExp(`Path=${PT}; `)); assert.match(sc, /HttpOnly/); assert.match(sc, /SameSite=Strict/);
+    const pc = sc.split(";")[0];
+    assert.match((await k.pub(PT, { cookie: pc })).text, />Team</);
+    assert.equal((await k.pub(`${PT}/item/${img.id}`, { cookie: pc })).status, 200);
+    // Changing the passcode ends the old cookie.
+    await k.j(`${L}/${pl.id}`, { passcode: "olive-2027" }, "PUT");
+    assert.match((await k.pub(PT, { cookie: pc })).text, /This data room is protected/);
+    // Expiry (Riyadh day) and revoke: 410 with the same neutral page; unknown tokens 404.
+    k.at("2026-11-20T20:30:00Z"); // 23:30 in Riyadh on the 20th: still valid
+    assert.equal((await k.pub(T)).status, 200);
+    assert.equal((await k.pub(PT)).status, 200);
+    k.at("2026-11-20T21:30:00Z"); // 00:30 in Riyadh on the 21st
+    const exp = await k.pub(PT);
+    assert.equal(exp.status, 410); assert.match(exp.text, /This link isn&#39;t available/); assert.ok(!exp.text.includes("Raed"));
+    assert.equal((await k.j(L)).body.links.find((x) => x.id === pl.id).state, "expired");
+    const rv = (await k.j(`${L}/${l.id}/revoke`, {})).body;
+    assert.equal(rv.state, "revoked");
+    const gone = await k.pub(T);
+    assert.equal(gone.status, 410); assert.match(gone.text, /This link isn&#39;t available/); assert.ok(!/<script/i.test(gone.text));
+    assert.equal((await k.pub(`${T}/f/${img.id}`)).status, 410);
+    assert.equal((await k.j(`${L}/${l.id}`, { download: false }, "PUT")).status, 409);
+    assert.equal((await k.pub("/i/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).status, 404);
+    assert.equal((await k.pub("/i/short")).status, 404);
+    assert.ok(k.st.db.audit.some((x) => /revoked the share link for "Raed <Ventures>"/.test(x.summary)));
+    // Rate limit: at most 120 requests per address per 10 minutes on /i/.
+    let last = 0;
+    for (let i = 0; i < 130 && last !== 429; i++) last = (await k.pub("/i/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).status;
+    assert.equal(last, 429);
+  } finally { k.done(); }
+});
