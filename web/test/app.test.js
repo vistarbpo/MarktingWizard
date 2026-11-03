@@ -5407,3 +5407,470 @@ test("partners: data requests cover partner contacts (statements kept), sample p
     assert.deepEqual(k.st.db.partners_partners.map((y) => y.id), ["zp"]);
   } finally { k.done(); }
 });
+
+// ---------------------------------------------------------------- Legal & documents
+async function lgKit({ clock = null, assistantClient = null, env = { PUBLIC_URL: "https://wizard.dpa.ad" } } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-lg-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const prov = { name: "test", model: "test", async generate(a) { return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-lg", assistantClient, env, legalOptions: { clock: () => (t == null ? Date.now() : t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-lg" });
+  const as = async (c, p, m = "GET", body, headers = {}) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const X = `/api/workspaces/${w.id}/legal`;
+  const user = async (role, tag = role) => { const email = `lg-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Lg ${tag}`, email, password: `lg-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `lg-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  // Raw upload of a version (the body is the file's bytes).
+  const upload = async (c, docId, name, buf, q = {}) => { const r = await fetch(`${b2}${X}/documents/${docId}/versions?${new URLSearchParams({ filename: name, ...q })}`, { method: "POST", headers: { "Content-Type": "application/octet-stream", cookie: c }, body: buf }); const txt = await r.text(); let b = null; try { b = JSON.parse(txt); } catch { b = txt; } return { status: r.status, body: b }; };
+  const raw = (c, p) => fetch(b2 + p, { headers: { cookie: c } });
+  return { app: app2, st, w, X, W: `/api/workspaces/${w.id}`, j, as, ck, user, upload, raw, b2, dir: d,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+// A minimal PDF with a text layer (one Flate-compressed and one plain content stream).
+async function lgPdf(lines) {
+  const zlib = await import("node:zlib");
+  const content = (ls) => "BT /F1 11 Tf 72 760 Td " + ls.map((l, i) => `${i ? "0 -14 Td " : ""}(${l.replace(/([()\\])/g, "\\$1")}) Tj`).join(" ") + " ET";
+  const half = Math.ceil(lines.length / 2);
+  const c1 = zlib.deflateSync(Buffer.from(content(lines.slice(0, half)), "latin1")), c2 = Buffer.from(content(lines.slice(half)), "latin1");
+  return Buffer.concat([Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n4 0 obj\n<< /Length " + c1.length + " /Filter /FlateDecode >>\nstream\n", "latin1"), c1,
+    Buffer.from("\nendstream\nendobj\n5 0 obj\n<< /Length " + c2.length + " >>\nstream\n", "latin1"), c2, Buffer.from("\nendstream\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n", "latin1")]);
+}
+const LG_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+
+test("legal documents: create with validation, restricted by default for employment contracts, list filters and search, edit log, delete rules", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const meta = (await k.j(`${k.X}/meta`)).body;
+    assert.ok(meta.types.some((x) => x.id === "india_reg") && meta.types.some((x) => x.id === "cap_table"));
+    assert.deepEqual(meta.statuses.map((s) => s.id), ["draft", "in_review", "signed", "active", "expired", "terminated"]);
+    assert.equal(meta.today, "2026-11-03"); assert.deepEqual(meta.settings.reminder_days, [90, 30, 7]); assert.match(meta.not_advice, /Not legal advice/);
+    assert.equal(meta.max_mb, 20); assert.equal(meta.me.restricted, true);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "" })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "X", type: "contractz" })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "X", expiry_date: "2026-13-01" })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "X", issue_date: "2026-05-01", expiry_date: "2026-04-01" })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "X", parties: [{ name: "A", email: "nope" }] })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents`, { title: "X", type: "nda", status: "signed" })).status, 422, "signed only through the signature log");
+    const cr = (await k.j(`${k.X}/documents`, { title: "Commercial registration", type: "cr", status: "active", reference: "1010000000", issue_date: "2025-01-10", expiry_date: "2027-01-09", owner_id: "owner" })).body;
+    assert.equal(cr.status, "active"); assert.equal(cr.confidentiality, "normal"); assert.equal(cr.dates.state, "active"); assert.match(cr.log[0].text, /Document added \(cr, active\)/);
+    const emp = (await k.j(`${k.X}/documents`, { title: "Offer letter · Priya", type: "employment_contract", parties: [{ name: "Priya", email: "Priya@Example.in", role: "Employee" }] })).body;
+    assert.equal(emp.confidentiality, "restricted"); assert.equal(emp.parties[0].email, "priya@example.in");
+    const nda = (await k.j(`${k.X}/documents`, { title: "NDA with Najd", type: "nda", status: "in_review", parties: [{ name: "Najd Agency" }], tags: "Partners, nda" })).body;
+    assert.deepEqual(nda.tags, ["partners", "nda"]);
+    assert.equal((await k.j(`${k.X}/documents?type=nda`)).body.documents.length, 1);
+    assert.equal((await k.j(`${k.X}/documents?q=najd`)).body.documents[0].id, nda.id);
+    assert.equal((await k.j(`${k.X}/documents?q=1010000000`)).body.documents[0].id, cr.id);
+    const l = (await k.j(`${k.X}/documents`)).body;
+    assert.equal(l.totals.all, 3); assert.equal(l.totals.restricted, 1); assert.equal(l.totals.drafts, 2);
+    const u = (await k.j(`${k.X}/documents/${nda.id}`, { notes: "Waiting for their lawyer", expiry_date: "2028-01-01" }, "PUT")).body;
+    assert.match(u.log.at(-1).text, /expiry date edited/); assert.match(u.log.at(-1).text, /notes edited/);
+    assert.equal((await k.j(`${k.X}/documents/${nda.id}`, { status: "signed" }, "PUT")).status, 422);
+    // Delete: drafts go (with their obligations); signed / in-force ones only by the Owner.
+    await k.j(`${k.X}/documents/${nda.id}/obligations`, { title: "Chase", due_date: "2026-11-10" });
+    assert.equal((await k.j(`${k.X}/documents/${nda.id}`, undefined, "DELETE")).status, 204);
+    assert.ok(!k.st.db.legal_obligations.some((o) => o.document_id === nda.id));
+    const admin = await k.user("admin", "ad");
+    assert.equal((await k.as(admin.ck, `${k.X}/documents/${cr.id}`, "DELETE")).status, 409);
+    assert.equal((await k.j(`${k.X}/documents/${cr.id}`, undefined, "DELETE")).status, 204);
+  } finally { k.done(); }
+});
+
+test("legal files: upload with byte sniffing and a 20 MB limit, versions kept, private download with an audit entry, never under /media/", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const d = (await k.j(`${k.X}/documents`, { title: "VAT certificate", type: "vat_cert", status: "active" })).body;
+    assert.equal((await k.upload(k.ck, d.id, "cert.exe", Buffer.from("MZ...."))).status, 415);
+    assert.equal((await k.upload(k.ck, d.id, "cert.pdf", LG_PNG)).status, 415, "a PNG renamed .pdf is refused");
+    assert.equal((await k.upload(k.ck, d.id, "cert.docx", Buffer.from("PK\x03\x04not really a docx"))).status, 415);
+    assert.equal((await k.upload(k.ck, d.id, "notes.txt", Buffer.from([0x41, 0x00, 0x42, 0x43]))).status, 415, "binary refused as text");
+    const big = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(20 * 1024 * 1024)]);
+    assert.equal((await k.upload(k.ck, d.id, "big.pdf", big)).status, 413);
+    assert.ok(!fs.readdirSync(path.join(k.dir, "legal")).some((n) => n.startsWith(".up-")), "no temp files left");
+    const pdf = await lgPdf(["VAT registration certificate sample text for the test."]);
+    const v1 = await k.upload(k.ck, d.id, "vat-cert.pdf", pdf);
+    assert.equal(v1.status, 201); assert.equal(v1.body.versions.length, 1); assert.equal(v1.body.current_version, 1);
+    const v2 = (await k.upload(k.ck, d.id, "vat-cert-2026.png", LG_PNG, { note: "Renewed" })).body;
+    assert.equal(v2.versions.length, 2); assert.equal(v2.current_version, 2); assert.deepEqual(v2.versions.map((v) => v.n), [2, 1]);
+    assert.equal(v2.versions[0].ext, "png"); assert.equal(v2.versions[0].note, "Renewed"); assert.equal(v2.versions[1].ext, "pdf");
+    const files = fs.readdirSync(path.join(k.dir, "legal"));
+    assert.equal(files.length, 2, "old version kept on disk");
+    assert.ok(!fs.existsSync(path.join(k.dir, "media")) || !fs.readdirSync(path.join(k.dir, "media")).length, "nothing in the public media folder");
+    const f = k.st.db.legal_documents.find((x) => x.id === d.id).versions[0].file;
+    assert.equal((await fetch(`${k.b2}/media/${f}`)).status, 404);
+    assert.equal((await fetch(`${k.b2}${k.X}/documents/${d.id}/file?v=1`)).status, 401, "login needed");
+    const before = k.st.db.audit.length;
+    const r = await k.raw(k.ck, `${k.X}/documents/${d.id}/file?v=1`);
+    assert.equal(r.status, 200); assert.equal(r.headers.get("content-type"), "application/pdf"); assert.match(r.headers.get("content-disposition"), /^attachment; filename="vat-cert.pdf"/);
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+    assert.ok(Buffer.from(await r.arrayBuffer()).equals(pdf));
+    const a = k.st.db.audit.slice(before);
+    assert.equal(a.length, 1); assert.equal(a[0].module, "legal"); assert.match(a[0].summary, /^downloaded legal document "VAT certificate" v1$/); assert.equal(a[0].method, "GET");
+    assert.equal((await k.raw(k.ck, `${k.X}/documents/${d.id}/file?v=9`)).status, 404);
+    assert.match((await k.raw(k.ck, `${k.X}/documents/${d.id}/file?inline=1`)).headers.get("content-disposition"), /^inline/);
+    assert.match(k.st.db.audit.at(-1).summary, /^viewed legal document "VAT certificate" v2$/);
+  } finally { k.done(); }
+});
+
+test("legal restricted documents: 404 for everyone but Owner/Admin on every route (download, print, summary, obligations, signatures); roles and module defaults", async () => {
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  assert.ok(MODULE_IDS.includes("legal")); assert.equal(moduleFor("POST", "/api/workspaces/1/legal/documents/4/versions"), "legal");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.legal])), { owner: "edit", admin: "edit", manager: "view", member: "none", finance: "view", creative: "none", viewer: "none" });
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-lgr-"));
+  fs.writeFileSync(path.join(dd, "db.json"), JSON.stringify({ roles: [{ id: "manager", name: "Team lead", perms: { command: "view" } }] }));
+  assert.equal(new Store(dd).db.roles.find((r) => r.id === "manager").perms.legal, "view", "ensureRoles adds the module"); fs.rmSync(dd, { recursive: true, force: true });
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const sec = (await k.j(`${k.X}/documents`, { title: "Cap table 2026", type: "cap_table" })).body;
+    assert.equal(sec.confidentiality, "restricted");
+    await k.upload(k.ck, sec.id, "cap.txt", Buffer.from("Founder 100% of the shares. This is the cap table text for the test."));
+    const ob = (await k.j(`${k.X}/documents/${sec.id}/obligations`, { title: "Board approval", due_date: "2026-11-05" })).body;
+    const open = (await k.j(`${k.X}/documents`, { title: "Open NDA", type: "nda" })).body;
+    const lead = await k.user("manager", "tl"), fin = await k.user("finance", "fi"), mem = await k.user("member", "me"), admin = await k.user("admin", "ad");
+    for (const u of [lead, fin]) {
+      const l = (await k.as(u.ck, `${k.X}/documents`)).body;
+      assert.deepEqual(l.documents.map((x) => x.id), [open.id]);
+      for (const p of [`/documents/${sec.id}`, `/documents/${sec.id}/file`, `/documents/${sec.id}/print`]) assert.equal((await k.as(u.ck, `${k.X}${p}`)).status, 404, p);
+      assert.equal((await k.as(u.ck, `${k.X}/due`)).body.items.length, 0);
+    }
+    // View roles can't change anything; a restricted document is 404 before any of that for a custom Edit role too.
+    assert.equal((await k.as(lead.ck, `${k.X}/documents/${open.id}`, "PUT", { notes: "x" })).status, 403);
+    const editor = k.st.db.roles.find((r) => r.id === "manager"); editor.perms.legal = "edit"; k.st.save();
+    for (const [m, p, b] of [["POST", `/documents/${sec.id}/summary`, {}], ["POST", `/documents/${sec.id}/obligations`, { title: "x" }], ["POST", `/documents/${sec.id}/signatures`, {}], ["PUT", `/documents/${sec.id}`, { notes: "x" }], ["DELETE", `/documents/${sec.id}`], ["PUT", `/obligations/${ob.id}`, { title: "y" }], ["POST", `/obligations/${ob.id}/done`, {}], ["POST", `/generate`, { template_id: "nda_en", document_id: sec.id, counterparty: { kind: "other", name: "A" } }]])
+      assert.equal((await k.as(lead.ck, `${k.X}${p}`, m, b)).status, 404, `${m} ${p}`);
+    assert.equal((await k.upload(lead.ck, sec.id, "x.txt", Buffer.from("hello there"))).status, 404);
+    assert.equal((await k.as(lead.ck, `${k.X}/documents`, "POST", { title: "Board minutes", type: "board_resolution", confidentiality: "restricted" })).status, 403, "only Owner/Admin add restricted ones");
+    assert.equal((await k.as(lead.ck, `${k.X}/documents`, "POST", { title: "Board minutes", type: "board_resolution" })).body.confidentiality, "normal");
+    assert.equal((await k.as(lead.ck, `${k.X}/documents/${open.id}`, "PUT", { confidentiality: "restricted" })).status, 403);
+    editor.perms.legal = "view"; k.st.save();
+    assert.equal((await k.as(mem.ck, `${k.X}/documents`)).status, 403, "Team member has no Legal access");
+    assert.equal((await k.as(admin.ck, `${k.X}/documents/${sec.id}`)).status, 200);
+    assert.equal((await k.as(admin.ck, `${k.X}/documents/${sec.id}/file`)).status, 200);
+  } finally { k.done(); }
+});
+
+test("legal dates: renewal rolls forward when auto-renewing, notice deadline = renewal − notice, reminder stages, what's due, Command Center needs redacted for restricted and other roles", async () => {
+  const L = await import("../lib/legal.js");
+  assert.equal(L.addMonths("2026-01-31", 1), "2026-02-28"); assert.equal(L.addMonths("2024-02-29", 12), "2025-02-28");
+  const doc = { status: "active", expiry_date: "2026-03-01", auto_renew: true, renewal_term_months: 12, notice_days: 30 };
+  assert.equal(L.renewalDate(doc, "2026-11-03"), "2027-03-01");
+  assert.equal(L.noticeDeadline(doc, "2026-11-03"), "2027-01-30");
+  assert.equal(L.renewalDate({ ...doc, auto_renew: false }, "2026-11-03"), "2026-03-01");
+  let x = L.docDates({ ...doc, auto_renew: false }, "2026-11-03");
+  assert.equal(x.lapsed, true); assert.equal(x.state, "expired"); assert.equal(x.reminder, null);
+  x = L.docDates({ status: "active", expiry_date: "2026-11-23" }, "2026-11-03");
+  assert.equal(x.days_left, 20); assert.equal(x.reminder, 30); assert.equal(x.state, "expiring");
+  assert.equal(L.docDates({ status: "active", expiry_date: "2027-01-20" }, "2026-11-03").reminder, 90);
+  assert.equal(L.docDates({ status: "active", expiry_date: "2026-11-06" }, "2026-11-03").reminder, 7);
+  assert.equal(L.docDates({ status: "draft", expiry_date: "2026-11-06" }, "2026-11-03").state, "draft", "drafts don't expire");
+  // Riyadh day: 22:30 UTC on 3 Nov is already 4 Nov in Riyadh.
+  assert.equal(L.todayOf(Date.parse("2026-11-03T22:30:00Z")), "2026-11-04");
+
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const add = async (b) => (await k.j(`${k.X}/documents`, b)).body;
+    const soon = await add({ title: "Office lease", type: "vendor_contract", status: "draft", expiry_date: "2026-11-25", auto_renew: true, renewal_term_months: 12, notice_days: 10 });
+    k.st.db.legal_documents.find((d) => d.id === soon.id).status = "active"; // as if signed
+    await add({ title: "MISA licence", type: "licence", status: "active", expiry_date: "2026-10-30" });
+    await add({ title: "Insurance policy", type: "insurance", status: "active", expiry_date: "2027-01-15" });
+    await add({ title: "Old NDA", type: "other", status: "terminated", expiry_date: "2026-11-10" });
+    const sec = await add({ title: "Bank letter", type: "bank_letter", status: "active", expiry_date: "2026-11-20" });
+    assert.equal(sec.confidentiality, "restricted");
+    const ob = (await k.j(`${k.X}/documents/${soon.id}/obligations`, { title: "Pay rent", kind: "payment", due_date: "2026-11-01", repeat: "monthly" })).body;
+    assert.equal((await k.j(`${k.X}/documents/${soon.id}/obligations`, { title: "Repeat without date", repeat: "monthly" })).status, 422);
+    const due = (await k.j(`${k.X}/due?days=120`)).body.items;
+    assert.deepEqual(due.map((i) => `${i.kind}:${i.document}:${i.date}`), ["expiry:MISA licence:2026-10-30", "payment:Office lease:2026-11-01", "notice:Office lease:2026-11-15", "expiry:Bank letter:2026-11-20", "expiry:Office lease:2026-11-25", "expiry:Insurance policy:2027-01-15"]);
+    assert.match(due[0].title, /^Expired on 2026-10-30/); assert.match(due[2].title, /^Last day to give 10-day termination notice \(auto-renews 2026-11-25\)/);
+    assert.equal(due.find((i) => i.document === "Insurance policy").reminder, 90);
+    const needs = async (c = k.ck) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Legal");
+    let n = await needs();
+    assert.deepEqual(n.map((i) => i.title).sort(), ["Documents expiring", "Expired documents", "Legal obligations overdue", "Notice deadlines"]);
+    assert.match(n.find((i) => i.title === "Documents expiring").text, /2 documents expire or renew within 30 days: Bank letter \(2026-11-20\), Office lease \(2026-11-25\)/);
+    assert.match(n.find((i) => i.title === "Notice deadlines").text, /Office lease \(by 2026-11-15\)/);
+    assert.match(n.find((i) => i.title === "Expired documents").text, /MISA licence/);
+    assert.ok(n.every((i) => i.route === "legal" && i.param === "due"));
+    const lead = await k.user("manager", "tl");
+    n = await needs(lead.ck);
+    assert.match(n.find((i) => i.title === "Documents expiring").text, /^1 document expires or renews within 30 days: Office lease/, "restricted one left out");
+    const mem = await k.user("member", "me");
+    assert.equal((await needs(mem.ck)).length, 0, "no Legal module, no legal needs");
+    // Done on a repeating obligation moves it to the next date; marking the licence expired clears that need.
+    assert.equal((await k.j(`${k.X}/obligations/${ob.id}/done`, {})).body.due_date, "2026-12-01");
+    const lic = k.st.db.legal_documents.find((d) => d.title === "MISA licence");
+    await k.j(`${k.X}/documents/${lic.id}`, { status: "expired" }, "PUT");
+    n = await needs();
+    assert.ok(!n.some((i) => i.title === "Expired documents") && !n.some((i) => i.title === "Legal obligations overdue"));
+    // Settings: reminder stages and windows are configurable.
+    assert.equal((await k.j(`${k.X}/settings`, { reminder_days: "0, 30" }, "PUT")).status, 422);
+    assert.deepEqual((await k.j(`${k.X}/settings`, { reminder_days: "7, 60", notice_window_days: 5 }, "PUT")).body.reminder_days, [60, 7]);
+    assert.ok(!(await needs()).some((i) => i.title === "Notice deadlines"), "notice 12 days away is outside a 5-day window");
+  } finally { k.done(); }
+});
+
+test("legal templates: filled from Billing settings and the counterparty (partner terms, employee CTC with Payroll view), [ADD] left, Arabic right to left, printable, placeholders block signed", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const tl = (await k.j(`${k.X}/templates`)).body.templates;
+    assert.deepEqual(tl.map((t) => t.id), ["nda_en", "nda_ar", "saas_terms", "dpa_pdpl", "partner_referral", "contractor", "offer_india"]);
+    for (const t of tl) assert.ok(/\[CONFIRM\]/.test(t.body), t.id);
+    for (const t of tl) assert.doesNotMatch(t.body, /\b[Aa]rticle \d+|المادة \d/, `${t.id}: no article numbers`);
+    assert.equal((await k.j(`${k.X}/generate`, { template_id: "nope" })).status, 422);
+    assert.equal((await k.j(`${k.X}/generate`, { template_id: "offer_india", counterparty: { kind: "partner", id: "1" } })).status, 422);
+    // Before Billing settings: the company fields are [ADD].
+    let g = (await k.j(`${k.X}/generate`, { template_id: "nda_en", counterparty: { kind: "other", name: "Najd Agency", email: "legal@najd.example" }, fields: { purpose: "a referral partnership" } })).body;
+    assert.equal(g.title, "Mutual NDA · Najd Agency"); assert.equal(g.status, "draft"); assert.equal(g.type, "nda"); assert.deepEqual(g.parties, [{ name: "Najd Agency", email: "legal@najd.example", role: "Counterparty" }]);
+    assert.ok(g.generated.missing.includes("company_name") && g.generated.missing.includes("company_cr")); assert.ok(g.generated.used.includes("purpose"));
+    assert.ok(g.generated.placeholders.add >= 5); assert.ok(g.generated.placeholders.confirm >= 3);
+    assert.match(g.sign_block, /\[ADD\]/);
+    assert.equal((await k.j(`${k.X}/documents/${g.id}`, { status: "signed" }, "PUT")).status, 422);
+    const pr = await k.raw(k.ck, g.versions[0].print_url);
+    assert.equal(pr.status, 200); assert.match(pr.headers.get("content-security-policy"), /sandbox/);
+    const html = await pr.text();
+    assert.match(html, /Not legal advice/); assert.match(html, /<mark class="ph">\[ADD\]<\/mark>/); assert.match(html, /a referral partnership/); assert.match(html, /dir="ltr"/);
+    assert.match(k.st.db.audit.at(-1).summary, /^printed legal document/);
+    // With Billing settings and a partner from Partners & referrals.
+    const ws = k.st.getWorkspace(k.w.id);
+    ws.billing = { ...(ws.billing || {}), legal_name: "DPA AD Company", legal_name_ar: "شركة دي بي إيه آد", vat_number: "300000000000003", cr_number: "1010123456", address: { street: "King Fahd Rd", building: "12", district: "Olaya", city: "Riyadh", postal_code: "12211", country: "SA" } }; k.st.save();
+    const p = (await k.j(`${k.W}/partners`, { name: "Najd Digital", type: "agency", contact: { name: "Faisal", email: "faisal@najd.example" }, agreement: { commission_pct: 20, recurring_months: 12, tier: "Gold" } })).body;
+    g = (await k.j(`${k.X}/generate`, { template_id: "partner_referral", counterparty: { kind: "partner", id: p.id } })).body;
+    const text = fs.readFileSync(path.join(k.dir, "legal", k.st.db.legal_documents.find((d) => d.id === g.id).versions[0].file), "utf8");
+    assert.match(text, /DPA AD Company \(CR 1010123456, VAT 300000000000003, 12, King Fahd Rd, Olaya, Riyadh, 12211, SA\)/);
+    assert.match(text, /20% of each payment before VAT for the first 12 months/); assert.match(text, /Tier: Gold/); assert.match(text, /https:\/\/wizard\.dpa\.ad\/r\//);
+    assert.equal(g.type, "partner_agreement"); assert.equal(g.counterparty.kind, "partner");
+    // Arabic NDA: right to left, Arabic legal name.
+    g = (await k.j(`${k.X}/generate`, { template_id: "nda_ar", counterparty: { kind: "partner", id: p.id } })).body;
+    const ar = await (await k.raw(k.ck, g.versions[0].print_url)).text();
+    assert.match(ar, /<html lang="ar" dir="rtl">/); assert.match(ar, /شركة دي بي إيه آد/); assert.match(ar, /ليس استشارة قانونية/);
+    // Employee offer letter: CTC structure only with Payroll view; the document is restricted and linked to the employee.
+    const e = k.st.addOps("people_employees", k.w.id, { name: "Priya Sharma", email: "priya@example.in", designation: "Engineering lead", department: "Product", doj: "2026-12-01", work_state: "KA", annual_ctc: 1200000, status: "active" });
+    g = (await k.j(`${k.X}/generate`, { template_id: "offer_india", counterparty: { kind: "employee", id: e.id }, fields: { employer_india: "DPA AD India Pvt Ltd" } })).body;
+    assert.equal(g.confidentiality, "restricted"); assert.equal(g.employee_id, e.id); assert.equal(g.type, "employment_contract");
+    const offer = fs.readFileSync(path.join(k.dir, "legal", k.st.db.legal_documents.find((d) => d.id === g.id).versions[0].file), "utf8");
+    assert.match(offer, /Annual CTC: INR 12,00,000/); assert.match(offer, /Basic: INR 47,947 per month/); assert.match(offer, /Engineering lead/);
+    const lead = await k.user("manager", "tl");
+    const ed = k.st.db.roles.find((r) => r.id === "manager"); ed.perms.legal = "edit"; k.st.save();
+    const g2 = (await k.as(lead.ck, `${k.X}/generate`, "POST", { template_id: "offer_india", counterparty: { kind: "employee", id: e.id } })).body;
+    assert.ok(g2.generated.missing.includes("emp_ctc_annual"), "no Payroll view: CTC is [ADD]");
+    assert.equal(g2.confidentiality, "normal");
+    assert.equal((await k.as(lead.ck, `${k.X}/generate`, "POST", { template_id: "saas_terms", counterparty: { kind: "customer", id: "x" } })).status, 422);
+    // A new template draft on an existing draft document becomes the next version.
+    const again = (await k.j(`${k.X}/generate`, { template_id: "nda_en", document_id: g.id, counterparty: { kind: "other", name: "Priya" } })).body;
+    assert.equal(again.versions.length, 2); assert.equal(again.current_version, 2);
+  } finally { k.done(); }
+});
+
+test("legal signature log: signed only with a signed file attached; who, when, how; status moves to signed; removing the last signature reopens it", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const g = (await k.j(`${k.X}/generate`, { template_id: "nda_en", counterparty: { kind: "other", name: "Najd Agency" } })).body;
+    const sig = { signer_name: "Faisal", signer_email: "faisal@najd.example", party: "Najd Agency", signed_at: "2026-11-02", method: "docusign" };
+    assert.equal((await k.j(`${k.X}/documents/${g.id}/signatures`, { ...sig, version: 1 })).status, 422, "a template draft is not a signed file");
+    assert.equal((await k.j(`${k.X}/documents/${g.id}/signatures`, { ...sig, version: 7 })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents/${g.id}/signatures`, { ...sig, method: "fax", version: 1 })).status, 422);
+    assert.equal((await k.j(`${k.X}/documents/${g.id}/signatures`, { ...sig, signed_at: "2026-12-01", version: 1 })).status, 422, "not in the future");
+    const up = (await k.upload(k.ck, g.id, "nda-signed.pdf", await lgPdf(["Signed NDA between DPA AD and Najd Agency, page 1 of 1."]), { kind: "signed" })).body;
+    assert.equal(up.versions[0].kind, "signed"); assert.equal(up.status, "draft");
+    const s = (await k.j(`${k.X}/documents/${g.id}/signatures`, { ...sig, version: 2 })).body;
+    assert.equal(s.status, "signed"); assert.equal(s.signatures.length, 1); assert.equal(s.signatures[0].version_n, 2); assert.equal(s.signatures[0].method, "docusign");
+    assert.equal(s.issue_date, "2026-11-02"); assert.equal(s.sign_block, null); assert.ok(s.log.some((l) => /Signature recorded: Faisal on 2026-11-02 \(docusign\), file v2/.test(l.text)));
+    assert.equal((await k.j(`${k.X}/documents/${g.id}`, { status: "active" }, "PUT")).body.status, "active");
+    // Templates can't be regenerated onto a signed document.
+    assert.equal((await k.j(`${k.X}/generate`, { template_id: "nda_en", document_id: g.id, counterparty: { kind: "other", name: "X" } })).status, 409);
+    // A signable document without any signature can't be marked signed or active.
+    const v = (await k.j(`${k.X}/documents`, { title: "Vendor MSA", type: "vendor_contract" })).body;
+    await k.upload(k.ck, v.id, "msa.pdf", await lgPdf(["Master services agreement text for the test only."]));
+    assert.match((await k.j(`${k.X}/documents/${v.id}`, { status: "signed" }, "PUT")).body.detail, /Record who signed/);
+    assert.equal((await k.j(`${k.X}/documents/${v.id}`, { status: "active" }, "PUT")).status, 422);
+    // Certificates aren't signed: active is fine.
+    const c = (await k.j(`${k.X}/documents`, { title: "Chamber membership", type: "chamber" })).body;
+    assert.equal((await k.j(`${k.X}/documents/${c.id}`, { status: "active" }, "PUT")).body.status, "active");
+    const w2 = (await k.j(`${k.X}/documents/${v.id}/signatures`, { signer_name: "Vendor CEO", signed_at: "2026-11-01", method: "wet", version: 1 })).body;
+    assert.equal(w2.status, "signed");
+    const back = (await k.j(`${k.X}/documents/${v.id}/signatures/${w2.signatures[0].id}`, undefined, "DELETE")).body;
+    assert.equal(back.status, "in_review"); assert.equal(back.signatures.length, 0);
+  } finally { k.done(); }
+});
+
+test("legal AI assistant: rule-based summary from the demo AI with quotes found in the text; fabricated quotes dropped; suggestions accepted or dismissed with outcomes; PDF, DOCX, paste; images need pasted text", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const { AGENTS, agentFor } = await import("../lib/agents.js");
+    const ag = AGENTS.find((a) => a.id === "legal_assistant");
+    assert.equal(ag.name, "AI Legal assistant"); assert.equal(ag.team, "Leadership"); assert.equal(ag.max, 1); assert.equal(ag.module, "legal");
+    assert.equal(agentFor("POST", "/api/workspaces/1/legal/documents/3/summary"), "legal_assistant");
+    const contract = "This Agreement is made between DPA AD and Sample Hosting Co. for hosting.\nThe initial term is twelve (12) months from the effective date.\nThis Agreement renews automatically for successive twelve-month terms.\nEither party may terminate by giving 14 days written notice before the renewal date.\nThe Customer shall pay each invoice within 30 days of the invoice date.\nThe Provider's total liability is limited to the fees paid in the three months before the claim.\nThis Agreement is governed by the laws of the Kingdom of Saudi Arabia.";
+    const d = (await k.j(`${k.X}/documents`, { title: "Hosting contract", type: "vendor_contract", status: "draft", expiry_date: "2027-01-31", auto_renew: true, renewal_term_months: 12 })).body;
+    assert.equal((await k.j(`${k.X}/documents/${d.id}/summary`, {})).body.need_text, true, "no file yet");
+    await k.upload(k.ck, d.id, "hosting.txt", Buffer.from(contract));
+    // Demo provider: not JSON → sentences found by fixed rules, every quote in the text.
+    let s = (await k.j(`${k.X}/documents/${d.id}/summary`, {})).body;
+    assert.equal(s.summary.by_ai, false); assert.equal(s.summary.source, "file v1"); assert.match(s.summary.note, /fixed rules/);
+    assert.match(s.summary.fields.notice[0].quote, /14 days written notice/); assert.match(s.summary.fields.governing_law[0].quote, /Kingdom of Saudi Arabia/);
+    for (const list of Object.values(s.summary.fields)) for (const f of list) assert.ok(contract.includes(f.quote), f.quote);
+    assert.ok(s.suggestions.some((x) => x.kind === "renewal" && x.due_date === "2027-01-31" && x.source === "rule"));
+    assert.ok(s.suggestions.some((x) => x.kind === "notice" && /14 days/.test(x.title)), "notice period found in the quote while the document has none");
+    assert.ok(s.suggestions.some((x) => x.kind === "payment" && /30 days/.test(x.title)));
+    assert.ok(k.st.db.agent_runs.some((r) => r.agent_id === "legal_assistant"));
+    // A checked AI answer: real quotes kept, invented ones dropped (and counted), escalated outcome logged.
+    k.ai(() => JSON.stringify({
+      parties: [{ value: "DPA AD and Sample Hosting Co.", quote: "This Agreement is made between DPA AD and Sample Hosting Co. for hosting." }, { value: "A guarantor", quote: "Acme Bank guarantees every payment." }],
+      term: { value: "12 months", quote: "The initial term is twelve (12) months from the effective date." },
+      notice: { value: "14 days before renewal", quote: "Either party may terminate by giving  14 days written notice before the renewal date." },
+      liability_cap: { value: "Unlimited", quote: "The Provider has unlimited liability." },
+      unusual: [{ value: "Short cap", quote: "The Provider's total liability is limited to the fees paid in the three months before the claim." }],
+      obligations: [{ kind: "termination_notice", title: "Give notice if not renewing", due_date: "2027-01-17", quote: "Either party may terminate by giving 14 days written notice before the renewal date." }, { kind: "payment", title: "Pay a deposit", due_date: null, quote: "A deposit of SAR 50,000 is due on signing." }],
+    }));
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, {})).body;
+    assert.equal(s.summary.by_ai, true); assert.equal(s.summary.dropped, 3); assert.match(s.summary.note, /3 points were dropped/);
+    assert.deepEqual(s.summary.fields.parties.map((p) => p.value), ["DPA AD and Sample Hosting Co."]);
+    assert.equal(s.summary.fields.notice[0].value, "14 days before renewal", "whitespace differences still match");
+    assert.equal(s.summary.fields.liability_cap.length, 0); assert.equal(s.summary.fields.unusual.length, 1);
+    const ai = s.suggestions.filter((x) => x.source === "ai" && x.status === "suggested");
+    assert.deepEqual(ai.map((x) => x.title), ["Give notice if not renewing"]);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "legal_assistant" && e.outcome === "escalated" && /3 AI points dropped/.test(e.note)));
+    // Accept (edited date → "edited"), dismiss a rule one; already decided → 409.
+    const acc = await k.j(`${k.X}/documents/${d.id}/suggestions/${ai[0].id}/accept`, { due_date: "2027-01-16" });
+    assert.equal(acc.status, 201);
+    const ob = acc.body.obligations.find((o) => o.title === "Give notice if not renewing");
+    assert.equal(ob.due_date, "2027-01-16"); assert.equal(ob.source, "ai_suggested"); assert.match(ob.notes, /^From the contract: "Either party/);
+    assert.ok(k.st.db.agent_events.some((e) => e.agent_id === "legal_assistant" && e.outcome === "edited"));
+    assert.equal((await k.j(`${k.X}/documents/${d.id}/suggestions/${ai[0].id}/accept`, {})).status, 409);
+    const rule = acc.body.suggestions.find((x) => x.source === "rule" && x.status === "suggested");
+    assert.equal((await k.j(`${k.X}/documents/${d.id}/suggestions/${rule.id}/dismiss`, {})).body.suggestions.find((x) => x.id === rule.id).status, "dismissed");
+    // An AI that quotes nothing real falls back to the rules.
+    k.ai(() => JSON.stringify({ term: { value: "5 years", quote: "The term is five years." } }));
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, {})).body;
+    assert.equal(s.summary.by_ai, false); assert.match(s.summary.note, /None of the AI's 1 quotes were found/);
+    // Paste the text instead; PDF text layer; DOCX; images need pasted text; level 0 = rules only.
+    k.ai(null);
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, { text: "Short" })).body;
+    assert.equal(s.need_text, true);
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, { text: contract.replace("14 days", "60 days") })).body;
+    assert.equal(s.summary.source, "pasted"); assert.match(s.summary.fields.notice[0].quote, /60 days/);
+    await k.upload(k.ck, d.id, "hosting.pdf", await lgPdf(["This Agreement is governed by the laws of the Kingdom of Saudi Arabia.", "The Customer shall pay each invoice within 30 days (net) of the invoice date."]));
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, {})).body;
+    assert.equal(s.summary.source, "file v2"); assert.match(s.summary.fields.governing_law[0].quote, /Kingdom of Saudi Arabia/); assert.match(s.summary.fields.payment[0].quote, /within 30 days \(net\)/);
+    await k.upload(k.ck, d.id, "hosting.docx", await mtDocx(["The Provider processes personal data only on the Customer's documented instructions.", "This Agreement renews automatically each year."]));
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, {})).body;
+    assert.equal(s.summary.source, "file v3"); assert.match(s.summary.fields.data_protection[0].quote, /personal data/);
+    await k.upload(k.ck, d.id, "scan.png", LG_PNG);
+    const img = await k.j(`${k.X}/documents/${d.id}/summary`, {});
+    assert.equal(img.status, 422); assert.equal(img.body.need_text, true); assert.match(img.body.detail, /Paste/);
+    const L = await import("../lib/legal.js");
+    assert.throws(() => L.pdfText(Buffer.from("%PDF-1.4\n%%EOF")), /no readable text layer/);
+    k.app.locals.workforce.set("legal_assistant", { level: 0 }, "test");
+    s = (await k.j(`${k.X}/documents/${d.id}/summary`, { text: contract })).body;
+    assert.equal(s.summary.by_ai, false); assert.match(s.summary.note, /switched off/);
+  } finally { k.done(); }
+});
+
+test("legal: backups include DATA_DIR/legal; data requests find documents by party email, export metadata, never auto-delete signed contracts; employee self-service", async () => {
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const d = (await k.j(`${k.X}/documents`, { title: "Customer contract · Oud Store", type: "customer_contract", parties: [{ name: "Oud Store", email: "owner@oud.example", role: "Customer" }] })).body;
+    const pdf = await lgPdf(["Customer contract between DPA AD and Oud Store for the test."]);
+    await k.upload(k.ck, d.id, "contract.pdf", pdf);
+    // Backups: the legal file is in the archive with its checksum.
+    const { openBackup } = await import("../lib/backup.js");
+    const b = await k.app.locals.backups.create({ kind: "manual", offsite: false });
+    assert.equal(b.legal_files, 1);
+    const { manifest, files } = await openBackup(fs.readFileSync(path.join(k.dir, "backups", b.name)), "");
+    const file = k.st.db.legal_documents.find((x) => x.id === d.id).versions[0].file;
+    assert.equal(manifest.legal_included, 1); assert.ok(manifest.files.some((f) => f.name === `legal/${file}`));
+    assert.ok(files.find((f) => f.name === `legal/${file}`).data.equals(pdf));
+    assert.equal((await k.app.locals.backups.verify(b.name)).legal_files, 1);
+    // Data requests: signed contract retained, draft party removed.
+    const draft = (await k.j(`${k.X}/documents`, { title: "NDA draft · Oud Store", type: "nda", parties: [{ name: "Oud owner", email: "owner@oud.example" }, { name: "Other", email: "x@other.example" }] })).body;
+    await k.j(`${k.X}/documents/${d.id}/signatures`, { signer_name: "Oud owner", signer_email: "owner@oud.example", signed_at: "2026-11-01", method: "wet", version: 1 });
+    const { findSubject, exportSubject, deleteSubject, REGISTER_STARTER } = await import("../lib/compliance.js");
+    assert.ok(REGISTER_STARTER.some((r) => r.key === "legal_documents" && r.module === "legal"));
+    const ctx = { store: k.st, crm: k.app.locals.crm };
+    const f = findSubject(ctx, { email: "OWNER@oud.example" });
+    assert.equal(f.legal_documents.length, 2);
+    const signed = f.legal_documents.find((x) => x.id === d.id);
+    assert.equal(signed.retain, true); assert.match(signed.label, /retain for legal reasons/);
+    const x = exportSubject(ctx, { email: "owner@oud.example" });
+    const ex = x.legal_documents.find((y) => y.title.startsWith("Customer"));
+    assert.deepEqual(ex.as_party, [{ name: "Oud Store", email: "owner@oud.example", role: "Customer" }]); assert.equal(ex.signatures[0].method, "wet"); assert.equal(ex.retained_for_legal_reasons, true); assert.equal(ex.versions[0].name, "contract.pdf");
+    const c = deleteSubject(ctx, { email: "owner@oud.example" });
+    assert.equal(c.legal_documents_retained, 1); assert.equal(c.legal_parties_removed, 1);
+    assert.deepEqual(k.st.db.legal_documents.find((y) => y.id === draft.id).parties.map((p) => p.email), ["x@other.example"]);
+    assert.equal(k.st.db.legal_documents.find((y) => y.id === d.id).parties[0].email, "owner@oud.example", "signed contract unchanged");
+    assert.ok(fs.existsSync(path.join(k.dir, "legal", file)));
+    // Employee self-service: their own signed employment contract, nothing else.
+    const u = await k.user("member", "emp");
+    const e = k.st.addOps("people_employees", k.w.id, { name: "Arjun Rao", email: "", designation: "Engineer", doj: "2026-01-01", work_state: "KA", status: "active", user_id: u.id });
+    const ec = (await k.j(`${k.X}/documents`, { title: "Employment contract · Arjun", type: "employment_contract", employee_id: e.id })).body;
+    assert.equal((await k.j(`${k.X}/documents`, { title: "Y", employee_id: "nope" })).status, 422);
+    assert.equal((await k.as(u.ck, `/api/me/people/${k.w.id}`)).body.documents.length, 0, "not signed yet");
+    await k.upload(k.ck, ec.id, "arjun-signed.pdf", pdf, { kind: "signed" });
+    await k.j(`${k.X}/documents/${ec.id}/signatures`, { signer_name: "Arjun Rao", signed_at: "2026-01-01", method: "wet", version: 1 });
+    const mine = (await k.as(u.ck, `/api/me/people/${k.w.id}`)).body.documents;
+    assert.deepEqual(mine.map((m) => m.title), ["Employment contract · Arjun"]);
+    const dl = await k.raw(u.ck, `/api/me/legal/${k.w.id}/documents/${ec.id}/file`);
+    assert.equal(dl.status, 200); assert.match(k.st.db.audit.at(-1).summary, /downloaded legal document "Employment contract · Arjun"/);
+    assert.equal((await k.raw(u.ck, `/api/me/legal/${k.w.id}/documents/${d.id}/file`)).status, 404, "not their document");
+    assert.equal((await k.as(u.ck, `${k.X}/documents/${ec.id}`)).status, 403, "no Legal module");
+  } finally { k.done(); }
+});
+
+test("legal: Ask DPA AD tools (list respects restricted, reminder after a confirm), sample documents removed with sample data, workspace delete removes rows and files", async () => {
+  const { TOOLS } = await import("../lib/assistant.js");
+  const lt = TOOLS.find((t) => t.name === "list_documents"), at = TOOLS.find((t) => t.name === "add_document_reminder");
+  assert.equal(lt.module, "legal"); assert.ok(!lt.write); assert.equal(at.module, "legal"); assert.equal(at.write, true); assert.equal(at.risk, "low"); assert.equal(typeof at.preview, "function");
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await lgKit({ clock: "2026-11-03T09:00:00Z", assistantClient: fakeClient });
+  try {
+    const open = (await k.j(`${k.X}/documents`, { title: "Hosting contract", type: "vendor_contract", expiry_date: "2026-12-01" })).body;
+    await k.j(`${k.X}/documents`, { title: "Cap table", type: "cap_table" });
+    const lead = await k.user("manager", "tl");
+    script = [use("l1", "list_documents", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.total, 1); assert.equal(r.documents[0].title, "Hosting contract"); assert.equal(r.documents[0].state, "draft"); return say("One document."); }];
+    assert.match((await k.as(lead.ck, "/api/assistant", "POST", { message: "Documents?", ws: k.w.id })).body.reply, /One document/);
+    script = [use("l2", "list_documents", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.total, 2); return say("Two."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "Documents?", ws: k.w.id })).body;
+    assert.match(a1.reply, /Two/);
+    script = [use("l3", "add_document_reminder", { document_id: open.id, title: "Ask for the renewal quote", due_date: "2026-11-15" })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Remind me", ws: k.w.id })).body;
+    assert.equal(a2.pending.summary, 'Add the reminder "Ask for the renewal quote" due 2026-11-15 to "Hosting contract"');
+    assert.ok(!k.st.db.legal_obligations.length);
+    script = [say("Added.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const o = k.st.db.legal_obligations[0];
+    assert.equal(o.kind, "reminder"); assert.equal(o.due_date, "2026-11-15"); assert.equal(o.document_id, open.id);
+
+    // Sample data: an NDA draft (from the template) and a vendor contract expiring in 20 days, removed with their files.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.legal_documents, 2);
+    const smp = k.st.db.legal_documents.filter((y) => y.sample);
+    assert.ok(smp.every((y) => y.title.startsWith("Sample · ")));
+    const nda = smp.find((y) => y.type === "nda"), vend = smp.find((y) => y.type === "vendor_contract");
+    assert.equal(nda.status, "draft"); assert.equal(nda.versions[0].kind, "generated"); assert.ok(nda.versions[0].placeholders.add > 0);
+    assert.equal(vend.expiry_date, "2026-11-23"); assert.equal(vend.status, "active");
+    const needs = (await k.j(`${k.W}/command`)).body.needs.filter((n) => n.module === "Legal");
+    assert.ok(needs.some((n) => n.title === "Documents expiring" && /Sample · Cloud hosting vendor contract/.test(n.text)));
+    assert.ok(needs.some((n) => n.title === "Notice deadlines" && /by 2026-11-09/.test(n.text)));
+    const s = (await k.j(`${k.X}/documents/${vend.id}/summary`, {})).body;
+    assert.match(s.summary.fields.notice[0].quote, /14 days written notice/);
+    const sampleFiles = smp.flatMap((y) => y.versions.map((v) => v.file));
+    assert.ok(sampleFiles.every((f) => fs.existsSync(path.join(k.dir, "legal", f))));
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.legal_documents, 2); assert.equal(rm.legal_obligations, 1);
+    assert.ok(!k.st.db.legal_documents.some((y) => y.sample)); assert.ok(sampleFiles.every((f) => !fs.existsSync(path.join(k.dir, "legal", f))));
+    assert.ok(k.st.db.legal_documents.some((y) => y.id === open.id), "real document kept");
+    // Deleting a workspace removes its legal rows and files, and keeps other workspaces'.
+    await k.upload(k.ck, open.id, "hosting.pdf", await lgPdf(["Hosting agreement text for the delete test."]));
+    const f = k.st.db.legal_documents.find((y) => y.id === open.id).versions[0].file;
+    k.st.db.legal_documents.push({ id: "zl", workspace_id: "other", versions: [] });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    assert.equal(k.st.db.legal_documents.filter((y) => y.workspace_id === k.w.id).length, 0); assert.equal(k.st.db.legal_obligations.filter((y) => y.workspace_id === k.w.id).length, 0);
+    assert.deepEqual(k.st.db.legal_documents.map((y) => y.id), ["zl"]);
+    assert.ok(!fs.existsSync(path.join(k.dir, "legal", f)));
+  } finally { k.done(); }
+});

@@ -213,7 +213,7 @@ export function sniffLegal(head) {
   return "";
 }
 const looksText = (buf) => { const b = buf.subarray(0, 8192); if (b.includes(0)) return false; const s = b.subarray(0, Math.max(0, b.length - 4)).toString("utf8"); return !s.includes("�"); };
-const isDocx = (buf) => buf.includes(Buffer.from("word/document.xml")) && buf.includes(Buffer.from("[Content_Types].xml"));
+const isDocx = (buf) => buf.includes(Buffer.from("word/document.xml")); // a zip holding the Word body
 const newName = (ext) => `${crypto.randomBytes(24).toString("base64url")}.${ext}`;
 const shaOf = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
@@ -472,7 +472,7 @@ export function cleanObligation(b = {}, { store, partial = false } = {}) {
   if (b.repeat !== undefined) { o.repeat = String(b.repeat || "none"); if (!REPEATS.includes(o.repeat)) err.push(`repeat must be one of ${REPEATS.join(", ")}`); }
   if (b.owner_id !== undefined) { const id = b.owner_id ? String(b.owner_id) : null; if (id && store && !people(store).some((p) => p.id === id)) err.push("owner_id is not a person in Teams & roles"); else o.owner_id = id; }
   if (b.notes !== undefined) o.notes = str(b.notes, 2000);
-  if (o.repeat && o.repeat !== "none" && b.due_date !== undefined && !o.due_date) err.push("a repeating obligation needs a due_date");
+  if (o.repeat && o.repeat !== "none" && (b.due_date !== undefined || !partial) && !o.due_date) err.push("a repeating obligation needs a due_date");
   return { o, err };
 }
 export const nextDue = (date, repeat) => (repeat === "monthly" ? addMonths(date, 1) : repeat === "quarterly" ? addMonths(date, 3) : repeat === "yearly" ? addMonths(date, 12) : null);
