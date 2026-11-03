@@ -6296,3 +6296,430 @@ test("help center: AI Help writer agent, module and role defaults, Ask DPA AD to
     assert.deepEqual(k.st.db.help_articles.map((y) => y.id), ["zh"]); assert.equal(k.st.db.help_votes.length, 0);
   } finally { k.done(); }
 });
+
+// ---------------------------------------------------------------- Changelog
+async function clKit({ clock = "2026-11-03T09:00:00Z", assistantClient = null, env = { PUBLIC_URL: "https://wizard.dpa.ad" } } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-cl-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const seen = [];
+  const prov = { name: "test", model: "test", async generate(a) { seen.push(a.prompt); return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const clk = () => (t == null ? Date.now() : t);
+  const app2 = createApp({ store: st, provider: prov, password: "pw-cl", assistantClient, env, helpOptions: { clock: clk }, changelogOptions: { clock: clk } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-cl" });
+  const as = async (c, p, m = "GET", body) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const W = `/api/workspaces/${w.id}`, X = `${W}/changelog`;
+  const user = async (role, tag = role) => { const email = `cl-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Cl ${tag}`, email, password: `cl-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `cl-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  const pub = async (p) => { const r = await fetch(b2 + p, { redirect: "manual" }); return { status: r.status, text: await r.text(), headers: r.headers }; };
+  // A published entry: written by `author`, reviewed and published by the Owner.
+  const published = async (f, author) => {
+    const e = (await as(author.ck, `${X}/entries`, "POST", f)).body;
+    await as(author.ck, `${X}/entries/${e.id}/status`, "POST", { status: "in_review" });
+    return (await j(`${X}/entries/${e.id}/status`, { status: "published" })).body;
+  };
+  const item = async (title, type = "feature", area = "Templates", problem = "") => (await j(`${W}/product/items`, { title, type, area, problem, status: "building" })).body;
+  const shipped = async (version, itemIds, date) => {
+    const r = (await j(`${W}/product/releases`, { version, item_ids: itemIds, date, notes: "" })).body;
+    return (await j(`${W}/product/releases/${r.id}`, { status: "released", date }, "PUT")).body;
+  };
+  const events = () => st.db.agent_events.filter((x) => x.agent_id === "release_writer");
+  return { app: app2, st, w, W, X, j, as, ck, user, pub, published, item, shipped, b2, seen, events, crm: app2.locals.crm,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+const CL_A = { title_ar: "قوالب فيديو لسناب", title_en: "Video templates for Snap", type: "new", tags: ["snap", "video"], body_ar: "## الجديد\n- اختر قالب الفيديو\n- صدّر لسناب", body_en: "## What's new\n- Pick a video template\n- Export to Snap" };
+// A small well-formedness check for XML: balanced tags, quoted attributes, only the five XML entities or numeric ones.
+function clXmlOk(x) {
+  const body = x.replace(/^<\?xml[^?]*\?>\s*/, "");
+  if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/i.test(body)) return "bad entity";
+  const tagRe = /<(\/?)([A-Za-z][\w:.-]*)((?:\s+[\w:.-]+="[^"<]*")*)\s*(\/?)>/g;
+  const stack = [];
+  for (const m of body.matchAll(tagRe)) {
+    if (m[1]) { if (stack.pop() !== m[2]) return `unbalanced </${m[2]}>`; } else if (!m[4]) stack.push(m[2]);
+  }
+  if (/[<>]/.test(body.replace(tagRe, ""))) return "raw < or > in text";
+  return stack.length ? `unclosed ${stack.join(",")}` : "";
+}
+
+test("changelog entries: create with validation, slug, type, tags, date, links to a release, items and a media image; draft → in review → published → archived; reviewer ≠ author; [ADD] blocks publishing; published text locked; delete rules; roles", async () => {
+  const k = await clKit();
+  try {
+    assert.equal((await k.j(`${k.X}/entries`, { type: "new" })).status, 422, "a title is required");
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "X", type: "nope" })).status, 422);
+    assert.match((await k.j(`${k.X}/entries`, { title_en: "X", tags: ["snap", "myspace"] })).body.detail, /Unknown tag: myspace/);
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "X", date: "2026-02-30" })).status, 422);
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "X", image: "https://evil.example/x.png" })).status, 422, "images only from /media/");
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "X", release_id: "999" })).status, 422);
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "X", item_ids: ["999"] })).status, 422);
+    const it = await k.item("Snap video templates", "feature", "Video");
+    const rel = (await k.j(`${k.W}/product/releases`, { version: "v1.0", item_ids: [it.id] })).body;
+    const mem = await k.user("member", "m1");
+    const e = (await k.as(mem.ck, `${k.X}/entries`, "POST", { ...CL_A, release_id: rel.id, item_ids: [it.id], image: "/media/abc_DEF-12.png" })).body;
+    assert.equal(e.status, "draft"); assert.equal(e.slug, "video-templates-for-snap"); assert.equal(e.author_id, mem.id); assert.equal(e.date, "2026-11-03", "Riyadh day by default");
+    assert.deepEqual(e.tags, ["snap", "video"]); assert.equal(e.release.version, "v1.0"); assert.deepEqual(e.items.map((x) => x.title), ["Snap video templates"]); assert.equal(e.image, "/media/abc_DEF-12.png");
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "Other", slug: "video-templates-for-snap" })).status, 422, "slug is unique");
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "Video templates for Snap", body_en: "x" })).body.slug, "video-templates-for-snap-2");
+    assert.equal((await k.j(`${k.X}/entries`, { title_en: "x", slug: "rss-xml" })).status, 422, "feed paths are reserved");
+    assert.match((await k.j(`${k.X}/entries`, { title_ar: "عربي فقط", body_ar: "نص" })).body.slug, /^update-2026-11-03-\d+$/);
+    const empty = (await k.j(`${k.X}/entries`, { title_en: "Only a title" })).body;
+    assert.equal((await k.j(`${k.X}/entries/${empty.id}/status`, { status: "in_review" })).status, 422, "needs a body in one language");
+    assert.equal((await k.j(`${k.X}/entries/${e.id}/status`, { status: "published" })).status, 409, "draft can't jump to published");
+    const ed = (await k.as(mem.ck, `${k.X}/entries/${e.id}`, "PUT", { body_en: "## What's new\n- Pick a **video** template", tags: ["snap", "video", "tiktok"] })).body;
+    assert.deepEqual(ed.tags, ["snap", "video", "tiktok"]); assert.match(ed.log.at(-1).text, /Edited: body en, tags/);
+    const rv = (await k.as(mem.ck, `${k.X}/entries/${e.id}/status`, "POST", { status: "in_review" })).body;
+    assert.equal(rv.status, "in_review"); assert.equal(rv.submitted_at, "2026-11-03T09:00:00.000Z");
+    const self = await k.as(mem.ck, `${k.X}/entries/${e.id}/status`, "POST", { status: "published" });
+    assert.equal(self.status, 403); assert.match(self.body.detail, /different person than the author.*Product Edit/);
+    const lead = await k.user("manager", "tl");
+    const p = (await k.as(lead.ck, `${k.X}/entries/${e.id}/status`, "POST", { status: "published" })).body;
+    assert.equal(p.status, "published"); assert.equal(p.reviewer_id, lead.id); assert.equal(p.live, true); assert.equal(p.live_url, "https://wizard.dpa.ad/changelog/video-templates-for-snap");
+    const locked = await k.as(mem.ck, `${k.X}/entries/${e.id}`, "PUT", { body_en: "changed" });
+    assert.equal(locked.status, 409); assert.match(locked.body.detail, /locked/);
+    assert.equal((await k.as(mem.ck, `${k.X}/entries/${e.id}`, "PUT", { tags: ["snap"] })).status, 200, "tags still edit");
+    assert.equal((await k.j(`${k.X}/entries/${e.id}`, undefined, "DELETE")).status, 409, "archive before delete");
+    // [ADD] left blocks publishing; the Owner may self-publish unless switched off.
+    const own = (await k.j(`${k.X}/entries`, { title_en: "Owner's own", body_en: "Text [ADD detail]" })).body;
+    await k.j(`${k.X}/entries/${own.id}/status`, { status: "in_review" });
+    const add = await k.j(`${k.X}/entries/${own.id}/status`, { status: "published" });
+    assert.equal(add.status, 422); assert.match(add.body.detail, /\[ADD\]/);
+    await k.j(`${k.X}/entries/${own.id}/status`, { status: "draft" });
+    await k.j(`${k.X}/entries/${own.id}`, { body_en: "Text" }, "PUT");
+    await k.j(`${k.X}/entries/${own.id}/status`, { status: "in_review" });
+    await k.j(`${k.X}/settings`, { owner_self_publish: false }, "PUT");
+    assert.equal((await k.j(`${k.X}/entries/${own.id}/status`, { status: "published" })).status, 403, "setting off: the Owner needs another reviewer too");
+    await k.j(`${k.X}/settings`, { owner_self_publish: true }, "PUT");
+    assert.equal((await k.j(`${k.X}/entries/${own.id}/status`, { status: "published" })).body.status, "published");
+    assert.equal((await k.j(`${k.X}/entries/${e.id}/status`, { status: "archived" })).body.status, "archived");
+    assert.equal((await k.j(`${k.X}/entries/${e.id}`, undefined, "DELETE")).status, 200);
+    // Roles reuse the Product module: Viewer reads only, Finance and Creative have no access.
+    const vw = await k.user("viewer", "vw"), fin = await k.user("finance", "fi"), cr = await k.user("creative", "cr");
+    assert.equal((await k.as(vw.ck, `${k.X}/entries`)).status, 200);
+    assert.equal((await k.as(vw.ck, `${k.X}/entries`, "POST", { title_en: "No" })).status, 403);
+    assert.equal((await k.as(fin.ck, `${k.X}/entries`)).status, 403);
+    assert.equal((await k.as(cr.ck, `${k.X}/meta`)).status, 403);
+    const list = (await k.j(`${k.X}/entries?status=published`)).body;
+    assert.deepEqual(list.entries.map((x) => x.title_en), ["Owner's own"]); assert.equal(list.totals.archived, 0);
+    // Deleting a release or a roadmap item clears the entry's link and keeps its text.
+    const e2 = (await k.j(`${k.X}/entries`, { title_en: "Linked", body_en: "x", release_id: rel.id, item_ids: [it.id] })).body;
+    assert.equal((await k.j(`${k.W}/product/releases/${rel.id}`, undefined, "DELETE")).status, 204);
+    assert.equal((await k.j(`${k.W}/product/items/${it.id}`, undefined, "DELETE")).status, 204);
+    const after = (await k.j(`${k.X}/entries/${e2.id}`)).body;
+    assert.equal(after.release_id, null); assert.deepEqual(after.item_ids, []); assert.equal(after.title_en, "Linked");
+  } finally { k.done(); }
+});
+
+test("changelog public site: Arabic by default and ?lang=en, only published entries (drafts, in review and archived 404), entry pages, filters by type and tag, security headers and no scripts, /help and /changelog link to each other", async () => {
+  const k = await clKit();
+  try {
+    const mem = await k.user("member", "m2");
+    const live = await k.published({ ...CL_A, date: "2026-10-20" }, mem);
+    const fix = await k.published({ title_ar: "إصلاح الأسعار", title_en: "Price fix", type: "fixed", tags: ["catalogs", "salla"], body_ar: "صلّحنا الأسعار", body_en: "We fixed <b>prices</b> & more", date: "2026-11-01" }, mem);
+    const enOnly = await k.published({ title_en: "English only update", type: "announcement", body_en: "Hello", date: "2026-09-01" }, mem);
+    const draft = (await k.as(mem.ck, `${k.X}/entries`, "POST", { title_en: "Secret draft", body_en: "internal only", tags: ["snap"] })).body;
+    const home = await k.pub("/changelog");
+    assert.equal(home.status, 200);
+    assert.match(home.text, /<html lang="ar" dir="rtl">/); assert.match(home.text, /ما الجديد/);
+    assert.ok(home.text.indexOf("إصلاح الأسعار") < home.text.indexOf("قوالب فيديو لسناب"), "newest first");
+    assert.doesNotMatch(home.text, /Secret draft/); assert.doesNotMatch(home.text, /<script/i);
+    assert.match(home.text, /<time class="when" datetime="2026-11-01">/);
+    assert.match(home.text, /href="\/help"/, "links to the help center");
+    assert.match(home.text, /type="application\/rss\+xml"[^>]*href="\/changelog\/rss.xml"/);
+    const csp = home.headers.get("content-security-policy");
+    assert.match(csp, /default-src 'none'/); assert.doesNotMatch(csp, /script-src/); assert.match(csp, /style-src 'nonce-/);
+    assert.ok(home.text.includes(`<style nonce="${/nonce-([A-Za-z0-9+/=]+)/.exec(csp)[1]}">`));
+    assert.equal(home.headers.get("x-frame-options"), "DENY"); assert.equal(home.headers.get("x-content-type-options"), "nosniff"); assert.equal(home.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+    const en = await k.pub("/changelog?lang=en");
+    assert.match(en.text, /<html lang="en" dir="ltr">/); assert.match(en.text, /What&#39;s new/); assert.match(en.text, /Video templates for Snap/); assert.match(en.text, /href="\/help\?lang=en"/);
+    const fx = await k.pub("/changelog?type=fixed&lang=en");
+    assert.match(fx.text, /Price fix/); assert.doesNotMatch(fx.text, /Video templates for Snap/);
+    const sn = await k.pub("/changelog?tag=snap");
+    assert.match(sn.text, /قوالب فيديو لسناب/); assert.doesNotMatch(sn.text, /إصلاح الأسعار/); assert.match(sn.text, /noindex/);
+    assert.match((await k.pub("/changelog?tag=google")).text, /ما فيه تحديثات بهذا الفلتر/);
+    assert.equal((await k.pub("/changelog?type=bogus")).status, 404); assert.equal((await k.pub("/changelog?tag=bogus")).status, 404);
+    const art = await k.pub(`/changelog/${live.slug}`);
+    assert.equal(art.status, 200); assert.match(art.text, /<h2>الجديد<\/h2>/); assert.match(art.text, /<li>اختر قالب الفيديو<\/li>/); assert.match(art.text, /سناب شات/);
+    assert.match((await k.pub(`/changelog/${live.slug}?lang=en`)).text, /<h2>What&#39;s new<\/h2>/);
+    assert.match((await k.pub(`/changelog/${fix.slug}?lang=en`)).text, /We fixed &lt;b&gt;prices&lt;\/b&gt; &amp; more/, "body HTML is escaped");
+    assert.match((await k.pub(`/changelog/${enOnly.slug}`)).text, /متوفر بالإنجليزي فقط/);
+    assert.equal((await k.pub(`/changelog/${draft.slug}`)).status, 404, "draft");
+    await k.as(mem.ck, `${k.X}/entries/${draft.id}/status`, "POST", { status: "in_review" });
+    assert.equal((await k.pub(`/changelog/${draft.slug}`)).status, 404, "in review");
+    await k.j(`${k.X}/entries/${live.id}/status`, { status: "archived" });
+    assert.equal((await k.pub(`/changelog/${live.slug}`)).status, 404, "archived");
+    assert.equal((await k.pub("/changelog/no-such-entry")).status, 404);
+    // The help center links to the changelog and back.
+    assert.match((await k.pub("/help")).text, /href="\/changelog">ما الجديد</);
+    assert.match((await k.pub("/help?lang=en")).text, /href="\/changelog\?lang=en">What&#39;s new</);
+    // Same workspace as the public help site.
+    const w2 = (await k.j("/api/workspaces", { company_name: "Second Co" })).body;
+    await k.j(`/api/workspaces/${w2.id}/helpcenter/settings`, { public_site: true }, "PUT");
+    assert.equal((await k.pub(`/changelog/${fix.slug}`)).status, 404, "the site now shows the other workspace");
+    assert.match((await k.pub("/changelog")).text, /Second Co/);
+  } finally { k.done(); }
+});
+
+test("changelog feeds: RSS 2.0 is well-formed XML with channel and item fields and escaped text; JSON Feed 1.1 has the required fields; published entries only", async () => {
+  const k = await clKit();
+  try {
+    const mem = await k.user("member", "m3");
+    await k.published({ title_ar: "تحديث <أ> & \"ب\"", title_en: "Update <a> & \"b\" 'c'", type: "improved", tags: ["meta"], body_ar: "نص", body_en: "Line with **bold** & [link](/help) and ![img](/media/pic_1.png)\u0007", date: "2026-11-02", image: "/media/cover_9.jpg" }, mem);
+    await k.published({ title_ar: "ثاني", title_en: "Second", type: "new", body_ar: "نص ثاني", body_en: "Second body", date: "2026-10-01" }, mem);
+    await k.j(`${k.X}/entries`, { title_en: "Draft never in feeds", body_en: "secret" });
+    const rss = await k.pub("/changelog/rss.xml?lang=en");
+    assert.equal(rss.status, 200); assert.match(rss.headers.get("content-type"), /application\/rss\+xml/);
+    assert.equal(clXmlOk(rss.text), "", "well-formed");
+    assert.match(rss.text, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<rss version="2.0"/);
+    for (const tag of ["title", "link", "description", "language", "lastBuildDate"]) assert.match(rss.text, new RegExp(`<channel>[\\s\\S]*<${tag}>`), tag);
+    assert.match(rss.text, /<atom:link href="https:\/\/wizard.dpa.ad\/changelog\/rss.xml\?lang=en" rel="self" type="application\/rss\+xml"\/>/);
+    const items = [...rss.text.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => m[1]);
+    assert.equal(items.length, 2); assert.doesNotMatch(rss.text, /Draft never in feeds/);
+    assert.match(items[0], /<title>Update &lt;a&gt; &amp; &quot;b&quot; &#39;c&#39;<\/title>/);
+    assert.match(items[0], /<guid isPermaLink="true">https:\/\/wizard.dpa.ad\/changelog\/update-a-b-c\?lang=en<\/guid>/);
+    assert.match(items[0], /<pubDate>Sun, 01 Nov 2026 21:00:00 GMT<\/pubDate>/, "the entry's Riyadh day");
+    assert.match(items[0], /<category>Improved<\/category><category>Meta<\/category>/);
+    assert.match(items[0], /&lt;img src=&quot;https:\/\/wizard.dpa.ad\/media\/cover_9.jpg&quot;/, "absolute media links, escaped HTML");
+    assert.match(items[0], /href=&quot;https:\/\/wizard.dpa.ad\/help&quot;/);
+    assert.doesNotMatch(rss.text, /\u0007/, "control characters dropped");
+    assert.match((await k.pub("/changelog/rss.xml")).text, /<language>ar<\/language>[\s\S]*<title>تحديث &lt;أ&gt;/);
+    assert.equal(clXmlOk((await k.pub("/changelog/rss.xml")).text), "");
+    const jf = await k.pub("/changelog/feed.json");
+    assert.match(jf.headers.get("content-type"), /application\/feed\+json/);
+    const feed = JSON.parse(jf.text);
+    assert.equal(feed.version, "https://jsonfeed.org/version/1.1"); assert.equal(feed.feed_url, "https://wizard.dpa.ad/changelog/feed.json"); assert.equal(feed.home_page_url, "https://wizard.dpa.ad/changelog"); assert.equal(feed.language, "ar");
+    assert.ok(feed.title && Array.isArray(feed.items) && feed.items.length === 2);
+    for (const it of feed.items) { assert.ok(it.id && it.url && it.content_html && it.title); assert.ok(!Number.isNaN(Date.parse(it.date_published))); }
+    assert.equal(feed.items[0].date_published, "2026-11-01T21:00:00.000Z"); assert.equal(feed.items[0].image, "https://wizard.dpa.ad/media/cover_9.jpg");
+    assert.deepEqual(feed.items[0].tags, ["تحسين", "ميتا"]); assert.equal(feed.items[0].id, "https://wizard.dpa.ad/changelog/update-a-b-c");
+    assert.doesNotMatch(jf.text, /Draft never in feeds/);
+  } finally { k.done(); }
+});
+
+test("changelog from releases: drafts only from shipped releases (linked items, type and tags by rule, one per release); the demo AI falls back to a factual draft with [ADD] and no invented numbers; checked JSON kept; invented numbers, customer names and HTML refused; outcomes; translation", async () => {
+  const k = await clKit();
+  try {
+    const i1 = await k.item("Snap video templates", "feature", "Video", "Snap reaches over 90% of young Saudis");
+    const i2 = await k.item("Fix Arabic price overlay", "bug", "Templates");
+    const draftRel = (await k.j(`${k.W}/product/releases`, { version: "v2.0", item_ids: [i1.id] })).body;
+    assert.equal((await k.j(`${k.X}/from-release/${draftRel.id}`, {})).status, 409, "not shipped yet");
+    const rel = await k.shipped("v1.4", [i1.id, i2.id], "2026-11-01");
+    assert.deepEqual((await k.j(`${k.X}/meta`)).body.releases.map((r) => [r.version, r.entry_id]), [["v1.4", null]]);
+    // Demo AI: not JSON → the factual draft (item titles + [ADD]), no numbers beyond the sources.
+    const r1 = await k.j(`${k.X}/from-release/${rel.id}`, {});
+    assert.equal(r1.status, 201);
+    const e = r1.body.entry;
+    assert.equal(r1.body.by_ai, false); assert.match(r1.body.note, /expected JSON/);
+    assert.equal(e.status, "draft"); assert.equal(e.release_id, rel.id); assert.deepEqual(e.item_ids, [i1.id, i2.id]); assert.equal(e.type, "new"); assert.deepEqual(e.tags, ["snap", "templates", "video", "arabic"]);
+    assert.equal(e.date, "2026-11-01"); assert.ok(e.has_add); assert.match(e.body_en, /\*\*Snap video templates\*\*: \[ADD/); assert.match(e.body_ar, /\[ADD/);
+    assert.doesNotMatch(e.body_en + e.body_ar, /90/, "the internal problem statement is not copied");
+    const p = k.seen.at(-1);
+    assert.match(p, /<task title="Release notes">/); assert.match(p, /Snap video templates/); assert.match(p, /never invent features, numbers/);
+    assert.equal((await k.j(`${k.X}/from-release/${rel.id}`, {})).status, 409, "one entry per release");
+    assert.equal((await k.j(`${k.X}/meta`)).body.releases[0].entry_id, e.id);
+    // The rule type: only bugs → fixed.
+    const bugRel = await k.shipped("v1.5", [i2.id], "2026-11-02");
+    assert.equal((await k.j(`${k.X}/from-release/${bugRel.id}`, {})).body.entry.type, "fixed");
+    // A checked JSON reply is kept; invented numbers, a requester's name or HTML are refused.
+    await k.j(`${k.W}/product/feedback`, { text: "We need Snap video", customer: "Najd Home", item_id: i1.id });
+    const good = { title_ar: "فيديو لسناب من منتجاتك", body_ar: "- اختر قالب فيديو لسناب\n- صلّحنا سعر المنتج بالعربي", title_en: "Snap videos from your products", body_en: "- Pick a Snap video template\n- Fixed the Arabic price overlay" };
+    k.ai(() => JSON.stringify(good));
+    const r2 = (await k.j(`${k.X}/from-release/${rel.id}`, { force: true })).body;
+    assert.equal(r2.by_ai, true); assert.equal(r2.entry.title_en, "Snap videos from your products"); assert.equal(r2.entry.by_ai, true);
+    const esc0 = k.events().filter((x) => x.outcome === "escalated").length;
+    k.ai(() => JSON.stringify({ ...good, body_en: "- 3x more sales in 2027" }));
+    const r3 = (await k.j(`${k.X}/from-release/${rel.id}`, { force: true })).body;
+    assert.equal(r3.by_ai, false); assert.match(r3.note, /numbers that aren't in the release.*2027/); assert.match(r3.entry.body_en, /\[ADD/);
+    k.ai(() => JSON.stringify({ ...good, body_en: "- Najd Home asked for this" }));
+    assert.match((await k.j(`${k.X}/from-release/${rel.id}`, { force: true })).body.note, /named a customer or competitor \("Najd Home"\)/);
+    k.ai(() => JSON.stringify({ ...good, body_en: "<script>x</script>" }));
+    assert.match((await k.j(`${k.X}/from-release/${rel.id}`, { force: true })).body.note, /HTML/);
+    assert.equal(k.events().filter((x) => x.outcome === "escalated").length, esc0 + 3, "each refused draft is an escalation");
+    // Outcomes: an AI draft published unchanged = accepted.
+    const mem = await k.user("member", "m4");
+    await k.j(`${k.X}/entries/${r2.entry.id}/status`, { status: "in_review" });
+    const pubd = await k.as(mem.ck, `${k.X}/entries/${r2.entry.id}/status`, "POST", { status: "published" });
+    assert.equal(pubd.body.ai_judged, "accepted"); assert.equal(k.events().at(-1).outcome, "accepted");
+    // Redo the notes of a draft from its links.
+    k.ai(() => JSON.stringify(good));
+    const redo = (await k.j(`${k.X}/entries/${e.id}/ai/notes`, {})).body;
+    assert.equal(redo.by_ai, true); assert.equal(redo.entry.body_en, good.body_en);
+    assert.equal((await k.j(`${k.X}/entries/${r2.entry.id}/ai/notes`, {})).status, 409, "published entries aren't rewritten");
+    const loose = (await k.j(`${k.X}/entries`, { title_en: "No links", body_en: "x" })).body;
+    assert.equal((await k.j(`${k.X}/entries/${loose.id}/ai/notes`, {})).status, 422, "notes only from a release or items");
+    // Translation: checked (same numbers and links); applied with an outcome; a wrong number or the demo leave [ADD].
+    const tx = (await k.j(`${k.X}/entries`, { title_ar: "خطوط الهوية", body_ar: "ارفع خطوطك من [الإعدادات](/help/account-and-team)" })).body;
+    k.ai(() => JSON.stringify({ title: "Brand fonts", body: "Upload your fonts from [settings](/help/account-and-team)" }));
+    const t1 = (await k.j(`${k.X}/entries/${tx.id}/ai/translate`, { to: "en" })).body.translation;
+    assert.equal(t1.by_ai, true); assert.equal(t1.title, "Brand fonts");
+    assert.match(k.seen.at(-1), /<task title="Changelog translation">/); assert.match(k.seen.at(-1), /AI Release notes writer/);
+    const ap = (await k.j(`${k.X}/entries/${tx.id}/translation`, { action: "apply" })).body;
+    assert.equal(ap.title_en, "Brand fonts"); assert.equal(ap.translation, undefined); assert.equal(k.events().at(-1).outcome, "accepted");
+    k.ai(() => JSON.stringify({ title: "Brand fonts", body: "Upload 5 fonts from [settings](/help/account-and-team)" }));
+    const t2 = (await k.j(`${k.X}/entries/${tx.id}/ai/translate`, { to: "en" })).body.translation;
+    assert.equal(t2.by_ai, false); assert.match(t2.note, /numbers that aren't in the original/); assert.match(t2.title, /\[ADD/);
+    k.ai(null);
+    const t3 = (await k.j(`${k.X}/entries/${tx.id}/ai/translate`, { to: "ar" })).body.translation;
+    assert.equal(t3.by_ai, false); assert.match(t3.body, /\[ADD/);
+    assert.equal((await k.j(`${k.X}/entries/${tx.id}/translation`, { action: "discard" })).body.translation, undefined);
+  } finally { k.done(); }
+});
+
+test("changelog feedback loop: requesters of the linked roadmap items matched to Store CRM stores; Notify creates one draft per ready store (opted-out, do-not-contact, sample and unknown stores skipped); a person sends through the Store CRM (Test mode, CRM edit needed); nothing is sent by itself", async () => {
+  const k = await clKit();
+  try {
+    const it = await k.item("Zid app", "integration", "Integrations");
+    const other = await k.item("Shopify app", "integration", "Integrations");
+    const najd = k.crm.add(k.w.id, { store_name: "Najd Home", domain: "najdhome.sa", email: "owner@najdhome.sa", owner_name: "Sara" });
+    const optout = k.crm.add(k.w.id, { store_name: "Quiet Shop", domain: "quiet.sa", email: "q@quiet.sa", email_opt_out: true });
+    const dnc = k.crm.add(k.w.id, { store_name: "No Contact", domain: "nocontact.sa", email: "x@nocontact.sa", stage: "do_not_contact" });
+    const smp = k.crm.add(k.w.id, { store_name: "Sample · Demo Store", domain: "demo.example.com", email: "owner@demo.example.com", sample: true });
+    const byId = k.crm.add(k.w.id, { store_name: "Linked By Id", domain: "linked.sa", email: "hi@linked.sa" });
+    const fb = (text, customer, extra = {}) => k.j(`${k.W}/product/feedback`, { text, customer, item_id: it.id, ...extra });
+    await fb("Please connect Zid", "najd home");
+    await fb("Zid please!", "Najd Home");
+    await fb("Need Zid", "quiet.sa");
+    await fb("Zid", "No Contact");
+    await fb("Zid for the demo", "Sample · Demo Store");
+    await fb("Zid please", "Unknown Boutique");
+    assert.equal((await k.j(`${k.W}/product/feedback`, { text: "x", store_id: "999" })).status, 422, "unknown CRM store");
+    assert.equal((await fb("Zid via id", "", { store_id: byId.id })).body.store_id, byId.id);
+    await k.j(`${k.W}/product/feedback`, { text: "Shopify please", customer: "Najd Home", item_id: other.id });
+    const mem = await k.user("member", "m5");
+    const e = (await k.as(mem.ck, `${k.X}/entries`, "POST", { title_ar: "تطبيق زد صار متوفر", title_en: "The Zid app is live", body_ar: "اربط متجرك في زد", body_en: "Connect your Zid store", type: "new", tags: ["zid"], item_ids: [it.id] })).body;
+    const rq = (await k.j(`${k.X}/entries/${e.id}/requesters`)).body;
+    const by = Object.fromEntries(rq.requesters.map((r) => [r.store_name, r]));
+    assert.deepEqual(Object.keys(by).sort(), ["Linked By Id", "Najd Home", "No Contact", "Quiet Shop", "Sample · Demo Store", "Unknown Boutique"].sort());
+    assert.equal(by["Najd Home"].feedback.length, 2, "one row per store"); assert.equal(by["Najd Home"].store_id, najd.id); assert.equal(by["Najd Home"].ready, true);
+    assert.equal(by["Quiet Shop"].reason, "Unsubscribed from email", "matched by domain");
+    assert.equal(by["No Contact"].reason, "Store is on do-not-contact"); assert.equal(by["Sample · Demo Store"].reason, "Sample store: never sent for real");
+    assert.match(by["Unknown Boutique"].reason, /Not in the Store CRM/); assert.equal(by["Linked By Id"].ready, true);
+    assert.equal(rq.ready, 2); assert.equal(rq.mode, "test");
+    // Notify waits for the entry to be published (the email links to its public page).
+    assert.equal((await k.j(`${k.X}/entries/${e.id}/notify`, {})).status, 409);
+    await k.as(mem.ck, `${k.X}/entries/${e.id}/status`, "POST", { status: "in_review" });
+    await k.j(`${k.X}/entries/${e.id}/status`, { status: "published" });
+    const msgs0 = k.crm.db.messages.length;
+    const n = (await k.j(`${k.X}/entries/${e.id}/notify`, {})).body;
+    assert.equal(n.created, 2); assert.deepEqual(n.notices.map((x) => x.store_name).sort(), ["Linked By Id", "Najd Home"]);
+    assert.deepEqual(n.skipped.map((x) => x.store_name).sort(), ["No Contact", "Quiet Shop", "Sample · Demo Store", "Unknown Boutique"]);
+    assert.equal(k.crm.db.messages.length, msgs0, "drafts only: nothing sent or logged in the CRM yet");
+    const nj = n.notices.find((x) => x.store_name === "Najd Home");
+    assert.equal(nj.status, "draft"); assert.match(nj.subject, /^صار متوفر: تطبيق زد صار متوفر/); assert.ok(nj.body.indexOf("شكراً") < nj.body.indexOf("Thanks"), "Arabic first");
+    assert.match(nj.body, /https:\/\/wizard.dpa.ad\/changelog\/the-zid-app-is-live/);
+    assert.equal((await k.j(`${k.X}/entries/${e.id}/notify`, {})).body.created, 0, "no second draft for the same store");
+    assert.match((await k.j(`${k.X}/entries/${e.id}/requesters`)).body.requesters.find((r) => r.store_name === "Najd Home").reason, /Already has a draft notice/);
+    // Edit and send: only with Store CRM edit; Test mode records a test message and sends nothing.
+    assert.equal((await k.j(`${k.X}/notices/${nj.id}`, { body: `${nj.body}\n\n[ADD offer]` }, "PUT")).status, 200);
+    assert.match((await k.j(`${k.X}/notices/${nj.id}/send`, {})).body.detail, /\[ADD\]/);
+    await k.j(`${k.X}/notices/${nj.id}`, { body: nj.body }, "PUT");
+    const vw = await k.user("viewer", "v5");
+    assert.equal((await k.as(vw.ck, `${k.X}/notices/${nj.id}/send`, "POST", {})).status, 403);
+    const sent = await k.j(`${k.X}/notices/${nj.id}/send`, {});
+    assert.equal(sent.status, 201); assert.equal(sent.body.notice.status, "test"); assert.equal(sent.body.message.status, "test");
+    const m = k.crm.db.messages.find((x) => x.id === sent.body.message.id);
+    assert.equal(m.contact_id, najd.id); assert.equal(m.status, "test"); assert.match(m.error, /Test mode|isn't connected/); assert.match(m.body, /هلا Sara/);
+    assert.equal((await k.j(`${k.X}/notices/${nj.id}/send`, {})).status, 409, "sent once");
+    assert.equal((await k.j(`${k.X}/notices/${nj.id}`, undefined, "DELETE")).status, 409, "a sent notice stays in the log");
+    // A store that opted out after the draft was made is still protected by the CRM's own rules.
+    const lk = n.notices.find((x) => x.store_name === "Linked By Id");
+    k.crm.update(k.w.id, byId.id, { email_opt_out: true });
+    const sk = await k.j(`${k.X}/notices/${lk.id}/send`, {});
+    assert.equal(sk.status, 422); assert.equal(sk.body.notice.status, "skipped"); assert.match(sk.body.detail, /Unsubscribed/);
+    const view = (await k.j(`${k.X}/entries/${e.id}`)).body;
+    assert.deepEqual(view.notices.map((x) => x.status).sort(), ["skipped", "test"]);
+  } finally { k.done(); }
+});
+
+test("changelog Command Center needs: shipped releases with no entry after 3 days, entries in review for 3+ days; redacted without Product; Riyadh days", async () => {
+  const k = await clKit({ clock: "2026-11-03T22:30:00Z" }); // 01:30 on 4 November in Riyadh
+  try {
+    const needs = async (c = k.ck) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Changelog");
+    const it = await k.item("Brand fonts", "feature", "Templates");
+    await k.shipped("v3.1", [it.id], "2026-11-02");
+    assert.equal((await needs()).length, 0, "2 Riyadh days: not yet");
+    const old = await k.shipped("v3.0", [], "2026-11-01");
+    await k.shipped("v1.0", [], "2026-06-01"); // older than 90 days: not flagged
+    let n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Shipped releases without a changelog entry"]); assert.match(n[0].text, /1 shipped release has no changelog entry after 3 days: v3\.0/);
+    assert.equal(n[0].route, "changelog");
+    const e = (await k.j(`${k.X}/from-release/${old.id}`, {})).body.entry;
+    assert.equal((await needs()).length, 0);
+    await k.j(`${k.X}/entries/${e.id}`, { title_ar: "خطوط", title_en: "Fonts", body_ar: "نص", body_en: "Text" }, "PUT");
+    await k.j(`${k.X}/entries/${e.id}/status`, { status: "in_review" });
+    k.at("2026-11-06T22:00:00Z");
+    assert.equal((await needs()).length, 1, "the v3.1 release is now 3 days old");
+    k.at("2026-11-06T22:29:00Z");
+    k.st.db.changelog_entries.find((x) => x.id === e.id).submitted_at = "2026-11-03T22:30:00.000Z";
+    k.at("2026-11-06T22:31:00Z");
+    n = await needs();
+    assert.deepEqual(n.map((x) => x.title).sort(), ["Changelog entries waiting for review", "Shipped releases without a changelog entry"]);
+    assert.match(n.find((x) => x.title.startsWith("Changelog entries")).text, /1 changelog entry has been in review for 3\+ days: Fonts/);
+    const fin = await k.user("finance", "f6");
+    assert.ok((await k.as(fin.ck, `${k.W}/command`)).body.needs.every((x) => x.module !== "Changelog" && x.route !== "changelog"), "redacted without Product");
+    const vw = await k.user("viewer", "v6");
+    assert.equal((await needs(vw.ck)).length, 2, "Product view is enough to see them");
+  } finally { k.done(); }
+});
+
+test("changelog: AI Release notes writer agent, module mapping, Ask DPA AD tools (list and draft with Confirm), sample entries removed with sample data, workspace delete, product page shows the entry per release", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS, TOOL_LABELS } = await import("../lib/assistant.js");
+  const { moduleFor } = await import("../lib/access.js");
+  const ag = AGENTS.find((a) => a.id === "release_writer");
+  assert.equal(ag.name, "AI Release notes writer"); assert.equal(ag.team, "Product"); assert.equal(ag.max, 1); assert.equal(ag.level, 1); assert.equal(ag.module, "product"); assert.equal(ag.route, "changelog");
+  assert.equal(agentFor("POST", "/api/workspaces/1/changelog/from-release/4"), "release_writer");
+  assert.equal(moduleFor("POST", "/api/workspaces/1/changelog/entries/4/status"), "product"); assert.equal(moduleFor("GET", "/api/workspaces/1/changelog/meta"), "product");
+  const lt = TOOLS.find((t) => t.name === "list_changelog"), dt = TOOLS.find((t) => t.name === "draft_changelog_entry");
+  assert.equal(lt.module, "product"); assert.ok(!lt.write); assert.equal(TOOL_LABELS.list_changelog, "the changelog");
+  assert.equal(dt.module, "product"); assert.equal(dt.write, true); assert.equal(dt.risk, "low"); assert.equal(typeof dt.preview, "function");
+
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await clKit({ assistantClient: fakeClient });
+  try {
+    const it = await k.item("Zid app", "integration", "Integrations");
+    const rel = await k.shipped("v5.0", [it.id], "2026-11-02");
+    script = [use("c1", "list_changelog", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.totals.all, 0); assert.deepEqual(r.shipped_releases.map((x) => [x.version, x.entry_id]), [["v5.0", null]]); return say("No entries; v5.0 has none."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "What's in the changelog?", ws: k.w.id })).body;
+    assert.match(a1.reply, /v5\.0 has none/);
+    script = [use("c2", "draft_changelog_entry", { release_id: rel.id })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Draft one for v5.0", ws: k.w.id })).body;
+    assert.equal(a2.pending.summary, "Draft a changelog entry (AI Release notes writer, saved as a draft for review) from release v5.0");
+    assert.equal(k.st.db.changelog_entries.length, 0, "nothing before Confirm");
+    script = [say("Drafted.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const made = k.st.db.changelog_entries[0];
+    assert.equal(made.status, "draft"); assert.equal(made.release_id, rel.id); assert.match(made.log[0].by, /via Ask DPA AD/); assert.deepEqual(made.tags, ["zid"]);
+    // Product → Releases knows which release has an entry.
+    assert.deepEqual((await k.j(`${k.W}/product`)).body.changelog[rel.id], { id: made.id, status: "draft" });
+
+    // Sample data: three published "Sample ·" entries in Arabic and English and one draft linked to the sample release.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.changelog_entries, 4);
+    const smp = k.st.db.changelog_entries.filter((y) => y.sample);
+    assert.ok(smp.every((y) => y.title_en.startsWith("Sample · ") && y.title_ar.startsWith("Sample · ") && y.body_ar && y.body_en));
+    assert.deepEqual(smp.map((y) => y.status).sort(), ["draft", "published", "published", "published"]);
+    assert.ok(smp.filter((y) => y.status === "published").every((y) => !/\[ADD/.test(y.title_ar + y.title_en + y.body_ar + y.body_en)));
+    const sRel = k.st.db.product_releases.find((r) => r.sample && r.status === "released");
+    assert.equal(smp.find((y) => y.status === "draft").release_id, sRel.id);
+    assert.equal((await k.pub("/changelog/sample-faster-feed-import")).status, 200);
+    assert.equal((await k.pub("/changelog/sample-release-notes-draft")).status, 404);
+    assert.equal((await k.j(`${k.W}/sample-data`, {})).status, 409, "loaded once");
+    const real = (await k.j(`${k.X}/entries`, { title_en: "Real one", body_en: "x", release_id: sRel.id })).body;
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.changelog_entries, 4);
+    assert.ok(!k.st.db.changelog_entries.some((y) => y.sample)); assert.equal(k.st.db.changelog_entries.find((y) => y.id === real.id).release_id, null, "real entry kept, link to the sample release cleared");
+    assert.equal((await k.pub("/changelog/sample-faster-feed-import")).status, 404);
+    // Deleting a workspace removes its changelog rows and keeps other workspaces'.
+    k.st.db.changelog_entries.push({ id: "zc", workspace_id: "other" });
+    k.st.db.changelog_notices.push({ id: "zn", workspace_id: k.w.id, entry_id: made.id });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    assert.deepEqual(k.st.db.changelog_entries.map((y) => y.id), ["zc"]); assert.equal(k.st.db.changelog_notices.length, 0);
+  } finally { k.done(); }
+});
