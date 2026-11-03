@@ -140,7 +140,7 @@ export function mountPartners(app, { store, crm = null, outreach = null, partner
     const p = store.getOps(COLL.partners, w.id, code.partner_id);
     if (kind === "customer" && p?.customer_id === ref) return res.status(422).json({ detail: "A customer can't refer itself." });
     store.db[COLL.attr] = store.db[COLL.attr].filter((a) => !(a.workspace_id === w.id && a.kind === kind && a.ref_id === ref));
-    const row = store.addOps(COLL.attr, w.id, { kind, ref_id: ref, code_id: code.id, partner_id: code.partner_id, by: by(req), created_by_id: req.user.id }, false);
+    const row = store.addOps(COLL.attr, w.id, { kind, ref_id: ref, code_id: code.id, partner_id: code.partner_id, by: by(req), created_by_id: req.user.id, at: new Date(now()).toISOString() }, false);
     if (p) logPush(p, by(req), `Attributed ${kind} "${String(labelOf(req, w, kind, ref)).slice(0, 60)}" (code ${code.code})`, now());
     store.save();
     res.status(201).json(row);

@@ -196,7 +196,7 @@ export function attribution(store, crm, wsId) {
   const byId = new Map(store.listOps(COLL.codes, id).map((c) => [c.id, c]));
   const stores = new Map(), deals = new Map(), customers = new Map();
   const put = (map, key, code, source, at, row = null) => { if (code && !map.has(key)) map.set(key, { code_id: code.id, code: code.code, partner_id: code.partner_id, source, at: at || null, attr_id: row?.id || null }); };
-  for (const a of store.listOps(COLL.attr, id)) put(a.kind === "store" ? stores : a.kind === "deal" ? deals : customers, a.ref_id, byId.get(a.code_id), "manual", a.created_at, a);
+  for (const a of store.listOps(COLL.attr, id)) put(a.kind === "store" ? stores : a.kind === "deal" ? deals : customers, a.ref_id, byId.get(a.code_id), "manual", a.at || a.created_at, a);
   const contacts = crm ? crm.contacts(id) : [];
   for (const c of contacts) {
     if (stores.has(c.id)) continue;

@@ -4952,3 +4952,458 @@ test("CRM campaign window keeps hour 0 (midnight) instead of falling back to 9",
   assert.deepEqual([d.window.from, d.window.to], [9, 21]);
   for (const x of [c, d]) await call(`${P}/campaigns/${x.id}`, { method: "DELETE" });
 });
+
+// ---- Partners & referrals
+async function ptKit({ clock = null, assistantClient = null, outreachOptions = {}, env = { ...process.env, PUBLIC_URL: "https://wizard.dpa.ad" }, adsOptions = {} } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-pt-")), st = new Store(d);
+  let t = clock ? Date.parse(clock) : null, ai = null;
+  const prov = { name: "test", model: "test", async generate(a) { return ai ? ai(a.prompt) : demoProvider().generate(a); } };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-pt", assistantClient, outreachOptions, adsOptions, env, partnersOptions: { clock: () => (t == null ? Date.now() : t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-pt" });
+  const as = async (c, p, m = "GET", body, headers = {}) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w] = (await j("/api/workspaces")).body;
+  const user = async (role, tag = role) => { const email = `pt-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Pt ${tag}`, email, password: `pt-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `pt-${tag}-pass1` }), id: st.db.users.find((u) => u.email === email).id }; };
+  const visit = (p, headers = {}) => fetch(b2 + p, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/130.0 Safari/537.36", ...headers } });
+  return { app: app2, st, w, X: `/api/workspaces/${w.id}/partners`, W: `/api/workspaces/${w.id}`, j, as, ck, user, b2, visit,
+    at: (iso) => { t = Date.parse(iso); }, ai: (fn) => { ai = fn; },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+// A Billing customer with paid invoices, straight through the Billing engine.
+async function ptCustomer(k, f, pays = []) {
+  const bl = k.app.locals.billing;
+  const c = bl.addCustomer(k.w, { store_name: f.name, plan: "Growth", cycle: "monthly", currency: "SAR", status: f.status || "active", already_billed: true, ...(f.crm_contact_id ? { crm_contact_id: f.crm_contact_id } : {}), ...(f.deal_id ? { deal_id: f.deal_id } : {}) }, "test");
+  const invs = [];
+  for (const [date, amount] of pays) {
+    const inv = bl.draft(k.w, c, { lines: [{ kind: "subscription", description: "Plan", qty: 1, unit_price: amount }], by: "test" });
+    await bl.issue(k.w, inv, { by: "test" });
+    bl.recordPayment(k.w, inv, { amount: inv.totals.total, date, method: "bank_transfer", by: "test" });
+    invs.push(inv);
+  }
+  return { c, invs };
+}
+
+test("partners: create with validation and a first referral link, pipeline by status, change log on edits, delete rules", async () => {
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const meta = (await k.j(`${k.X}/meta`)).body;
+    assert.deepEqual(meta.types.map((t) => t.id), ["agency", "freelancer", "platform", "tech", "reseller", "customer"]);
+    assert.deepEqual(meta.statuses.map((s) => s.id), ["prospect", "talking", "signed", "active", "paused", "ended"]);
+    assert.equal(meta.today, "2026-11-03"); assert.equal(meta.settings.landing_url, "https://dpa.ad"); assert.deepEqual(meta.settings.allowed_hosts, ["dpa.ad"]);
+    assert.equal((await k.j(k.X, { name: "" })).status, 422);
+    assert.equal((await k.j(k.X, { name: "X", type: "influencer" })).status, 422);
+    assert.equal((await k.j(k.X, { name: "X", status: "maybe" })).status, 422);
+    assert.equal((await k.j(k.X, { name: "X", contact: { email: "not-an-email" } })).status, 422);
+    assert.match((await k.j(k.X, { name: "X", agreement: { commission_pct: 20 } })).body.detail, /recurring_months/);
+    assert.equal((await k.j(k.X, { name: "X", agreement: { commission_pct: 120, recurring_months: 3 } })).status, 422);
+    assert.equal((await k.j(k.X, { name: "X", contract: { url: "http://x.example/c.pdf" } })).status, 422);
+    assert.equal((await k.j(k.X, { name: "X", contract: { media_id: "999" } })).status, 422);
+    const r = await k.j(k.X, { name: "Najd Digital Agency", type: "agency", city: "Riyadh", contact: { name: "Faisal", email: "Faisal@Najd.example", phone: "0551234567" }, agreement: { commission_pct: 20, recurring_months: 12, tier: "Gold" }, contract: { url: "https://drive.example/contract.pdf" } });
+    assert.equal(r.status, 201);
+    const p = r.body;
+    assert.equal(p.status, "prospect"); assert.equal(p.contact.email, "faisal@najd.example"); assert.equal(p.country, "SA"); assert.equal(p.agreement.commission_pct, 20);
+    assert.equal(p.codes.length, 1); assert.match(p.codes[0].code, /^najd-digital-agency-[0-9a-f]{4}$/); assert.equal(p.codes[0].link, `https://wizard.dpa.ad/r/${p.codes[0].code}`);
+    assert.match(p.log[0].text, /^Partner added \(agency, prospect\)/);
+    const u = (await k.j(`${k.X}/${p.id}`, { status: "talking", agreement: { commission_pct: 15, recurring_months: 12, tier: "Gold" }, notes: "Met at Salla meetup" }, "PUT")).body;
+    assert.deepEqual(u.log.slice(1).map((l) => l.text), ["status: prospect → talking", "notes edited", "commission %: 20 → 15"]);
+    assert.equal(u.log.length, 4);
+    assert.equal(u.status_at, "2026-11-03T09:00:00.000Z");
+    await k.j(k.X, { name: "Zid apps listing", type: "platform", status: "signed" });
+    const list = (await k.j(`${k.X}?status=talking`)).body;
+    assert.deepEqual(list.partners.map((x) => x.name), ["Najd Digital Agency"]);
+    assert.equal((await k.j(k.X)).body.partners.length, 2);
+    // A code of one's own (unique across the dashboard), and its validation.
+    assert.equal((await k.j(`${k.X}/${p.id}/codes`, { code: "N" })).status, 422);
+    const c2 = (await k.j(`${k.X}/${p.id}/codes`, { code: "najd-ramadan" })).body;
+    assert.equal(c2.link, "https://wizard.dpa.ad/r/najd-ramadan");
+    assert.equal((await k.j(`${k.X}/${p.id}/codes`, { code: "najd-ramadan" })).status, 409);
+    // Delete: refused once a statement is approved or paid; otherwise removes its codes and clicks.
+    const tmp = (await k.j(k.X, { name: "Tmp" })).body;
+    k.st.db.partners_statements.push({ id: "s-x", workspace_id: k.w.id, partner_id: tmp.id, partner_name: "Tmp", month: "2026-10", status: "approved", lines: [], total_sar: 10, log: [] });
+    assert.equal((await k.j(`${k.X}/${tmp.id}`, undefined, "DELETE")).status, 409);
+    k.st.db.partners_statements = k.st.db.partners_statements.filter((s) => s.id !== "s-x");
+    assert.equal((await k.j(`${k.X}/${tmp.id}`, undefined, "DELETE")).status, 200);
+    assert.ok(!k.st.db.partners_codes.some((c) => c.partner_id === tmp.id));
+  } finally { k.done(); }
+});
+
+test("partners referral link: click recorded once per hashed IP and day, cookie, redirect only to allowlisted hosts (no open redirect), bots not counted", async () => {
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const p = (await k.j(k.X, { name: "Creator Sara", type: "freelancer" })).body;
+    const code = p.codes[0].code;
+    const r1 = await k.visit(`/r/${code}`, { "X-Forwarded-For": "203.0.113.7" });
+    assert.equal(r1.status, 302);
+    assert.equal(r1.headers.get("location"), `https://dpa.ad/?utm_source=partner&utm_medium=referral&utm_campaign=${code}`);
+    assert.match(r1.headers.get("set-cookie"), new RegExp(`^dpa_ref=${code}; Path=/; Max-Age=5184000; SameSite=Lax; HttpOnly; Secure$`));
+    await k.visit(`/r/${code.toUpperCase()}?to=https://evil.example`, { "X-Forwarded-For": "203.0.113.7" }).then((r) => assert.equal(new URL(r.headers.get("location")).host, "dpa.ad"));
+    await k.visit(`/r/${code}`, { "X-Forwarded-For": "198.51.100.2" });
+    await k.visit(`/r/${code}`, { "X-Forwarded-For": "198.51.100.3", "User-Agent": "facebookexternalhit/1.1" });
+    let clicks = k.st.db.partners_clicks.filter((c) => c.partner_id === p.id);
+    assert.equal(clicks.length, 2); assert.equal(clicks.find((c) => c.hits === 2).ua, "Chrome"); assert.ok(clicks.every((c) => c.day === "2026-11-03" && /^[A-Za-z0-9_-]{16}$/.test(c.ip_hash)));
+    assert.ok(!JSON.stringify(k.st.db.partners_clicks).includes("203.0.113.7"), "no raw IP stored");
+    k.at("2026-11-04T09:00:00Z");
+    await k.visit(`/r/${code}`, { "X-Forwarded-For": "203.0.113.7" });
+    clicks = k.st.db.partners_clicks.filter((c) => c.partner_id === p.id);
+    assert.equal(clicks.length, 3); assert.notEqual(clicks[2].ip_hash, clicks[0].ip_hash, "the hash changes with the day");
+    assert.equal((await k.j(`${k.X}/${p.id}`)).body.stats.clicks, 3);
+    // Unknown and switched-off codes go to the default page with no cookie and no click.
+    const un = await k.visit("/r/nope-code");
+    assert.equal(un.headers.get("location"), "https://dpa.ad"); assert.equal(un.headers.get("set-cookie"), null);
+    // Landing pages: https on an allowed host (or subdomain) only.
+    for (const bad of ["https://evil.example/x", "https://dpa.ad.evil.example/", "http://dpa.ad/", "https://user@dpa.ad/", "javascript:alert(1)"]) assert.equal((await k.j(`${k.X}/${p.id}/codes`, { landing_url: bad })).status, 422, bad);
+    const sub = (await k.j(`${k.X}/${p.id}/codes`, { code: "sara-app", landing_url: "https://app.dpa.ad/start?x=1" })).body;
+    assert.equal((await k.visit("/r/sara-app")).headers.get("location"), "https://app.dpa.ad/start?x=1&utm_source=partner&utm_medium=referral&utm_campaign=sara-app");
+    // Settings: hosts and landing checked; a code whose host is no longer allowed falls back to the default page.
+    assert.equal((await k.j(`${k.X}/settings`, { landing_url: "https://evil.example" }, "PUT")).status, 422);
+    assert.equal((await k.j(`${k.X}/settings`, { allowed_hosts: ["partners.example"] }, "PUT")).status, 422, "current landing not allowed");
+    const s2 = (await k.j(`${k.X}/settings`, { allowed_hosts: "partners.example, dpa.ad", landing_url: "https://partners.example/join", cookie_days: 30 }, "PUT")).body;
+    assert.deepEqual(s2.allowed_hosts, ["partners.example", "dpa.ad"]);
+    const r3 = await k.visit(`/r/${code}`);
+    assert.match(r3.headers.get("location"), /^https:\/\/partners\.example\/join\?utm_source=partner/); assert.match(r3.headers.get("set-cookie"), /Max-Age=2592000/);
+    await k.j(`${k.X}/settings`, { allowed_hosts: ["partners.example"] }, "PUT");
+    assert.match((await k.visit("/r/sara-app")).headers.get("location"), /^https:\/\/partners\.example\/join\?/);
+    await k.j(`${k.X}/codes/${sub.id}`, { active: false }, "PUT");
+    const off = await k.visit("/r/sara-app");
+    assert.equal(off.headers.get("location"), "https://partners.example/join"); assert.equal(off.headers.get("set-cookie"), null);
+    assert.ok((await k.j(`${k.X}/${p.id}`)).body.log.some((l) => l.text === "Code sara-app switched off"));
+  } finally { k.done(); }
+});
+
+test("partners attribution: by a person, by the lead hook's ref or the dpa_ref cookie, by utm_campaign; deals and customers inherit; funnel; MRR only with Billing view", async () => {
+  const { adsConfig } = await import("../lib/adsapi.js");
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z", adsOptions: { cfg: adsConfig({ ADS_LEAD_SECRET: "lead-secret-1" }, "pw") } });
+  try {
+    const crm = k.app.locals.crm;
+    const p = (await k.j(k.X, { name: "Agency A", type: "agency", status: "active", agreement: { commission_pct: 10, recurring_months: 6 } })).body, code = p.codes[0].code;
+    const q = (await k.j(k.X, { name: "Agency B" })).body;
+    // Lead hook: `ref` field, the cookie set by /r/<code>, and UTMs from the landing URL.
+    const hook = (b, headers = {}) => fetch(`${k.b2}/hooks/ads/lead/lead-secret-1`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(b) }).then((r) => r.json());
+    const h1 = await hook({ email: "one@store.example", ref: code.toUpperCase() });
+    assert.equal(h1.ref, code);
+    const h2 = await hook({ email: "two@store.example" }, { cookie: `dpa_ref=${code}` });
+    assert.equal(h2.ref, code);
+    const h3 = await hook({ email: "three@store.example", url: `https://dpa.ad/?utm_source=partner&utm_medium=referral&utm_campaign=${q.codes[0].code}` });
+    assert.equal(h3.utm.campaign, q.codes[0].code);
+    await hook({ email: "one@store.example", ref: q.codes[0].code }); // first touch wins
+    assert.equal(crm.get(k.w.id, h1.id).ref_code, code);
+    // A deal linked from an attributed store inherits; a manual deal attribution; customers inherit from their store.
+    const deal = k.st.addDeal(k.w.id, { name: "Two Store deal" });
+    crm.update(k.w.id, h2.id, { deal_id: deal.id });
+    const deal2 = k.st.addDeal(k.w.id, { name: "Direct deal" });
+    assert.equal((await k.j(`${k.X}/attributions`, { kind: "deal", ref_id: deal2.id, code: "missing" })).status, 422);
+    assert.equal((await k.j(`${k.X}/attributions`, { kind: "deal", ref_id: "999", code_id: p.codes[0].id })).status, 422);
+    assert.equal((await k.j(`${k.X}/attributions`, { kind: "deal", ref_id: deal2.id, code_id: p.codes[0].id })).status, 201);
+    const paying = await ptCustomer(k, { name: "One Store", crm_contact_id: h1.id });
+    const trial = await ptCustomer(k, { name: "Trial Store", status: "trial" });
+    assert.equal((await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: trial.c.id, code_id: p.codes[0].id })).status, 201);
+    const viaDeal = await ptCustomer(k, { name: "Deal Store", deal_id: deal2.id, status: "cancelled" });
+    const rows = (await k.j(`${k.X}/attribution`)).body.rows;
+    const by = Object.fromEntries(rows.map((r) => [`${r.kind}:${r.ref_id}`, r]));
+    assert.equal(by[`store:${h1.id}`].source, "ref"); assert.equal(by[`store:${h2.id}`].source, "ref"); assert.equal(by[`store:${h3.id}`].source, "utm"); assert.equal(by[`store:${h3.id}`].partner, "Agency B");
+    assert.equal(by[`deal:${deal.id}`].source, "via store"); assert.equal(by[`deal:${deal2.id}`].source, "manual");
+    assert.equal(by[`customer:${paying.c.id}`].source, "via store"); assert.equal(by[`customer:${trial.c.id}`].source, "manual"); assert.equal(by[`customer:${viaDeal.c.id}`].source, "via deal");
+    const full = (await k.j(`${k.X}/${p.id}`)).body;
+    assert.deepEqual({ ...full.stats, mrr_sar: undefined }, { clicks: 0, hits: 0, leads: 3, stores: 2, deals: 2, trials: 1, paying: 1, customers: 3, mrr_sar: undefined });
+    assert.ok(full.stats.mrr_sar > 0, "MRR referred for the Owner");
+    assert.equal(full.attributed.length, 7);
+    // Team member: view only, no money (no MRR, no agreement terms, no lines); Creative: no access.
+    const mem = await k.user("member", "m1");
+    const mv = (await k.as(mem.ck, `${k.X}/${p.id}`)).body;
+    assert.equal(mv.stats.mrr_sar, undefined); assert.deepEqual(mv.agreement, { tier: "" }); assert.deepEqual(mv.lines, []); assert.equal(mv.money, false);
+    assert.equal((await k.as(mem.ck, `${k.X}/attributions`, "POST", { kind: "deal", ref_id: deal.id, code_id: p.codes[0].id })).status, 403);
+    const cr = await k.user("creative", "c1");
+    assert.equal((await k.as(cr.ck, k.X)).status, 403);
+    // A customer referrer never earns from its own account.
+    const self = (await k.j(k.X, { name: "One Store referrer", type: "customer", customer_id: paying.c.id })).body;
+    assert.equal((await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: paying.c.id, code_id: self.codes[0].id })).status, 422);
+  } finally { k.done(); }
+});
+
+test("partners commission maths: percent for N months before VAT from the first payment, flat bounty once, refunds by credit note; through the real Billing engine", async () => {
+  const { commissionLines, statementLines, monthsBetween } = await import("../lib/partners.js");
+  assert.equal(monthsBetween("2026-11", "2027-02"), 3);
+  const invoices = [
+    { id: "i1", kind: "invoice", number: "INV-1", customer_id: "c1", totals: { taxable: 1000, total: 1150 }, paid_amount: 1150 },
+    { id: "i2", kind: "invoice", number: "INV-2", customer_id: "c1", totals: { taxable: 1000, total: 1150 }, paid_amount: 1150 },
+    { id: "i3", kind: "invoice", number: "INV-3", customer_id: "c1", totals: { taxable: 1000, total: 1150 }, paid_amount: 1150 },
+    { id: "i4", kind: "invoice", number: "INV-4", customer_id: "c1", totals: { taxable: 1000, total: 1150 }, paid_amount: 1150 },
+    { id: "n1", kind: "credit_note", number: "CN-1", customer_id: "c1", status: "issued", credit_of: "i2", credit_of_number: "INV-2", issue_date: "2027-01-05", totals_sar: { taxable: 400, total: 460 } },
+    { id: "n2", kind: "credit_note", number: "CN-2", customer_id: "c1", status: "issued", credit_of: "i4", issue_date: "2027-03-05", totals_sar: { taxable: 1000, total: 1150 } },
+    { id: "n3", kind: "credit_note", number: "CN-3", customer_id: "c1", status: "void", credit_of: "i1", issue_date: "2027-01-05", totals_sar: { taxable: 1000, total: 1150 } },
+  ];
+  const payments = [
+    { id: "1", customer_id: "c1", invoice_id: "i1", status: "paid", date: "2026-11-20", amount_sar: 1150 },
+    { id: "2", customer_id: "c1", invoice_id: "i2", status: "paid", date: "2026-12-20", amount_sar: 1150 },
+    { id: "3", customer_id: "c1", invoice_id: "i3", status: "paid", date: "2027-01-20", amount_sar: 1150 },
+    { id: "4", customer_id: "c1", invoice_id: "i4", status: "paid", date: "2027-02-20", amount_sar: 1150 }, // month 4: outside a 3-month window
+    { id: "5", customer_id: "c1", invoice_id: "i4", status: "failed", date: "2027-02-10", amount_sar: 1150 },
+  ];
+  const customers = [{ id: "c1", store_name: "Oud Co" }];
+  const pct = commissionLines({ partner: { agreement: { commission_pct: 10, recurring_months: 3, bounty_sar: 0 } }, customers, payments, invoices });
+  assert.deepEqual(pct.map((l) => [l.kind, l.date, l.base_sar, l.amount_sar]), [["commission", "2026-11-20", 1000, 100], ["commission", "2026-12-20", 1000, 100], ["refund", "2027-01-05", -400, -40], ["commission", "2027-01-20", 1000, 100]]);
+  const bounty = commissionLines({ partner: { agreement: { commission_pct: 0, recurring_months: 0, bounty_sar: 500 } }, customers, payments, invoices });
+  assert.deepEqual(bounty.map((l) => [l.kind, l.date, l.amount_sar]), [["bounty", "2026-11-20", 500]]);
+  assert.equal(commissionLines({ partner: { agreement: {} }, customers, payments, invoices }).length, 0);
+  assert.equal(commissionLines({ partner: { agreement: { commission_pct: 10, recurring_months: 3 } }, customers: [{ id: "c2" }], payments, invoices }).length, 0, "no payments, no commission");
+  // Lines already on another live statement are not repeated; later months pick up what came late.
+  const fake = { listOps: () => [{ partner_id: "p", status: "approved", id: "s1", lines: [{ source_id: "pay:1" }] }, { partner_id: "p", status: "void", id: "s0", lines: [{ source_id: "pay:2" }] }] };
+  assert.deepEqual(statementLines(fake, { id: "1" }, "p", "2026-12", pct).map((l) => l.source_id), ["pay:2"]);
+
+  // Through Billing: VAT 15% (VAT number set), payments recorded on dates, a credit note on a paid invoice.
+  const k = await ptKit({ clock: "2026-12-10T09:00:00Z" });
+  try {
+    k.w.finance = { ...(k.w.finance || {}), vat_registered: true };
+    k.app.locals.billing.setSettings(k.w, { vat_number: "300000000000003" });
+    const p = (await k.j(k.X, { name: "Agency VAT", status: "active", agreement: { commission_pct: 20, recurring_months: 12, bounty_sar: 250 } })).body;
+    const { c, invs } = await ptCustomer(k, { name: "VAT Store" }, [["2026-11-15", 1000], ["2026-12-01", 1000]]);
+    await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: c.id, code_id: p.codes[0].id });
+    assert.equal(invs[0].totals.total, 1150);
+    await k.app.locals.billing.creditNote(k.w, invs[1], { amount: 500, reason: "Refund half" }, "test");
+    const lines = (await k.j(`${k.X}/${p.id}`)).body.lines;
+    assert.deepEqual(lines.map((l) => [l.kind, l.base_sar, l.amount_sar]).sort((a, b) => a[0].localeCompare(b[0]) || a[2] - b[2]), [["bounty", null, 250], ["commission", 1000, 200], ["commission", 1000, 200], ["refund", -500, -100]]);
+  } finally { k.done(); }
+});
+
+test("partners statements: draft → approved by Owner/Finance → paid with date and reference, posted to Finance once; permissions; late payments move to the next statement; money hidden", async () => {
+  const k = await ptKit({ clock: "2026-11-20T09:00:00Z" });
+  try {
+    const p = (await k.j(k.X, { name: "Agency S", status: "active", agreement: { commission_pct: 10, recurring_months: 12 } })).body;
+    const { c } = await ptCustomer(k, { name: "Stmt Store" }, [["2026-10-05", 2000], ["2026-11-05", 2000]]);
+    await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: c.id, code_id: p.codes[0].id });
+    assert.equal((await k.j(`${k.X}/statements/generate`, { month: "2026-13" })).status, 422);
+    assert.equal((await k.j(`${k.X}/statements/generate`, { month: "2026-12" })).status, 422, "future month");
+    const g = (await k.j(`${k.X}/statements/generate`, { month: "2026-10" })).body;
+    assert.equal(g.created, 1);
+    const s = g.statements[0];
+    assert.equal(s.status, "draft"); assert.equal(s.total_sar, 200); assert.equal(s.currency, "SAR"); assert.match(s.tax_note, /\[CONFIRM\]/);
+    assert.equal((await k.j(`${k.X}/statements/generate`, { month: "2026-10" })).body.refreshed, 1, "safe to repeat");
+    assert.equal(k.st.db.partners_statements.length, 1);
+    // Who approves: Owner or Finance Edit. Team lead (Finance view) can't; Team member can't even generate.
+    const lead = await k.user("manager", "lead"), fin = await k.user("finance", "fin"), mem = await k.user("member", "mem");
+    assert.match((await k.as(lead.ck, `${k.X}/statements/${s.id}/approve`, "POST", {})).body.detail, /Owner or someone with Finance Edit/);
+    assert.equal((await k.as(mem.ck, `${k.X}/statements/generate`, "POST", { month: "2026-10" })).status, 403);
+    const mv = (await k.as(mem.ck, `${k.X}/statements`)).body;
+    assert.equal(mv.money, false); assert.equal(mv.statements[0].total_sar, null); assert.equal(mv.statements[0].lines[0].amount_sar, null);
+    assert.equal((await k.as(lead.ck, `${k.X}/statements`)).body.statements[0].total_sar, 200, "Team lead has Billing view");
+    assert.equal((await k.as(fin.ck, `${k.X}/statements/${s.id}/pay`, "POST", { reference: "TR-1" })).status, 409, "approve first");
+    const ap = (await k.as(fin.ck, `${k.X}/statements/${s.id}/approve`, "POST", {})).body;
+    assert.equal(ap.status, "approved"); assert.equal(ap.approved_by, "Pt fin"); assert.equal(ap.approved_at, "2026-11-20T09:00:00.000Z");
+    assert.equal((await k.j(`${k.X}/statements/${s.id}/approve`, {})).status, 409);
+    assert.equal((await k.as(lead.ck, `${k.X}/statements/${s.id}/pay`, "POST", { reference: "TR-1" })).status, 403);
+    assert.equal((await k.j(`${k.X}/statements/${s.id}/pay`, {})).status, 422, "reference required");
+    assert.equal((await k.j(`${k.X}/statements/${s.id}/pay`, { reference: "TR-1", date: "20/11/2026" })).status, 422);
+    const paid = (await k.j(`${k.X}/statements/${s.id}/pay`, { reference: "TR-1", date: "2026-11-19" })).body;
+    assert.equal(paid.status, "paid"); assert.equal(paid.paid_date, "2026-11-19"); assert.equal(paid.paid_reference, "TR-1");
+    assert.equal((await k.j(`${k.X}/statements/${s.id}/pay`, { reference: "TR-2" })).status, 409);
+    const ex = k.st.db.finance_expenses.filter((e) => e.source === "partners");
+    assert.equal(ex.length, 1); assert.equal(ex[0].amount_sar, 200); assert.equal(ex[0].statement_id, s.id); assert.equal(ex[0].date, "2026-11-19"); assert.equal(ex[0].vendor, "Agency S"); assert.equal(ex[0].category, "marketing");
+    assert.equal((await k.j(`${k.X}/statements/${s.id}/void`, { reason: "x" })).status, 409, "paid can't be voided");
+    // A payment for October recorded late lands on November's statement, with November's own.
+    const bl = k.app.locals.billing;
+    const inv = bl.draft(k.w, c, { lines: [{ kind: "subscription", description: "Late", qty: 1, unit_price: 500 }], by: "test" }); await bl.issue(k.w, inv); bl.recordPayment(k.w, inv, { amount: 500, date: "2026-10-28" });
+    const nov = (await k.j(`${k.X}/statements/generate`, { month: "2026-11" })).body.statements[0];
+    assert.deepEqual(nov.lines.map((l) => l.date), ["2026-10-28", "2026-11-05"]); assert.equal(nov.total_sar, 250);
+    assert.equal((await k.j(`${k.X}/statements/generate`, { month: "2026-10" })).body.skipped[0].reason, "Already paid");
+    assert.equal((await k.j(`${k.X}/statements/${nov.id}/void`, {})).status, 422, "reason required");
+    assert.equal((await k.as(fin.ck, `${k.X}/statements/${nov.id}/void`, "POST", { reason: "Wrong month" })).body.status, "void");
+    const again = (await k.j(`${k.X}/statements/generate`, { month: "2026-11" })).body;
+    assert.equal(again.created, 1, "void frees the lines");
+    // A statement of 0 or less can't be approved.
+    k.st.db.partners_statements.push({ id: "s-neg", workspace_id: k.w.id, partner_id: p.id, partner_name: "Agency S", month: "2026-09", status: "draft", lines: [], total_sar: -5, log: [] });
+    assert.equal((await k.j(`${k.X}/statements/s-neg/approve`, {})).status, 422);
+  } finally { k.done(); }
+});
+
+test("partners portal: a revocable token page with link, clicks, counts and statements; no customer names unless the setting allows; rate-limited", async () => {
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const p = (await k.j(k.X, { name: "Portal Agency", status: "active", agreement: { commission_pct: 10, recurring_months: 12 } })).body;
+    const { c } = await ptCustomer(k, { name: "Secret Customer Store" }, [["2026-10-05", 1000]]);
+    await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: c.id, code_id: p.codes[0].id });
+    await k.visit(`/r/${p.codes[0].code}`);
+    const s = (await k.j(`${k.X}/statements/generate`, { month: "2026-10" })).body.statements[0];
+    await k.j(`${k.X}/statements/${s.id}/approve`, {});
+    assert.equal((await fetch(`${k.b2}/p/${"x".repeat(32)}`)).status, 404);
+    const url = (await k.j(`${k.X}/${p.id}/portal`, {})).body.portal_url;
+    assert.match(url, /^https:\/\/wizard\.dpa\.ad\/p\/[A-Za-z0-9_-]{32}$/);
+    const path1 = new URL(url).pathname;
+    assert.equal((await k.j(`${k.X}/${p.id}`)).body.portal_token, undefined, "the token itself is not in the API");
+    const page = await fetch(k.b2 + path1);
+    assert.equal(page.status, 200); assert.equal(page.headers.get("x-robots-tag"), "noindex");
+    const html = await page.text();
+    assert.match(html, /Portal Agency/); assert.match(html, new RegExp(`https://wizard.dpa.ad/r/${p.codes[0].code}`)); assert.match(html, /2026-10/); assert.match(html, /SAR 100\.00/);
+    assert.doesNotMatch(html, /Secret Customer Store/);
+    await k.j(`${k.X}/settings`, { portal_show_names: true }, "PUT");
+    assert.match(await (await fetch(k.b2 + path1)).text(), /Secret Customer Store/);
+    // Escaped: a partner name can't inject HTML.
+    await k.j(`${k.X}/${p.id}`, { name: "<script>alert(1)</script>" }, "PUT");
+    assert.doesNotMatch(await (await fetch(k.b2 + path1)).text(), /<script>alert/);
+    // A new link replaces the old one; revoke stops it.
+    const url2 = (await k.j(`${k.X}/${p.id}/portal`, {})).body.portal_url;
+    assert.equal((await fetch(k.b2 + path1)).status, 404);
+    const path2 = new URL(url2).pathname;
+    assert.equal((await fetch(k.b2 + path2)).status, 200);
+    await k.j(`${k.X}/${p.id}/portal`, undefined, "DELETE");
+    assert.equal((await fetch(k.b2 + path2)).status, 404);
+    assert.ok((await k.j(`${k.X}/${p.id}`)).body.log.some((l) => l.text === "Partner portal link revoked"));
+    let last = 200; for (let i = 0; i < 30; i++) last = (await fetch(k.b2 + path2)).status;
+    assert.equal(last, 429);
+  } finally { k.done(); }
+});
+
+test("partners AI Partnerships manager: Arabic-first templates with [ADD]; checked AI JSON kept; invented numbers refused; outcomes on use/discard; sending only through the Store CRM", async () => {
+  const sent = [];
+  const { channelConfig } = await import("../lib/outreach.js");
+  const cfg = channelConfig({ SMTP_HOST: "smtp.test", SMTP_USER: "u", SMTP_PASS: "p", MAIL_FROM: "hi@dpa.ad", PUBLIC_URL: "https://wizard.dpa.ad" });
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z", outreachOptions: { cfg, senders: { email: async (x) => { sent.push(x); return { provider_id: "p1" }; }, whatsapp: async () => { throw new Error("no"); } } } });
+  try {
+    const wf = k.app.locals.workforce, ev = () => k.st.db.agent_events.filter((e) => e.agent_id === "partnerships_manager");
+    const p = (await k.j(k.X, { name: "Agency AI", status: "signed", contact: { name: "Faisal" }, agreement: { commission_pct: 15, recurring_months: 6 } })).body;
+    assert.equal((await k.j(`${k.X}/${p.id}/ai/poem`, {})).status, 422);
+    const d1 = (await k.j(`${k.X}/${p.id}/ai/onboarding`, {})).body;
+    assert.equal(d1.by_ai, false); assert.match(d1.body, /^هلا Faisal،/); assert.match(d1.body, new RegExp(`https://wizard.dpa.ad/r/${p.codes[0].code}`)); assert.match(d1.body, /15% لمدة 6 شهر/); assert.match(d1.body, /---\n\nHi Faisal,/); assert.match(d1.body, /\[ADD name\]/);
+    assert.ok(k.st.db.agent_runs.some((r) => r.agent_id === "partnerships_manager"), "the AI call is attributed to the agent");
+    k.ai(() => JSON.stringify({ subject: "أهلاً", body: "هلا Faisal، عمولتك 15% لمدة 6 أشهر.\n---\nHi Faisal, 15% for 6 months." }));
+    const d2 = (await k.j(`${k.X}/${p.id}/ai/onboarding`, {})).body;
+    assert.equal(d2.by_ai, true); assert.match(d2.body, /15%/);
+    k.ai(() => JSON.stringify({ subject: "Hi", body: "Our partners earn 40,000 SAR a month." }));
+    const d3 = (await k.j(`${k.X}/${p.id}/ai/outreach`, {})).body;
+    assert.equal(d3.by_ai, false); assert.match(d3.note, /numbers that aren't in the facts \(40000\)/);
+    assert.equal(ev().at(-1).outcome, "escalated");
+    // Outcomes: used unchanged = accepted, used after edits = edited, discarded = rejected.
+    await k.j(`${k.X}/drafts/${d2.id}/use`, {}); assert.equal(ev().at(-1).outcome, "accepted");
+    k.ai(() => JSON.stringify({ subject: "أهلاً", body: "هلا Faisal، عمولتك 15% لمدة 6 أشهر." }));
+    const d4 = (await k.j(`${k.X}/${p.id}/ai/onboarding`, {})).body;
+    await k.j(`${k.X}/drafts/${d4.id}/use`, { body: d4.body + "\nThanks" }); assert.equal(ev().at(-1).outcome, "edited");
+    const d5 = (await k.j(`${k.X}/${p.id}/ai/onboarding`, {})).body;
+    await k.j(`${k.X}/drafts/${d5.id}/discard`, {}); assert.equal(ev().at(-1).outcome, "rejected");
+    const n = ev().length; await k.j(`${k.X}/drafts/${d5.id}/discard`, {}); assert.equal(ev().length, n, "judged once");
+    // Monthly update: facts are this month's clicks and counts, never invented.
+    k.ai(null);
+    await k.visit(`/r/${p.codes[0].code}`);
+    const up = (await k.j(`${k.X}/${p.id}/ai/update`, { month: "2026-11" })).body;
+    assert.match(up.body, /- النقرات: 1/); assert.match(up.body, /- Clicks: 1/); assert.match(up.body, /This month's statement: \[ADD\]/);
+    // Switched off: plain template.
+    wf.set("partnerships_manager", { paused: true });
+    const off = (await k.j(`${k.X}/${p.id}/ai/outreach`, {})).body;
+    assert.equal(off.by_ai, false); assert.match(off.note, /switched off/);
+    wf.set("partnerships_manager", { paused: false });
+    // Sending: only through the Store CRM (linked store), never with [ADD], Test mode logs only.
+    assert.match((await k.j(`${k.X}/drafts/${d1.id}/send`, {})).body.detail, /Link the partner to a Store CRM store/);
+    const st = k.app.locals.crm.add(k.w.id, { store_name: "Agency AI", domain: "agency-ai.example", email: "faisal@agency-ai.example" });
+    await k.j(`${k.X}/${p.id}`, { crm_store_id: st.id }, "PUT");
+    assert.match((await k.j(`${k.X}/drafts/${d1.id}/send`, {})).body.detail, /Fill in every \[ADD\]/);
+    const clean = d1.body.replace(/\[ADD[^\]]*\]/g, "سارة");
+    const t = (await k.j(`${k.X}/drafts/${d1.id}/send`, { body: clean, subject: "Welcome" })).body;
+    assert.equal(t.message.status, "test"); assert.equal(sent.length, 0); assert.equal(t.draft.sent.status, "test");
+    const fin = await k.user("finance", "f9");
+    assert.equal((await k.as(fin.ck, `${k.X}/drafts/${d1.id}/send`, "POST", { body: clean })).status, 403);
+  } finally { k.done(); }
+});
+
+test("partners Command Center needs (statements to approve, approved unpaid 14+ days, signed partners quiet 30 days) redacted without the module; agent, roles, Ask DPA AD tools", async () => {
+  const { AGENTS, agentFor } = await import("../lib/agents.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  const { DEFAULT_ROLES, moduleFor, MODULE_IDS } = await import("../lib/access.js");
+  const ag = AGENTS.find((a) => a.id === "partnerships_manager");
+  assert.equal(ag.name, "AI Partnerships manager"); assert.equal(ag.team, "Sales"); assert.equal(ag.max, 1); assert.equal(ag.module, "partners");
+  assert.equal(agentFor("POST", "/api/workspaces/1/partners/4/ai/outreach"), "partnerships_manager");
+  assert.ok(MODULE_IDS.includes("partners")); assert.equal(moduleFor("POST", "/api/workspaces/1/partners/statements/4/pay"), "partners");
+  assert.deepEqual(Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms.partners])), { owner: "edit", admin: "edit", manager: "edit", member: "view", finance: "edit", creative: "none", viewer: "view" });
+  const dd = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-ptr-"));
+  fs.writeFileSync(path.join(dd, "db.json"), JSON.stringify({ roles: [{ id: "member", name: "Team member", perms: { command: "view" } }] }));
+  assert.equal(new Store(dd).db.roles.find((r) => r.id === "member").perms.partners, "view"); fs.rmSync(dd, { recursive: true, force: true });
+  const lt = TOOLS.find((t) => t.name === "list_partners"), at = TOOLS.find((t) => t.name === "add_partner");
+  assert.equal(lt.module, "partners"); assert.ok(!lt.write); assert.equal(at.module, "partners"); assert.equal(at.write, true); assert.equal(at.risk, "low"); assert.equal(typeof at.preview, "function");
+
+  let script = [];
+  const fakeClient = async (p) => { const n = script.shift(); return typeof n === "function" ? n(p) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await ptKit({ clock: "2026-09-01T09:00:00Z", assistantClient: fakeClient });
+  try {
+    const needs = async (c = k.ck) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Partners");
+    await k.j(k.X, { name: "Quiet Agency", status: "signed" });
+    const busy = (await k.j(k.X, { name: "Busy Agency", status: "active", agreement: { commission_pct: 10, recurring_months: 12 } })).body;
+    k.at("2026-10-05T09:00:00Z");
+    await k.visit(`/r/${busy.codes[0].code}`);
+    const { c } = await ptCustomer(k, { name: "Need Store" }, [["2026-09-20", 1000]]);
+    await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: c.id, code_id: busy.codes[0].id });
+    let n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Quiet partners"]); assert.match(n[0].text, /1 signed partner has had no clicks or referrals in 30 days: Quiet Agency/);
+    const s = (await k.j(`${k.X}/statements/generate`, { month: "2026-09" })).body.statements[0];
+    n = await needs();
+    assert.ok(n.some((x) => x.title === "Partner statements to approve" && /1 partner statement is waiting/.test(x.text)));
+    await k.j(`${k.X}/statements/${s.id}/approve`, {});
+    k.at("2026-10-20T09:00:00Z");
+    n = await needs();
+    assert.ok(n.some((x) => x.title === "Approved statements not paid" && /Busy Agency 2026-09/.test(x.text)));
+    assert.ok(!n.some((x) => x.title === "Partner statements to approve"));
+    const cr = await k.user("creative", "cc");
+    assert.equal((await needs(cr.ck)).length, 0, "redacted without the module");
+    await k.j(`${k.X}/statements/${s.id}/pay`, { reference: "TR-9" });
+    assert.ok(!(await needs()).some((x) => x.title === "Approved statements not paid"));
+
+    // Ask DPA AD: list partners (read) and add a partner (write, after a confirm).
+    script = [use("p1", "list_partners", {}), (p) => { const r = JSON.parse(p.messages.at(-1).content[0].content); assert.equal(r.total, 2); assert.ok(r.partners.every((x) => x.links.length === 1)); return say("Two partners."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "Partners?", ws: k.w.id })).body;
+    assert.match(a1.reply, /Two partners/);
+    script = [use("p2", "add_partner", { name: "Salla Partners", type: "platform", contact_name: "Lama", contact_email: "lama@salla.example" })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Add Salla Partners", ws: k.w.id })).body;
+    assert.equal(a2.pending.summary, 'Add the partner "Salla Partners" (platform, prospect), contact Lama lama@salla.example, with a new referral link');
+    assert.ok(!k.st.db.partners_partners.some((x) => x.name === "Salla Partners"));
+    script = [say("Added.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const added = k.st.db.partners_partners.find((x) => x.name === "Salla Partners");
+    assert.equal(added.contact.email, "lama@salla.example"); assert.match(added.log[0].text, /via Ask DPA AD/);
+  } finally { k.done(); }
+});
+
+test("partners: data requests cover partner contacts (statements kept), sample partners with clicks and a draft statement removed with sample data, workspace delete", async () => {
+  const { findSubject, exportSubject, deleteSubject, REGISTER_STARTER } = await import("../lib/compliance.js");
+  assert.ok(REGISTER_STARTER.some((r) => r.key === "partner_contacts" && r.module === "partners"));
+  const k = await ptKit({ clock: "2026-11-03T09:00:00Z" });
+  try {
+    const p = (await k.j(k.X, { name: "DSR Agency", contact: { name: "Huda", email: "huda@dsr.example", phone: "+966 55 123 4567" }, notes: "Call huda@dsr.example on Sunday" })).body;
+    const d = (await k.j(`${k.X}/${p.id}/ai/outreach`, {})).body;
+    k.st.db.partners_drafts.find((x) => x.id === d.id).body += "\nhuda@dsr.example";
+    k.st.db.partners_statements.push({ id: "s-dsr", workspace_id: k.w.id, partner_id: p.id, partner_name: "DSR Agency", month: "2026-10", status: "paid", lines: [], total_sar: 10, log: [] });
+    const ctx = { store: k.st, crm: k.app.locals.crm };
+    assert.equal(findSubject(ctx, { email: "HUDA@dsr.example" }).partners.length, 1);
+    assert.equal(findSubject(ctx, { phone: "0551234567" }).partners.length, 1);
+    const x = exportSubject(ctx, { email: "huda@dsr.example" });
+    assert.equal(x.partners[0].contact.name, "Huda"); assert.equal(x.partners[0].drafts.length, 1);
+    const c = deleteSubject(ctx, { email: "huda@dsr.example" });
+    assert.equal(c.partner_contacts_cleared, 1);
+    const after = k.st.db.partners_partners.find((y) => y.id === p.id);
+    assert.deepEqual(after.contact, { name: "", email: "", phone: "" }); assert.equal(after.notes, "Call [removed] on Sunday");
+    assert.doesNotMatch(k.st.db.partners_drafts.find((y) => y.id === d.id).body, /huda@dsr\.example/);
+    assert.ok(k.st.db.partners_statements.some((s) => s.id === "s-dsr"), "statements kept for accounting");
+    assert.equal(findSubject(ctx, { email: "huda@dsr.example" }).partners.length, 0);
+
+    // Sample data: two "Sample ·" partners with clicks and one draft statement; removed with Remove sample data.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.partners, 2);
+    const smp = k.st.db.partners_partners.filter((y) => y.sample);
+    assert.equal(smp.length, 2); assert.ok(smp.every((y) => y.name.startsWith("Sample · ")));
+    assert.ok(k.st.db.partners_clicks.filter((y) => y.sample).length >= 4);
+    const sst = k.st.db.partners_statements.filter((y) => y.sample);
+    assert.equal(sst.length, 1); assert.equal(sst[0].status, "draft");
+    const list = (await k.j(k.X)).body;
+    assert.ok(list.partners.find((y) => y.name === "Sample · Riyadh Growth Agency").stats.clicks >= 4);
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.partners, 2); assert.equal(rm.partner_statements, 1);
+    for (const coll of ["partners_partners", "partners_codes", "partners_clicks", "partners_statements", "partners_attributions"]) assert.ok(!k.st.db[coll].some((y) => y.sample), coll);
+    assert.ok(k.st.db.partners_partners.some((y) => y.id === p.id), "real partner kept");
+    // Deleting a workspace clears its partners_* rows and keeps other workspaces'.
+    k.st.db.partners_partners.push({ id: "zp", workspace_id: "other" });
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    for (const coll of ["partners_partners", "partners_codes", "partners_clicks", "partners_statements", "partners_drafts", "partners_attributions"]) assert.equal(k.st.db[coll].filter((y) => y.workspace_id === k.w.id).length, 0, coll);
+    assert.deepEqual(k.st.db.partners_partners.map((y) => y.id), ["zp"]);
+  } finally { k.done(); }
+});
