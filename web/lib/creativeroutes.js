@@ -1,4 +1,5 @@
 // HTTP routes for Creative Studio (module "creative" in Teams & roles).
+import { MEDIA_COLL, mediaChecks, mediaView } from "./media.js";
 import { CHANNELS, CHANNEL_IDS, DEFAULT_BRAND, DEFAULT_PILLARS, STARTER_EMAIL, STATUSES, STATUS_IDS, checkItem, cleanBrand, cleanItem, cleanVariant, ideasPrompt, packText, parseJsonObject, planPrompt, renderEmail, seasonsBetween, writePrompt } from "./creative.js";
 
 const C = "creative_items";
@@ -23,7 +24,8 @@ export function mountCreative(app, { store, provider }) {
   const by = (req) => req.user?.name || "you";
   const users = () => store.db.users.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name }));
   const canApprove = (req, w) => req.user?.id === "owner" || creativeSettings(w).brand.approver_roles.includes(req.user?.role_id);
-  const view = (w, i) => ({ ...i, checks: checkItem(i, creativeSettings(w).brand) });
+  const checksFor = (w, i) => [...checkItem(i, creativeSettings(w).brand), ...mediaChecks(i, (id) => store.getOps(MEDIA_COLL, w.id, id))];
+  const view = (w, i) => ({ ...i, checks: checksFor(w, i) });
   const snapshot = (i) => ({ at: new Date().toISOString(), title: i.title, brief: i.brief, variants: i.variants });
 
   app.get(`${P}/meta`, (req, res) => {
@@ -75,7 +77,7 @@ export function mountCreative(app, { store, provider }) {
     if (!STATUS_IDS.includes(to)) return res.status(422).json({ detail: "Unknown status" });
     if (["approved", "scheduled"].includes(to)) {
       if (!canApprove(req, w)) return res.status(403).json({ detail: "Only approvers can approve content (set approver roles in the brand kit)." });
-      const bad = checkItem(i, creativeSettings(w).brand).filter((c) => c.level === "bad");
+      const bad = checksFor(w, i).filter((c) => c.level === "bad");
       if (bad.length) return res.status(422).json({ detail: "Fix these first: " + bad.map((b) => b.text).join(" ") });
       if (to === "scheduled" && !i.date) return res.status(422).json({ detail: "Set a date before scheduling." });
     }
@@ -110,7 +112,8 @@ export function mountCreative(app, { store, provider }) {
     if (!i || !i.channels.includes(req.params.channel)) return res.status(404).json({ detail: "Not found" });
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="dpa-${i.id}-${req.params.channel}.txt"`);
-    res.send(packText(i, req.params.channel));
+    const urls = (i.variants[req.params.channel]?.media || []).map((id) => store.getOps(MEDIA_COLL, w.id, id)).filter(Boolean).map((m) => mediaView(m).url);
+    res.send(packText(i, req.params.channel, urls));
   });
 
   // Email preview, rendered with a sample store and the real footer.

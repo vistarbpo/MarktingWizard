@@ -1,6 +1,7 @@
-// Creative Studio (phase 1): content calendar, idea bank, AI copy in Arabic and English, approvals,
+// Creative Studio: content calendar, idea bank, AI copy in Arabic and English, approvals,
 // brand kit, an email designer used by Store CRM campaigns, and "download and post" for every platform.
-// Rendering images/video and direct publishing come in later phases (docs/creative-studio-plan.md).
+// Phases 2-3 (media library, image templates, reels, publishing, results) live in media.js, social.js,
+// publisher.js and studioroutes.js; rendering runs in the browser (public/studio-media.js).
 import { renderTemplate } from "./crm.js";
 
 // Where content goes. Limits are the platforms' own; "tip" is our house guidance.
@@ -108,7 +109,10 @@ function cleanBlock(b) {
 }
 export function cleanVariant(channel, v = {}) {
   const o = { caption_ar: str(v.caption_ar, 5000), caption_en: str(v.caption_en, 5000), hashtags: list(Array.isArray(v.hashtags) ? v.hashtags : String(v.hashtags || "").split(/[\s,]+/), 30, 40).map((h) => (h.startsWith("#") ? h : "#" + h)),
-    notes: str(v.notes, 2000), asset_url: safeUrl(v.asset_url) };
+    notes: str(v.notes, 2000), asset_url: safeUrl(v.asset_url),
+    // Phase 2: files from the media library (ids, in order: carousel slides follow this order).
+    media: [...new Set((Array.isArray(v.media) ? v.media : []).map((x) => String(x)).filter((x) => /^\d{1,12}$/.test(x)))].slice(0, 10),
+    cover_id: /^\d{1,12}$/.test(String(v.cover_id || "")) ? String(v.cover_id) : "" };
   const kind = channelInfo(channel)?.kind;
   if (kind === "video") o.script = str(v.script, 4000);
   if (kind === "carousel") o.slides = list(v.slides, 10, 400);
@@ -157,7 +161,7 @@ export function checkItem(item, brand = DEFAULT_BRAND) {
       if (c.hashtags_max != null && (v.hashtags || []).length > c.hashtags_max) add("warn", ch, `${name}: ${v.hashtags.length} hashtags; keep to ${c.hashtags_max}.`);
       if (c.kind === "video" && !v.script) add("warn", ch, `${name}: no script for the video yet.`);
       if (c.kind === "carousel" && (v.slides || []).length < 2) add("warn", ch, `${name}: a carousel needs 2+ slides.`);
-      if (c.kind !== "text" && c.kind !== "whatsapp" && !v.asset_url) add("warn", ch, `${name}: link the image or video (${c.ratio}) before posting.`);
+      if (c.kind !== "text" && c.kind !== "whatsapp" && !v.asset_url && !(v.media || []).length) add("warn", ch, `${name}: attach or link the image or video (${c.ratio}) before posting.`);
       if (c.kind === "whatsapp" && !v.template_name) add("warn", ch, `${name}: first messages need an approved WhatsApp template name.`);
     }
     // Claims: any number or % must come from real data, and nothing from the brand's "don't" list.
@@ -169,13 +173,13 @@ export function checkItem(item, brand = DEFAULT_BRAND) {
 }
 
 // ---- Download-and-post pack (plain text) for platforms without direct publishing yet.
-export function packText(item, ch) {
+export function packText(item, ch, mediaUrls = []) {
   const c = channelInfo(ch), v = item.variants?.[ch] || {};
   const tags = (v.hashtags || []).join(" ");
   return [`${item.title} · ${c.name}`, `Format: ${c.ratio}`, item.date ? `Post on: ${item.date}${item.time ? " " + item.time : ""} (Riyadh)` : "", "",
     v.caption_ar ? `— Arabic —\n${v.caption_ar}${tags ? "\n\n" + tags : ""}` : "", v.caption_en ? `\n— English —\n${v.caption_en}${tags ? "\n\n" + tags : ""}` : "",
     v.slides?.length ? `\n— Slides —\n${v.slides.map((s, i) => `${i + 1}. ${s}`).join("\n")}` : "", v.script ? `\n— Script —\n${v.script}` : "",
-    v.asset_url ? `\nMedia: ${v.asset_url}` : "", v.notes ? `\nNotes: ${v.notes}` : ""].filter((x) => x !== "").join("\n").trim() + "\n";
+    v.asset_url ? `\nMedia: ${v.asset_url}` : "", mediaUrls.length ? `\nFiles:\n${mediaUrls.join("\n")}` : "", v.notes ? `\nNotes: ${v.notes}` : ""].filter((x) => x !== "").join("\n").trim() + "\n";
 }
 
 // ---- Email designer: blocks → table-based HTML that works in Gmail, Outlook and phones, RTL-aware.

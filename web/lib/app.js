@@ -15,6 +15,9 @@ import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel }
 import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { mountCreative } from "./creativeroutes.js";
+import { createPublisher } from "./publisher.js";
+import { socialConfig } from "./social.js";
+import { mountStudio, mountStudioPublic } from "./studioroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -26,8 +29,9 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider, password, crm = new CrmStore(store.dir), outreachOptions = {} }) {
+export function createApp({ store, provider, password, crm = new CrmStore(store.dir), outreachOptions = {}, studioOptions = {} }) {
   const outreach = createOutreach({ store, crm, provider, ...outreachOptions });
+  const studio = createPublisher({ store, provider, cfg: socialConfig(process.env, password), ...studioOptions }); // Creative Studio publishing
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -51,7 +55,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.studio = studio;
   app.use(express.urlencoded({ extended: false }));
 
   // ---- login (with a simple brute-force brake)
@@ -134,6 +138,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
   });
 
   mountCrmPublic(app, { crm, outreach });
+  mountStudioPublic(app, { store, studio });
 
   // Everything below needs a session, and each API call needs the right level on its module.
   app.use((req, res, next) => {
@@ -159,6 +164,7 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
 
   mountCrm(app, { store, crm, outreach, provider });
   mountCreative(app, { store, provider });
+  mountStudio(app, { store, provider, studio });
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
