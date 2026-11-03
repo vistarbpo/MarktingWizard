@@ -64,8 +64,11 @@ export function makeSenders(cfg) {
 export const DEFAULT_TARGETS = { reply_pct: 2, meeting_pct: 10, close_pct: 20, focus_list: 300 };
 export const DEFAULT_SETTINGS = { mode: "test", email_daily_cap: 150, wa_daily_cap: 250, per_tick: 25, auto_reply: false, sender_name: "", auto_deal: true, targets: DEFAULT_TARGETS };
 
-export function createOutreach({ store, crm, provider, cfg = channelConfig(), senders = makeSenders(cfg), log = console }) {
-  const settings = (wsId) => { const s = crm.db.settings[wsId] || {}; return { ...DEFAULT_SETTINGS, ...s, targets: { ...DEFAULT_TARGETS, ...(s.targets || {}) } }; };
+export function createOutreach({ store, crm, provider, cfg = channelConfig(), senders = makeSenders(cfg), log = console, levelOf = null, onOutcome = null }) {
+  // AI Workforce hooks: autonomy levels decide what the AI may do alone; outcomes feed its track record.
+  const lvl = (id, dflt) => (levelOf ? levelOf(id) : dflt);
+  const outcome = (...a) => { try { onOutcome?.(...a); } catch {} };
+  const settings = (wsId) => { const s = crm.db.settings[wsId] || {}; const o = { ...DEFAULT_SETTINGS, ...s, targets: { ...DEFAULT_TARGETS, ...(s.targets || {}) } }; if (levelOf) o.auto_reply = levelOf("crm_replier") >= 2; return o; };
   const ws = (wsId) => store.getWorkspace(wsId);
   const lastIn = (contactId, channel) => { const ms = crm.messagesFor(contactId).filter((m) => m.direction === "in" && m.channel === channel); return ms.length ? Date.parse(ms[ms.length - 1].at) : 0; };
   const sentToday = (wsId, channel, day) => crm.db.messages.filter((m) => m.workspace_id === wsId && m.direction === "out" && m.channel === channel && ["sent", "test"].includes(m.status) && riyadhDay(new Date(m.at)) === day).length;
@@ -227,10 +230,14 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
     // Unsubscribe is honoured even if the AI missed it.
     if (guessIntent(msg.body) === "unsubscribe") t.intent = "unsubscribe";
     Object.assign(msg, { intent: t.intent, summary: t.summary, ai_reply: t.reply, needs_person: t.needs_person || !t.checked });
+    const acts = lvl("crm_triage", 2) >= 2; // level 1: label only, a person moves the store
+    if (!acts && t.intent !== "unsubscribe") { msg.needs_person = true; outcome("crm_triage", wsId, "escalated", `Labelled "${t.intent}" (level 1: a person moves the store)`); }
+    else outcome("crm_triage", wsId, t.checked ? "auto" : "escalated", t.intent);
     if (t.intent === "unsubscribe") {
       crm.update(wsId, c.id, msg.channel === "email" ? { email_opt_out: true } : { wa_opt_out: true, wa_opt_in: false });
       setStage(c, "do_not_contact"); msg.handled = true; msg.ai_reply = "";
-    } else if (t.intent === "not_interested" || t.intent === "not_now") setStage(c, "not_now");
+    } else if (!acts) { /* level 1: nothing moves without a person */ }
+    else if (t.intent === "not_interested" || t.intent === "not_now") setStage(c, "not_now");
     else if (t.intent === "out_of_office") msg.handled = true;
     else if (t.intent === "interested") {
       if (["new", "contacted", "engaged", "not_now"].includes(c.stage)) setStage(c, "qualified");
@@ -240,7 +247,7 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
       }
     }
     // Auto-reply only when switched on, the AI is confident and no person is needed.
-    if (s.auto_reply && t.checked && !msg.needs_person && msg.ai_reply && ["interested", "question"].includes(t.intent)) {
+    if (lvl("crm_replier", s.auto_reply ? 2 : 1) >= 2 && t.checked && !msg.needs_person && msg.ai_reply && ["interested", "question"].includes(t.intent)) {
       const r = await sendOne(wsId, crm.get(wsId, c.id), { channel: msg.channel, subject: msg.subject ? "Re: " + msg.subject.replace(/^re:\s*/i, "") : "", body: msg.ai_reply, by: "ai" });
       if (r.status !== "skipped" && r.status !== "failed") { msg.handled = true; msg.reply_id = r.id; }
     }
@@ -285,7 +292,7 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
   }
   function stop() { timers.forEach(clearInterval); timers = []; }
 
-  return { tick, launch, sendOne, inbound, triage, setStage, onStage, pollMailbox, settings, start, stop, cfg };
+  return { outcome, tick, launch, sendOne, inbound, triage, setStage, onStage, pollMailbox, settings, start, stop, cfg };
 }
 
 // Drops quoted history and signatures from an email reply.

@@ -59,7 +59,7 @@ export function claudeProvider({ model, effort }) {
   return {
     name: "claude",
     model,
-    async generate({ system, prompt, onText, signal }) {
+    async generate({ system, prompt, onText = () => {}, signal, onUsage }) {
       try {
         const stream = client.beta.messages.stream({
           model,
@@ -74,6 +74,7 @@ export function claudeProvider({ model, effort }) {
         }, { signal });
         stream.on("text", onText);
         const msg = await stream.finalMessage();
+        onUsage?.(msg.usage, msg.model); // AI Workforce: tokens and cost per agent
         if (msg.stop_reason === "refusal") throw new LLMError("Claude declined this request. Try rewording the inputs.");
         if (msg.stop_reason === "max_tokens") throw new LLMError("The output was cut off at the length limit. Try a narrower request.");
         return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("");

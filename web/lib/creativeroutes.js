@@ -17,7 +17,11 @@ export function emailDesign(store, wsId, id) {
   return i?.variants?.email && ["approved", "scheduled", "published"].includes(i.status) ? i.variants.email : null;
 }
 
-export function mountCreative(app, { store, provider }) {
+const vhash = (v) => JSON.stringify(v || {});
+
+export function mountCreative(app, { store, provider, workforce = null }) {
+  const level = (id) => (workforce ? workforce.level(id) : 1);
+  const outcome = (id, ws, o, note) => workforce?.event(id, ws, o, note);
   const P = "/api/workspaces/:ws/creative";
   const W = (req, res) => { const w = store.getWorkspace(req.params.ws); if (!w) res.status(404).json({ detail: "Workspace not found" }); return w; };
   const by = (req) => req.user?.name || "you";
@@ -81,6 +85,9 @@ export function mountCreative(app, { store, provider }) {
     }
     i.comments.push({ at: new Date().toISOString(), by: by(req), text: `Status: ${i.status} → ${to}${req.body?.note ? " — " + String(req.body.note).slice(0, 500) : ""}`, system: true });
     const extra = to === "approved" || to === "scheduled" ? { approved_by: by(req), approved_at: new Date().toISOString() } : {};
+    // Track record for the AI Copywriter: approved as written, approved after edits, or sent back.
+    if (i.ai_hash && i.status === "review" && to === "approved") { outcome("creative_copywriter", w.id, vhash(i.variants) === i.ai_hash ? "accepted" : "edited", i.title); extra.ai_hash = null; }
+    if (i.ai_hash && i.status === "review" && to === "draft") { outcome("creative_copywriter", w.id, "rejected", i.title); extra.ai_hash = null; }
     res.json(view(w, store.updateOps(C, w.id, i.id, { status: to, comments: i.comments, ...extra })));
   });
 
@@ -191,8 +198,27 @@ export function mountCreative(app, { store, provider }) {
       const variants = { ...i.variants };
       for (const c of channels) if (j[c]) variants[c] = cleanVariant(c, j[c]);
       i.history = [snapshot(i), ...(i.history || [])].slice(0, 10);
-      const status = ["idea"].includes(i.status) ? "draft" : ["approved", "scheduled", "published"].includes(i.status) ? "review" : i.status;
-      res.json(view(w, store.updateOps(C, w.id, i.id, { variants, history: i.history, status, written_by_ai_at: new Date().toISOString() })));
+      let status = ["idea"].includes(i.status) ? "draft" : ["approved", "scheduled", "published"].includes(i.status) ? "review" : i.status;
+      const fields = { variants, history: i.history, status, written_by_ai_at: new Date().toISOString(), ai_hash: vhash(variants) };
+      // Autonomy: at level 2+ the copywriter's clean pieces are approved automatically (number claims and
+      // spot-checks still go to a person); at level 1 everything waits for review.
+      const lv = level("creative_copywriter");
+      if (lv >= 2) {
+        const checks = checkItem({ ...i, ...fields }, creativeSettings(w).brand);
+        const claim = checks.some((c) => /claim/.test(c.text)), bad = checks.some((c) => c.level === "bad");
+        const spot = lv === 2 && (store.listOps(C, w.id).filter((x) => x.auto_approved).length % 5 === 4);
+        if (!bad && !claim && !spot) {
+          Object.assign(fields, { status: "approved", approved_by: "AI Copywriter (auto)", approved_at: new Date().toISOString(), auto_approved: true, ai_hash: null });
+          outcome("creative_copywriter", w.id, "auto", i.title);
+          i.comments.push({ at: new Date().toISOString(), by: "system", text: `Approved automatically by the AI Copywriter (level ${lv}): every check passed.`, system: true });
+          fields.comments = i.comments;
+        } else {
+          fields.status = "review";
+          i.comments.push({ at: new Date().toISOString(), by: "system", text: bad ? "Sent to review: some checks failed." : claim ? "Sent to review: it has a number claim to confirm." : "Sent to review: random spot-check.", system: true });
+          fields.comments = i.comments;
+        }
+      }
+      res.json(view(w, store.updateOps(C, w.id, i.id, fields)));
     } catch (e) { res.status(502).json({ detail: e?.message || "AI failed" }); }
   });
 }

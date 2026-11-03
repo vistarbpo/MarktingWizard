@@ -15,6 +15,8 @@ import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel }
 import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { mountCreative } from "./creativeroutes.js";
+import { Workforce, agentFor, withAgent } from "./agents.js";
+import { mountWorkforce, workforceSummary } from "./agentroutes.js";
 import { hasSampleData, loadSampleData, removeSampleData } from "./samples.js";
 import { EFFORT, ITEM_STATUS, ITEM_STATUS_IDS, ITEM_TYPES, PRODUCT_AREAS, STARTER_ROADMAP, cleanItem, clusterPrompt, parseClusters, productSnapshot, releasePrompt, specPrompt } from "./product.js";
 import { AREAS, INCIDENT_STATUS, OPS_TASKS, REPEATS, SEVERITY, TASK_STATUS, TASK_STATUS_IDS, incidentPrompt, opsReportPrompt, opsSnapshot, parsePlan, planPrompt, rollForward, saudiStarter } from "./ops.js";
@@ -26,8 +28,13 @@ import { AI_TASKS, CITIES, OPEN, PLANS, PLATFORMS, STAGES, STAGE_IDS, enrich, sa
 const __dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-export function createApp({ store, provider, password, crm = new CrmStore(store.dir), outreachOptions = {} }) {
-  const outreach = createOutreach({ store, crm, provider, ...outreachOptions });
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {} }) {
+  // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
+  // agent's pause switch and budget, and records tokens and cost.
+  const workforce = new Workforce(store);
+  const provider = workforce.wrap(baseProvider);
+  const triageProvider = { ...provider, generate: (a) => withAgent("crm_triage", null, () => provider.generate(a)) };
+  const outreach = createOutreach({ store, crm, provider: triageProvider, levelOf: (id) => workforce.level(id), onOutcome: (id, ws, o, note) => workforce.event(id, ws, o, note), ...outreachOptions });
   // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
   const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
   const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
@@ -51,7 +58,14 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce;
+  // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
+  app.use((req, res, next) => {
+    const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
+    if (!agent) return next();
+    const ws = /^\/api\/workspaces\/([^/]+)/.exec(req.path)?.[1] || null;
+    withAgent(agent, ws, next);
+  });
   app.use(express.urlencoded({ extended: false }));
 
   // ---- login (with a simple brute-force brake)
@@ -124,9 +138,13 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     try {
       const raw = await provider.generate({ system: SYSTEM_SUPPORT, prompt: replyPrompt(w, store.listArticles(w.id), store.getTicket(w.id, t.id)), onText: () => {} });
       const r = parseReply(raw);
-      if (r.checked) store.addTicketMessage(w.id, t.id, { from: "ai", text: r.reply, sent: true });
-      store.updateTicket(w.id, t.id, { category: r.category, language: r.language, status: r.escalate ? "needs_human" : "ai_answered", escalation_reason: r.escalate ? r.reason : "" });
-      res.json({ token: t.public_token, reply: r.checked ? r.reply : null, handed_over: r.escalate });
+      // Level 1 (drafts only): the AI's answer waits for a person instead of going to the customer.
+      const live = workforce.level("support_agent") >= 2;
+      if (r.checked) store.addTicketMessage(w.id, t.id, { from: "ai", text: r.reply, sent: live });
+      const escalate = r.escalate || !live;
+      store.updateTicket(w.id, t.id, { category: r.category, language: r.language, status: escalate ? "needs_human" : "ai_answered", escalation_reason: r.escalate ? r.reason : !live ? "AI Support is on drafts only: check and send the draft" : "" });
+      workforce.event("support_agent", w.id, r.escalate || !r.checked ? "escalated" : live ? "auto" : "escalated", r.category);
+      res.json({ token: t.public_token, reply: r.checked && live ? r.reply : null, handed_over: escalate });
     } catch (e) {
       store.updateTicket(w.id, t.id, { status: "needs_human", escalation_reason: "AI could not answer: " + (e?.message || "error") });
       res.json({ token: t.public_token, reply: null, handed_over: true });
@@ -157,8 +175,9 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     next();
   });
 
-  mountCrm(app, { store, crm, outreach, provider });
-  mountCreative(app, { store, provider });
+  mountCrm(app, { store, crm, outreach, provider, workforce });
+  mountCreative(app, { store, provider, workforce });
+  mountWorkforce(app, { store, workforce });
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
@@ -1103,6 +1122,11 @@ export function createApp({ store, provider, password, crm = new CrmStore(store.
     const can = (m) => levelOk(req.perms[m], "view");
     const MOD = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative" };
     if (!can("creative")) d.creative = null;
+    if (can("workforce")) {
+      const wsum = workforceSummary(store, workforce);
+      d.workforce = { agents: wsum.totals.active, autonomous: wsum.totals.autonomous, people: wsum.totals.people, cost_month: wsum.totals.cost_month, budget_month: wsum.totals.budget_month, quality: wsum.totals.quality };
+      d.needs = [...wsum.needs.filter((n) => !n.soft).slice(0, 3).map((n) => ({ module: "AI Workforce", route: "workforce", param: null, title: "AI Workforce", text: n.text })), ...d.needs];
+    }
     const ok = (label) => !MOD[label] || can(MOD[label]);
     if (!can("finance")) d.finance = { hidden: true, runway_months: null, cash_sar: 0, cash_as_of: null, net_burn_sar: 0, month_costs_sar: 0, cash_zero_month: null };
     if (!can("team")) d.team = { ...d.team, payroll_sar: 0, candidates: 0, hidden: true };

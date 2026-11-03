@@ -128,7 +128,7 @@ test("data survives a restart", async () => {
 
 test("SOP: every step links to a real page or playbook", async () => {
   const { SOP } = await import("../lib/sop.js");
-  const routes = ["studio", "crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
+  const routes = ["workforce", "studio", "crm", "access", "results", "product", "ops", "finance", "command", "support", "team", "pipeline", "sop", "overview", "brief", "knowledge", "kpis", "playbooks", "library"];
   const keys = new Set(PLAYBOOKS.map((p) => p.key));
   for (const s of SOP) for (const st of s.steps) {
     if (st.go) assert.ok(routes.includes(st.go), `${s.cadence}:${st.id} -> ${st.go}`);
@@ -1085,4 +1085,96 @@ test("creative studio: AI plans a month and writes every version (JSON in, revie
   const wr = await j(`/api/workspaces/${w.id}/creative/items/${it.id}/write`, {});
   assert.equal(wr.status, "draft"); assert.equal(wr.variants.ig_reel.hashtags[0], "#رمضان"); assert.equal(wr.variants.email.subject, "S");
   srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
+});
+
+test("AI workforce: attribution, cost, budget, pause, levels, demotion, promotion, permissions", async () => {
+  const { Workforce, withAgent, costOf, AGENTS } = await import("../lib/agents.js");
+  assert.equal(costOf({ input_tokens: 1e6, output_tokens: 1e6 }, "claude-opus-5-5"), 24);
+  assert.equal(costOf({ input_tokens: 1e6 }, "unknown-model"), 4);
+  // Budget and pause on a private store.
+  const d0 = fs.mkdtempSync(path.join(os.tmpdir(), "wf-")), st0 = new Store(d0), wf = new Workforce(st0);
+  const fake = { name: "claude", model: "claude-opus-5-5", async generate({ onUsage }) { onUsage?.({ input_tokens: 500000, output_tokens: 0 }, "claude-opus-5-5"); return "ok"; } };
+  const p = wf.wrap(fake);
+  wf.set("finance_cfo", { budget_usd: 3 });
+  assert.equal(await withAgent("finance_cfo", "1", () => p.generate({ prompt: "x" })), "ok"); // $2
+  await withAgent("finance_cfo", "1", () => p.generate({ prompt: "x" }));                       // $4 total
+  await assert.rejects(withAgent("finance_cfo", "1", () => p.generate({ prompt: "x" })), /monthly AI budget/);
+  assert.equal(wf.stats("finance_cfo").cost_month, 4);
+  wf.set("ops_planner", { paused: true });
+  await assert.rejects(withAgent("ops_planner", "1", () => p.generate({ prompt: "x" })), /switched off/);
+  // Auto-demotion after 3 rejections; promotion after 50 clean items.
+  wf.set("creative_copywriter", { level: 3 });
+  for (let i = 0; i < 3; i++) wf.event("creative_copywriter", "1", "rejected");
+  assert.equal(wf.config("creative_copywriter").level, 2);
+  wf.set("crm_replier", { level: 1 });
+  for (let i = 0; i < 50; i++) wf.event("crm_replier", "1", "accepted", "", false);
+  assert.equal(wf.stats("crm_replier").can_promote, true);
+  fs.rmSync(d0, { recursive: true, force: true });
+
+  // HTTP: summary, attribution of a real route, CRM triage level 1, permissions.
+  const s = await json("/api/workforce");
+  assert.equal(s.agents.length, AGENTS.length); assert.ok(s.totals.people >= 1);
+  const [ws] = await json("/api/workspaces");
+  await post(`/api/workspaces/${ws.id}/creative/plan`, { month: "2027-01" });
+  const strat = await json("/api/workforce/agents/creative_strategist");
+  assert.ok(strat.runs.length >= 1);
+  assert.equal((await call("/api/workforce/agents/crm_replier", { method: "PUT", body: JSON.stringify({ level: 3 }) })).status, 422); // max 2
+  await call("/api/workforce/agents/crm_triage", { method: "PUT", body: JSON.stringify({ level: 1 }) });
+  const C = `/api/workspaces/${ws.id}/crm`;
+  const st = await (await post(`${C}/contacts`, { store_name: "WF Triage", email: "wf@triage.example.com" })).json();
+  await post(`${C}/contacts/${st.id}/log-reply`, { channel: "email", body: "نعم ارسلوا النماذج" });
+  const after = (await json(`${C}/contacts/${st.id}`)).contact;
+  assert.notEqual(after.stage, "qualified"); assert.equal(after.deal_id, null); // level 1: labels only
+  await post(`${C}/contacts/${st.id}/log-reply`, { channel: "email", body: "stop" });
+  assert.equal((await json(`${C}/contacts/${st.id}`)).contact.stage, "do_not_contact"); // unsubscribe always honoured
+  await call("/api/workforce/agents/crm_triage", { method: "PUT", body: JSON.stringify({ level: 2 }) });
+  await call("/api/workforce/agents/ops_planner", { method: "PUT", body: JSON.stringify({ paused: true }) });
+  const r = await post(`/api/workspaces/${ws.id}/ops/plan`, { goal: "launch" });
+  assert.ok(r.status >= 400 || /switched off/.test(await r.text()));
+  await call("/api/workforce/agents/ops_planner", { method: "PUT", body: JSON.stringify({ paused: false }) });
+  await post("/api/admin/users", { name: "Member WF", email: "member-wf@dpa.ad", password: "member-wf-pass", role_id: "member" });
+  const mc = (await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "member-wf@dpa.ad", password: "member-wf-pass" }) })).headers.get("set-cookie").split(";")[0];
+  assert.equal((await fetch(base + "/api/workforce", { headers: { cookie: mc } })).status, 200);
+  assert.equal((await fetch(base + "/api/workforce/agents/crm_triage", { method: "PUT", headers: { cookie: mc, "Content-Type": "application/json" }, body: "{}" })).status, 403);
+  const cmd = await json(`/api/workspaces/${ws.id}/command`);
+  assert.ok(cmd.workforce && cmd.workforce.agents > 0);
+});
+
+test("AI workforce: copywriter at level 2 auto-approves clean pieces, sends number claims to review", async () => {
+  let answer = { ig_post: { caption_ar: "إعلانات مصممة لكل منتج", caption_en: "Designed ads for every product", hashtags: ["#سلة"] } };
+  const fake = { name: "fake", model: "fake", async generate() { return JSON.stringify(answer); } };
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-wf2-"));
+  const st2 = new Store(d2), app2 = createApp({ store: st2, provider: fake, password: "pw-wf" }), srv = app2.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const ck = (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-wf" }) })).headers.get("set-cookie").split(";")[0];
+  const j = (p, b, m) => fetch(b2 + p, { method: m || (b ? "POST" : "GET"), headers: { "Content-Type": "application/json", cookie: ck }, body: b && JSON.stringify(b) }).then((r) => r.json());
+  const [w] = await j("/api/workspaces");
+  const P = `/api/workspaces/${w.id}/creative`;
+  await j("/api/workforce/agents/creative_copywriter", { level: 2 }, "PUT");
+  const it = await j(`${P}/items`, { title: "Clean", channels: ["ig_post"], date: "2027-01-10" });
+  const wr = await j(`${P}/items/${it.id}/write`, {});
+  assert.equal(wr.status, "approved"); assert.equal(wr.approved_by, "AI Copywriter (auto)");
+  answer = { ig_post: { caption_ar: "مبيعات أكثر ٣ أضعاف", caption_en: "3x sales" } };
+  const it2 = await j(`${P}/items`, { title: "Claim", channels: ["ig_post"], date: "2027-01-11" });
+  const wr2 = await j(`${P}/items/${it2.id}/write`, {});
+  assert.equal(wr2.status, "review");
+  // Approving it unchanged counts as "accepted" for the copywriter.
+  await j(`${P}/items/${it2.id}/status`, { status: "approved" });
+  const cw = await j("/api/workforce/agents/creative_copywriter");
+  assert.ok(cw.events.some((e) => e.outcome === "accepted")); assert.ok(cw.events.some((e) => e.outcome === "auto"));
+  assert.ok(cw.runs.length >= 2);
+  srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
+});
+
+test("page scripts don't redeclare each other's top-level names (they share one global scope)", () => {
+  const dir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "public");
+  const seen = new Map(), dupes = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".js"))) {
+    for (const m of fs.readFileSync(path.join(dir, f), "utf8").matchAll(/^(?:const|let|class|(?:async\s+)?function)\s+([A-Za-z_$][\w$]*)/gm)) {
+      if (seen.has(m[1]) && seen.get(m[1]) !== f) dupes.push(`${m[1]} in ${seen.get(m[1])} and ${f}`);
+      seen.set(m[1], f);
+    }
+  }
+  assert.deepEqual(dupes, []);
 });

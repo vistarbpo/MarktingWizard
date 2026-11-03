@@ -735,3 +735,16 @@ details > summary { cursor: pointer; }
 .cs-drawer > * { flex-shrink: 0; }
 .cs-chip { width: 100%; max-width: 100%; }
 .cs-vtabs { min-height: 34px; }
+
+/* ---- AI Workforce */
+.wf-org { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 16px 20px; }
+.wf-team { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.wf-people { display: flex; flex-wrap: wrap; gap: 4px; }
+.wf-agents { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 3px 10px 3px 6px; font: 12px var(--font); color: var(--text); cursor: pointer; }
+.wf-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.wf-chip.lv1 i { background: #8a7cf0; } .wf-chip.lv2 i { background: var(--accent); } .wf-chip.lv3 i { background: var(--good); } .wf-chip.lv0 { opacity: .5; }
+.wf-chip small { color: var(--text-3); font-size: 10px; }
+.wf-table td { vertical-align: top; }
+.wf-lvl { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer; }
+.wf-lvl.on { border-color: var(--accent); background: var(--accent-soft); }

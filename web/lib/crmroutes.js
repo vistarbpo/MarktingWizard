@@ -70,7 +70,7 @@ export function mountCrmPublic(app, { crm, outreach }) {
   });
 }
 
-export function mountCrm(app, { store, crm, outreach, provider }) {
+export function mountCrm(app, { store, crm, outreach, provider, workforce = null }) {
   const P = "/api/workspaces/:ws/crm";
   const W = (req, res) => { const w = store.getWorkspace(req.params.ws); if (!w) res.status(404).json({ detail: "Workspace not found" }); return w; };
   const users = () => store.db.users.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name }));
@@ -197,7 +197,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     if (!c) return res.status(404).json({ detail: "Store not found" });
     if (!CHANNELS.includes(b.channel) || !String(b.body || "").trim()) return res.status(422).json({ detail: "Pick a channel and write the message." });
     const m = await outreach.sendOne(req.params.ws, c, { channel: b.channel, subject: String(b.subject || "").slice(0, 200), body: String(b.body).slice(0, 4000), wa_template: String(b.wa_template || ""), by: by(req) });
-    if (b.reply_to) { const inb = crm.message(req.params.ws, b.reply_to); if (inb && m.status !== "skipped" && m.status !== "failed") { inb.handled = true; inb.reply_id = m.id; crm.save(); } }
+    if (b.reply_to) { const inb = crm.message(req.params.ws, b.reply_to); if (inb && m.status !== "skipped" && m.status !== "failed") { inb.handled = true; inb.reply_id = m.id; crm.save(); if (inb.ai_reply) workforce?.event("crm_replier", req.params.ws, inb.ai_reply.trim() === String(b.body).trim() ? "accepted" : "edited", c.store_name); } }
     res.status(m.status === "skipped" || m.status === "failed" ? 422 : 201).json(m.status === "skipped" || m.status === "failed" ? { detail: m.error, message: m } : m);
   });
   // Log a reply that came another way (phone call, Instagram DM…), so triage and the pipeline still run.
@@ -479,6 +479,7 @@ export function mountCrm(app, { store, crm, outreach, provider }) {
     }
     if (b.sender_name !== undefined) o.sender_name = String(b.sender_name).trim().slice(0, 60);
     crm.db.settings[req.params.ws] = Object.fromEntries(Object.entries(o).filter(([k]) => k in DEFAULT_SETTINGS)); crm.save();
+    if (b.auto_reply !== undefined && workforce) workforce.set("crm_replier", { level: b.auto_reply ? 2 : 1 }, by(req));
     res.json(outreach.settings(req.params.ws));
   });
   app.post(`${P}/run`, async (req, res) => { if (!W(req, res)) return; res.json(await outreach.tick()); });

@@ -4,7 +4,7 @@
 // docs/SOP.md is generated from this file: `npm run sop:md`.
 import { PLAYBOOKS } from "./catalog.js";
 
-const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", studio: "Creative Studio", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
+const PAGE = { results: "ROAS results", product: "Product", ops: "Operations", finance: "Finance", command: "Command Center", support: "AI Support", team: "Team & hiring", pipeline: "Sales pipeline", crm: "Store CRM", access: "Teams & roles", studio: "Creative Studio", workforce: "AI Workforce", sop: "SOP", overview: "Overview", brief: "Brief", knowledge: "Knowledge", kpis: "KPIs", playbooks: "Playbooks", library: "Library" };
 
 export const SOP = [
   {
@@ -22,6 +22,7 @@ export const SOP = [
       { id: "helpcenter", text: "Let AI write the starter help center (English + Arabic), fill every [CONFIRM], then switch on the website chat.", owner: "Founder", go: "support" },
       { id: "roadmapstart", text: "Product: load the starter roadmap and confirm what's Now, Next and Later.", owner: "Founder", go: "product" },
       { id: "people", text: "Teams & roles: create your own Owner login, add every teammate with the right role, load the starter teams.", owner: "Founder", go: "access" },
+      { id: "agentowners", text: "AI Workforce: give every AI agent a person responsible, check each agent's level and monthly budget.", owner: "Founder", go: "workforce" },
       { id: "crmsetup", text: "Store CRM: import the Salla store list, send cold email from a second domain (SPF/DKIM/DMARC) warmed up for 2–3 weeks, keep about 150 emails a day per domain, connect WhatsApp, and run the starter campaigns in Test mode for a week before switching to Live. Then tag a focus list (Build ICP list) and work that first.", owner: "Head of Growth", go: "crm" },
       { id: "brandkit", text: "Creative Studio: fill the brand kit (colours, Arabic and English fonts, logo, do/don't, hashtags, who approves) and check the content pillars.", owner: "Head of Growth", go: "studio" },
       { id: "champion", text: "Validation: talk to stores until you find a customer champion ready to pay, then get the 2nd and 3rd \"yes\". Losing to \"we'll keep doing it by hand\" is more common than losing to a competitor: log that as the lost reason.", owner: "Founder", go: "pipeline" },
@@ -40,6 +41,7 @@ export const SOP = [
       { id: "crmweekly", text: "Store CRM: clear the Inbox, compare reply rates by category and campaign, and run one A/B test that changes ONE thing (subject, message, channel, timing or segment). Raise daily caps only if bounces and unsubscribes stay low.", owner: "Head of Growth", go: "crm" },
       { id: "founderbrand", text: "Founder branding: post your own thinking (not company news) on X daily and LinkedIn daily, in your own voice. Be where Saudi merchants and agencies are; don't spread across every channel.", owner: "Founder" },
       { id: "contentweek", text: "Creative Studio: approve next week's content, post everything marked \"Post today\" and log each post (link), and move one winning idea into next month.", owner: "Head of Growth", go: "studio" },
+      { id: "agentsweek", text: "AI Workforce: clear \"Needs attention\": move up agents that earned it, look at any that were moved down or are failing, and check AI cost against budget.", owner: "Founder", go: "workforce" },
       { id: "log", text: "Monday: log last week's values for every weekly KPI.", owner: "Each KPI owner", go: "kpis" },
       { id: "report", text: "Monday: run KPI Report & Analysis and agree the one bottleneck to fix this week.", owner: "Head of Growth", go: "playbooks", param: "kpi_report" },
       { id: "experiment", text: "Monday: pick 1–2 experiments that target that bottleneck and write them as a Knowledge note (hypothesis, metric, owner).", owner: "Head of Growth", go: "knowledge" },
