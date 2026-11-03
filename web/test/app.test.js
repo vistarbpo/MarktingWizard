@@ -2477,7 +2477,7 @@ test("data requests: find, export and delete across CRM, support, HR and sales; 
     assert.equal((await t.j(t.ck, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "delete" })).status, 422);
     const del = await t.j(t.ck, `/api/compliance/requests/${r.id}/delete`, "POST", { confirm: "DELETE" });
     assert.equal(del.status, 200);
-    assert.deepEqual(del.data.result.deleted, { crm_contacts: 1, crm_messages: 1, support_tickets: 1, hr_candidates: 1, deal_contacts_cleared: 1, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 1, meeting_attendees_redacted: 0 });
+    assert.deepEqual(del.data.result.deleted, { crm_contacts: 1, crm_messages: 1, support_tickets: 1, hr_candidates: 1, deal_contacts_cleared: 1, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 1, meeting_attendees_redacted: 0, partner_contacts_cleared: 0 });
     assert.equal(del.data.erased, true); assert.equal(del.data.status, "completed");
     // Nothing personal is left anywhere: not in db.json, crm.json, the request record or the activity log.
     t.crm.flush();

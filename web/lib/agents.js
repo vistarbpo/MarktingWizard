@@ -80,6 +80,9 @@ export const AGENTS = [
   { id: "market_analyst", name: "AI Market analyst", team: "Marketing", module: "intel", route: "intel", max: 1, level: 1, budget: 15,
     job: "Drafts the weekly market brief from the signals, competitor changes and win/loss of the last 7 days, citing every item and writing [ADD] where something is missing.",
     levels: { 1: "Drafts only; a person edits and approves the brief. Competitor page changes are found by fixed rules, not AI." } },
+  { id: "partnerships_manager", name: "AI Partnerships manager", team: "Sales", module: "partners", route: "partners", max: 1, level: 1, budget: 10,
+    job: "Drafts partner outreach and onboarding emails and the monthly partner update in Saudi Arabic and English, from the partner's agreement, link and real results only, with [ADD] where something is missing.",
+    levels: { 1: "Drafts only; a person edits and sends (through the Store CRM, with every outreach rule). Commissions and statements are computed by fixed rules from Billing, not by AI." } },
 ];
 export const AGENT_IDS = AGENTS.map((a) => a.id);
 export const agentDef = (id) => AGENTS.find((a) => a.id === id);
@@ -95,6 +98,7 @@ export function agentFor(method, path) {
   if (seg === "intel") return "market_analyst";
   if (seg === "okr") return "chief_of_staff";
   if (seg === "meetings") return "meeting_secretary";
+  if (seg === "partners") return "partnerships_manager";
   if (seg === "success") return /\/ai\/(expansion|renewal)$/.test(p) ? "success_writer" : "retention_watcher";
   return ({ run: "marketing_strategist", deals: "sales_assistant", support: "support_agent", finance: "finance_cfo", billing: "billing_assistant", ops: "ops_planner", product: "product_analyst", hr: "recruiter", roas: "roas_analyst" })[seg] || null;
 }

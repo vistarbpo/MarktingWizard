@@ -75,6 +75,13 @@ export const REGISTER_STARTER = [
     legal_basis: "[CONFIRM] Legitimate interest (running the business) / pre-contract steps; tell outside attendees before recording or transcribing a call.",
     where: "db.json in DATA_DIR on Hostinger [CONFIRM]; notes are sent to Anthropic to draft the action items. Investor and hiring meetings are visible only to Owner/Admin and their attendees.",
     retention: "[CONFIRM] 24 months after the meeting, sooner for hiring meetings (with the candidate's record).", source: "Notes and transcripts pasted or uploaded by the team." },
+  { key: "partner_contacts", name: "Partner contacts and referral clicks", module: "partners",
+    data: "Partner name, type, contact name, email and phone, city, agreement and contract link, notes, change log, AI email drafts; referral clicks as a hashed IP + day and the browser family only; commission statements (kept for accounting).",
+    subjects: "People at agencies, freelancers, creators, platform and tech partners, resellers, and customers who refer customers; visitors of referral links (no identity).",
+    purpose: "Run the partner program: referral links, attribution, commission statements and payments.",
+    legal_basis: "[CONFIRM] Contract with the partner; legitimate interest for prospects and click counting.",
+    where: "db.json in DATA_DIR on Hostinger [CONFIRM]; partner details are sent to Anthropic when an email is drafted. The /r/ link sets a first-party referral cookie (dpa_ref) for 60 days [CONFIRM cookie notice].",
+    retention: "[CONFIRM] Contacts 24 months after the partnership ends; statements as long as accounting records must be kept; clicks 24 months.", source: "Entered by the team; referral link visits." },
   { key: "finance_records", name: "Finance records", module: "finance",
     data: "Expenses, income, vendors, bank-balance snapshots. May include names of payees and payroll amounts.",
     subjects: "Vendors, employees (payroll), customers (income).", purpose: "Bookkeeping, VAT and Zakat.",
@@ -160,6 +167,8 @@ export function findSubject({ store, crm }, subject) {
   // Meetings: outside attendees matched by email; notes, summaries and follow-ups that mention the email or number.
   const meetingText = (x) => [x.notes, x.agenda, x.draft?.summary, ...(x.draft?.items || []).map((i) => i.text), x.followup?.body].join("\n");
   const meetings = (store.db.meetings_meetings || []).filter((x) => (x.attendees || []).some((a) => a.kind === "external" && m.emailIs(a.email)) || m.mentions(meetingText(x)));
+  // Partners & referrals: the partner's contact email or phone.
+  const partners = (store.db.partners_partners || []).filter((p) => m.emailIs(p.contact?.email) || m.phoneIs(p.contact?.phone));
   const ws = (id) => store.getWorkspace(id)?.brief?.company_name || id;
   return {
     crm_contacts: contacts.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || c.domain || "Store", messages: crm.messagesFor(c.id).length, notes: crm.notesFor(c.id).length, sample: !!c.sample })),
@@ -169,8 +178,9 @@ export function findSubject({ store, crm }, subject) {
     billing_customers: billing.map((c) => ({ id: c.id, workspace_id: c.workspace_id, workspace: ws(c.workspace_id), label: c.store_name || "Customer" })),
     survey_responses: responses.map((r) => ({ id: r.id, workspace_id: r.workspace_id, customer_id: r.customer_id, label: `${r.kind || "Survey"} · ${String(r.answered_at || r.created_at || "").slice(0, 10)}` })),
     meetings: meetings.map((x) => ({ id: x.id, workspace_id: x.workspace_id, workspace: ws(x.workspace_id), label: `${x.title} · ${x.date}`, attendee: (x.attendees || []).some((a) => a.kind === "external" && m.emailIs(a.email)) })),
+    partners: partners.map((p) => ({ id: p.id, workspace_id: p.workspace_id, workspace: ws(p.workspace_id), label: p.name || "Partner" })),
     mentions: { deal_activities: dealMentions.length },
-    total: contacts.length + tickets.length + candidates.length + deals.length + billing.length + responses.length + meetings.length,
+    total: contacts.length + tickets.length + candidates.length + deals.length + billing.length + responses.length + meetings.length + partners.length,
   };
 }
 export function exportSubject({ store, crm }, subject) {
@@ -189,6 +199,8 @@ export function exportSubject({ store, crm }, subject) {
     meetings: (f.meetings || []).map((x) => { const mt = store.db.meetings_meetings.find((y) => y.id === x.id); const mm = matcher(subject); return { title: mt.title, date: mt.date, time: mt.time, type: mt.type,
       attendee: (mt.attendees || []).find((a) => a.kind === "external" && mm.emailIs(a.email)) || null,
       notes_lines: String(mt.notes || "").split("\n").filter((l) => mm.mentions(l)), followup_sent: mt.followup?.sent ? { subject: mt.followup.subject, body: mt.followup.body, at: mt.followup.sent.at } : null }; }),
+    partners: (f.partners || []).map((x) => { const p = store.db.partners_partners.find((y) => y.id === x.id); return { name: p.name, type: p.type, status: p.status, contact: p.contact, city: p.city, country: p.country, notes: p.notes,
+      drafts: (store.db.partners_drafts || []).filter((d) => d.partner_id === p.id).map((d) => ({ kind: d.kind, subject: d.subject, body: d.body, at: d.created_at, sent: d.sent || null })) }; }),
   };
 }
 // Uses each module's own delete function. Deals are business records: only the contact fields are cleared.
@@ -196,7 +208,7 @@ export function deleteSubject({ store, crm }, subject) {
   const f = findSubject({ store, crm }, subject);
   if (!f) return null;
   const m = matcher(subject);
-  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 0, meeting_attendees_redacted: 0 };
+  const counts = { crm_contacts: 0, crm_messages: 0, support_tickets: 0, hr_candidates: 0, deal_contacts_cleared: 0, billing_contacts_cleared: 0, survey_responses: 0, mentions_redacted: 0, meeting_attendees_redacted: 0, partner_contacts_cleared: 0 };
   const byWs = {};
   for (const c of f.crm_contacts) { (byWs[c.workspace_id] ||= []).push(c.id); counts.crm_messages += c.messages; }
   for (const [ws, ids] of Object.entries(byWs)) counts.crm_contacts += crm.remove(ws, ids);
@@ -224,6 +236,13 @@ export function deleteSubject({ store, crm }, subject) {
     if (mt.draft) { mt.draft.summary = redact(mt.draft.summary); for (const i of mt.draft.items || []) { i.text = redact(i.text); i.source = redact(i.source); } mt.draft.decisions = (mt.draft.decisions || []).map(redact); mt.draft.questions = (mt.draft.questions || []).map(redact); }
     if (mt.followup) { mt.followup.body = redact(mt.followup.body); mt.followup.subject = redact(mt.followup.subject); }
     if (JSON.stringify([mt.notes, mt.agenda, mt.draft, mt.followup]) !== before) counts.mentions_redacted++;
+  }
+  // Partners: the contact fields are cleared; the partner, its codes and its statements stay (accounting records).
+  for (const x of f.partners || []) {
+    const p = store.db.partners_partners.find((y) => y.id === x.id); if (!p) continue;
+    p.contact = { name: "", email: "", phone: "" }; p.notes = redact(p.notes); counts.partner_contacts_cleared++;
+    (p.log ||= []).push({ at: new Date().toISOString(), by: "compliance", text: "Contact details deleted on a data request" });
+    for (const d of (store.db.partners_drafts || []).filter((y) => y.partner_id === p.id)) { d.body = redact(d.body); d.subject = redact(d.subject); }
   }
   store.save(); crm?.flush?.();
   return counts;

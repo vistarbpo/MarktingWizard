@@ -6,6 +6,7 @@ import { withAgent } from "./agents.js";
 import { LLMError } from "./engine.js";
 import { normDomain, normEmail, normPhone, riyadhDay } from "./crm.js";
 import { mediaView } from "./media.js";
+import { cleanCode } from "./partners.js";
 import { checkState, makeState, seal, unseal } from "./social.js";
 import { AD_PLATFORMS, AD_PLATFORM_IDS, adsAuthUrl, adsConfig, adsConfigured, adsExchange, adsPlatformEnabled, adsRedirectUri, buildCreatePayloads, createPausedCampaign, fetchInsights, listAdAccounts,
   metaFromUserToken, metaTargetingIds, refreshAdsTokens, revokeAdsTokens, setAdsStatus, setDailyBudget } from "./adsapi.js";
@@ -153,17 +154,20 @@ export function mountAdsPublic(app, { store, crm, ads }) {
     const landing_url = /^https?:\/\//i.test(String(b.url || b.landing_url || "")) ? String(b.url || b.landing_url).slice(0, 1000) : "";
     const utm = cleanUtm(landing_url ? { url: landing_url } : b) || cleanUtm(b);
     const signup = b.signup === true || b.signup === "1" || b.event === "signup";
+    // Partners & referrals: a referral code from the form's `ref` field (or the dpa_ref cookie set by /r/<code>).
+    const ref = cleanCode(b.ref) || cleanCode(/(?:^|;\s*)dpa_ref=([^;]+)/.exec(req.headers.cookie || "")?.[1]);
     let c = crm.find(wsId, { domain, email, phone });
     if (c) {
       const f = { tags: [...new Set([...(c.tags || []), "inbound", "ads"])] };
       if (!c.utm && utm) Object.assign(f, { utm, landing_url }); // first touch wins
+      if (!c.ref_code && ref) f.ref_code = ref;
       if (signup && ["new", "contacted", "engaged", "qualified", "not_now"].includes(c.stage)) f.stage = "onboarding";
       c = crm.update(wsId, c.id, f);
     } else {
       c = crm.add(wsId, { store_name: String(b.store_name || b.name || email || domain || "+" + phone).slice(0, 200), email, phone, domain, platform: "Other", category: "Other", source: "inbound",
-        stage: signup ? "onboarding" : "engaged", tags: ["inbound", "ads"], ...(utm ? { utm, landing_url } : {}), owner_name: String(b.owner_name || "").slice(0, 120) });
+        stage: signup ? "onboarding" : "engaged", tags: ["inbound", "ads"], ...(utm ? { utm, landing_url } : {}), ...(ref ? { ref_code: ref } : {}), owner_name: String(b.owner_name || "").slice(0, 120) });
     }
-    res.status(201).json({ ok: true, id: c.id, utm: c.utm || null });
+    res.status(201).json({ ok: true, id: c.id, utm: c.utm || null, ref: c.ref_code || null });
   });
 }
 
