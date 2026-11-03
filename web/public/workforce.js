@@ -2,7 +2,7 @@
    (earned from its track record), monthly budget, cost, quality and a log of everything it did.
    Uses app.js globals (S, $, api, esc, toast, fmtDate, ROUTES, levelFor). */
 
-const WF = { d: null, openId: null, team: "", view: "office", timer: null };
+const WF = { d: null, openId: null, team: "", view: "office3d", timer: null };
 const WF_TEAM_COLOR = { Leadership: "#7c3aed", Marketing: "#c026d3", Sales: "#1f5eff", "Customer Success": "#0f9d58", Finance: "#0e7490", Operations: "#be123c", Product: "#4d7c0f", People: "#d97706" };
 const WF_ICON = { coordinator: "✦", support_agent: "💬", crm_triage: "📥", crm_replier: "✉️", crm_sequence_writer: "🧭", sales_assistant: "🤝", creative_strategist: "🗓️", creative_copywriter: "✍️", creative_publisher: "🚀", marketing_strategist: "🎯", finance_cfo: "📊", ops_planner: "🗂️", product_analyst: "🧪", recruiter: "🧑‍💼", roas_analyst: "📈" };
 // What an agent is doing right now, from its last run.
@@ -71,8 +71,8 @@ function wfRerender() {
     <div class="card c-banner" style="margin-top:16px"><b>How agents earn autonomy:</b> ${d.levels.map((l) => `<span class="badge ${WF_TONE[l.id] || ""}">${l.id} · ${esc(l.name)}</span>`).join(" ")}
       <span class="subtle s-small"> An agent can move up after 50 reviewed items with 95%+ used unchanged and no errors. It drops a level automatically after 3 rejections or errors in its last 20 items.</span></div>
     ${needRows.length ? `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Needs attention</h2><span class="badge ${hard.length ? "warn" : ""}">${hard.length || "–"}</span></div><ul class="cc-list" style="padding:8px 20px 16px">${needRows.join("")}</ul></div>` : ""}
-    <div class="row gap-8" style="margin-top:16px"><div class="s-tabs"><button data-wfview="office" aria-selected="${WF.view === "office"}">Office</button><button data-wfview="org" aria-selected="${WF.view === "org"}">Org chart</button></div></div>
-    ${WF.view === "office" ? wfOffice(d) : ""}
+    <div class="row gap-8" style="margin-top:16px"><div class="s-tabs"><button data-wfview="office3d" aria-selected="${WF.view === "office3d"}">3D office</button><button data-wfview="office" aria-selected="${WF.view === "office"}">Floor plan</button><button data-wfview="org" aria-selected="${WF.view === "org"}">Org chart</button></div></div>
+    ${WF.view === "office" ? wfOffice(d) : WF.view === "office3d" ? wf3Office(d) : ""}
     <div class="card" style="margin-top:16px${WF.view === "org" ? "" : ";display:none"}"><div class="card-head"><h2>Org chart</h2><span class="subtle s-small">People own the agents in their area; agents do the repeatable work.</span></div>
       <div class="wf-org">${teams.map((tm) => { const ag = d.agents.filter((a) => a.team === tm); const owners = [...new Set(ag.map((a) => d.people.find((p) => p.id === a.config.owner_id)?.name).filter(Boolean))];
         return `<div class="wf-team"><b>${esc(tm)}</b><div class="wf-people">${owners.map((o) => `<span class="badge">👤 ${esc(o)}</span>`).join(" ") || `<span class="subtle s-small">no person assigned</span>`}</div>
@@ -89,6 +89,7 @@ function wfRerender() {
           <td class="subtle s-small">${s.last_run ? fmtDate(s.last_run) : "never"}</td></tr>`; }).join("")}
       </tbody></table></div></div>
     <p class="subtle s-small" style="margin-top:12px">Cost uses Anthropic list prices per million tokens (Opus 5.5 $4 in / $20 out). Runs in demo mode cost nothing. An agent that hits its monthly budget stops until the budget is raised.</p>`;
+  if (WF.view === "office3d") wf3Start(d);
 }
 
 async function wfOpen(id) {
@@ -147,3 +148,165 @@ document.addEventListener("change", (e) => {
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && WF.openId) wfClose(); });
 
 if (S.route === "workforce" && S.ws) render();
+
+/* ------------------------------------------------ 3D office: isometric floor, desks, walking agents */
+const W3 = { raf: 0, sprites: {}, hits: [], scale: 1, last: 0, hover: null };
+const W3T = { tw: 64, th: 32, z: 44, roomW: 7, roomD: 7, gap: 1, cols: 3 };
+function wf3Iso(x, y, z = 0) { return [(x - y) * W3T.tw / 2 + W3.ox, (x + y) * W3T.th / 2 + W3.oy - z * W3T.z]; }
+function wf3Layout(d) {
+  const teams = ["Leadership", ...new Set(d.agents.map((a) => a.team).filter((t) => t !== "Leadership"))];
+  const rooms = teams.map((tm, i) => {
+    const col = i % W3T.cols, row = Math.floor(i / W3T.cols);
+    const x0 = col * (W3T.roomW + W3T.gap), y0 = row * (W3T.roomD + W3T.gap);
+    const ag = d.agents.filter((a) => a.team === tm), people = d.people.filter((p) => ag.some((a) => a.config.owner_id === p.id));
+    const members = [...people.map((p) => ({ kind: "human", id: "u" + p.id, name: p.name, role: p.role })), ...ag.map((a) => ({ kind: "agent", id: a.id, a }))];
+    const desks = members.slice(0, 9).map((m, k) => { const dx = x0 + 0.6 + (k % 3) * 2.1, dy = y0 + 0.7 + Math.floor(k / 3) * 2.1; return { ...m, dx, dy, seat: [dx + 0.7, dy + 1.25] }; });
+    return { tm, x0, y0, color: WF_TEAM_COLOR[tm] || "#1f5eff", desks, hub: [x0 + W3T.roomW - 1.1, y0 + W3T.roomD - 0.9] };
+  });
+  const rowsN = Math.ceil(teams.length / W3T.cols);
+  const X = W3T.cols * (W3T.roomW + W3T.gap), Y = rowsN * (W3T.roomD + W3T.gap);
+  return { rooms, X, Y, w: (X + Y) * W3T.tw / 2 + 40, h: (X + Y) * W3T.th / 2 + 140, ox: Y * W3T.tw / 2 + 20, oy: 90 };
+}
+function wf3Office(d) {
+  return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>The office</h2><p class="subtle s-small">Agents (✦ desks) walk to people and other teams while they work; glowing screens are busy right now. Hover to see who's who, click to open.</p></div>
+    <div class="of-legend"><span><i class="lg busy"></i>Working now</span><span><i class="lg today"></i>Active today</span><span><i class="lg idle"></i>Idle</span><span><i class="lg off"></i>Paused</span><span><i class="lg error"></i>Needs a look</span></div></div>
+    <div class="o3-wrap" id="o3Wrap"><canvas id="o3Canvas" aria-label="AI Workforce office: ${d.agents.length} agents and ${d.people.length} people"></canvas><div class="o3-tip" id="o3Tip" hidden></div></div></div>`;
+}
+function wf3Start(d) {
+  cancelAnimationFrame(W3.raf);
+  const cv = $("#o3Canvas"); if (!cv) return;
+  const L = wf3Layout(d); W3.ox = L.ox; W3.oy = L.oy; W3.L = L;
+  const dpr = Math.min(2, window.devicePixelRatio || 1), cssW = cv.parentElement.clientWidth;
+  W3.scale = Math.min(1, cssW / L.w);
+  cv.style.width = L.w * W3.scale + "px"; cv.style.height = L.h * W3.scale + "px";
+  cv.width = L.w * W3.scale * dpr; cv.height = L.h * W3.scale * dpr;
+  const ctx = cv.getContext("2d"); ctx.setTransform(W3.scale * dpr, 0, 0, W3.scale * dpr, 0, 0);
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Sprites: every agent and person, kept across refreshes so walkers don't jump.
+  const all = L.rooms.flatMap((r) => r.desks.map((dk) => ({ ...dk, room: r })));
+  for (const dk of all) {
+    const sp = W3.sprites[dk.id] || (W3.sprites[dk.id] = { x: dk.seat[0], y: dk.seat[1], mode: "sit", wait: Math.random() * 6, t: 0 });
+    sp.desk = dk; sp.state = dk.kind === "agent" ? wf3State(dk.a) : { id: "human" };
+  }
+  const targetsFor = (sp) => {
+    const r = sp.desk.room, owner = sp.desk.a?.config.owner_id && all.find((x) => x.id === "u" + sp.desk.a.config.owner_id);
+    const other = L.rooms[Math.floor(Math.random() * L.rooms.length)];
+    const pick = Math.random();
+    return pick < 0.4 && owner ? [owner.seat[0] - 0.6, owner.seat[1] + 0.3] : pick < 0.75 ? [r.hub[0] - Math.random(), r.hub[1] - Math.random() * 0.6] : [other.hub[0] - 0.5, other.hub[1] - 0.4];
+  };
+  const step = (dt) => {
+    for (const sp of Object.values(W3.sprites)) {
+      if (!sp.desk) continue;
+      const st = sp.state.id, mobile = !reduce && (st === "busy" || st === "today");
+      if (sp.mode === "sit") {
+        sp.wait -= dt;
+        if (mobile && sp.wait <= 0) { sp.mode = "walk"; sp.to = targetsFor(sp); sp.back = false; }
+        else if (!mobile) { sp.x = sp.desk.seat[0]; sp.y = sp.desk.seat[1]; }
+      } else if (sp.mode === "walk" || sp.mode === "return") {
+        const [tx, ty] = sp.mode === "walk" ? sp.to : sp.desk.seat;
+        const dx = tx - sp.x, dy = ty - sp.y, dist = Math.hypot(dx, dy), v = (st === "busy" ? 1.6 : 1.0) * dt;
+        sp.t += dt;
+        if (dist <= v) { sp.x = tx; sp.y = ty; if (sp.mode === "walk") { sp.mode = "pause"; sp.wait = 1.2 + Math.random() * 2; } else { sp.mode = "sit"; sp.wait = (st === "busy" ? 2 : 10) + Math.random() * (st === "busy" ? 4 : 20); } }
+        else { sp.x += (dx / dist) * v; sp.y += (dy / dist) * v; }
+      } else if (sp.mode === "pause") { sp.wait -= dt; if (sp.wait <= 0) sp.mode = "return"; }
+    }
+  };
+  const poly = (pts, fill, stroke) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); } };
+  const shade = (hex, f) => { const n = parseInt(hex.slice(1), 16), c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(f > 0 ? v + (255 - v) * f : v * (1 + f))); return `rgb(${c.join(",")})`; };
+  const box = (x, y, w, dd, h, top, left, right) => {
+    const I = wf3Iso;
+    poly([I(x, y + dd, 0), I(x + w, y + dd, 0), I(x + w, y + dd, h), I(x, y + dd, h)], left);
+    poly([I(x + w, y, 0), I(x + w, y + dd, 0), I(x + w, y + dd, h), I(x + w, y, h)], right);
+    poly([I(x, y, h), I(x + w, y, h), I(x + w, y + dd, h), I(x, y + dd, h)], top);
+  };
+  const screenColor = (st, t) => ({ busy: `rgba(74,222,128,${0.75 + 0.25 * Math.sin(t * 6)})`, today: "#93b4ff", error: Math.sin(t * 8) > 0 ? "#f87171" : "#b91c1c", off: "#15171c", idle: "#2a2f3a", human: "#3b4150" })[st] || "#2a2f3a";
+  const draw = (t) => {
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.dataset.theme !== "light";
+    ctx.clearRect(0, 0, L.w, L.h);
+    // Floor of the whole office, then each room.
+    poly([wf3Iso(-0.5, -0.5), wf3Iso(L.X, -0.5), wf3Iso(L.X, L.Y), wf3Iso(-0.5, L.Y)], dark ? "#1d2027" : "#eceae4");
+    for (const r of L.rooms) {
+      const { x0, y0 } = r, W = W3T.roomW, D = W3T.roomD;
+      poly([wf3Iso(x0, y0), wf3Iso(x0 + W, y0), wf3Iso(x0 + W, y0 + D), wf3Iso(x0, y0 + D)], dark ? shade(r.color, -0.72) : shade(r.color, 0.9));
+      ctx.strokeStyle = dark ? "rgba(255,255,255,.05)" : "rgba(0,0,0,.05)";
+      for (let i = 1; i < W; i++) { ctx.beginPath(); ctx.moveTo(...wf3Iso(x0 + i, y0)); ctx.lineTo(...wf3Iso(x0 + i, y0 + D)); ctx.stroke(); }
+      for (let i = 1; i < D; i++) { ctx.beginPath(); ctx.moveTo(...wf3Iso(x0, y0 + i)); ctx.lineTo(...wf3Iso(x0 + W, y0 + i)); ctx.stroke(); }
+      // Back walls (glass-topped), so the room reads as a space.
+      poly([wf3Iso(x0, y0, 0), wf3Iso(x0 + W, y0, 0), wf3Iso(x0 + W, y0, 0.9), wf3Iso(x0, y0, 0.9)], shade(r.color, dark ? -0.45 : 0.55));
+      poly([wf3Iso(x0, y0, 0), wf3Iso(x0, y0 + D, 0), wf3Iso(x0, y0 + D, 0.9), wf3Iso(x0, y0, 0.9)], shade(r.color, dark ? -0.55 : 0.7));
+      poly([wf3Iso(x0, y0, 0.9), wf3Iso(x0 + W, y0, 0.9), wf3Iso(x0 + W, y0, 0.95), wf3Iso(x0, y0, 0.95)], r.color);
+      // Name plate on the back wall.
+      const [nx, ny] = wf3Iso(x0 + W / 2, y0, 0.45);
+      ctx.save(); ctx.translate(nx, ny); ctx.transform(1, 0.5, 0, 1, 0, 0); ctx.fillStyle = dark ? "#fff" : shade(r.color, -0.35); ctx.font = "600 15px Inter, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText(r.tm, 0, 0); ctx.restore();
+      // Hub: a round meeting table with a plant.
+      const [hx, hy] = wf3Iso(r.hub[0], r.hub[1], 0.35);
+      ctx.fillStyle = dark ? "#3a3f4b" : "#d9d3c7"; ctx.beginPath(); ctx.ellipse(hx, hy, 26, 13, 0, 0, Math.PI * 2); ctx.fill();
+      const [px, py] = wf3Iso(x0 + 0.5, y0 + D - 0.6, 0); ctx.fillStyle = "#7a5230"; ctx.fillRect(px - 6, py - 14, 12, 14); ctx.fillStyle = "#3f9b52"; ctx.beginPath(); ctx.arc(px, py - 22, 12, 0, Math.PI * 2); ctx.fill();
+    }
+    // Desks and people, painted back to front.
+    W3.hits = [];
+    const items = [];
+    for (const r of L.rooms) for (const dk of r.desks) items.push({ k: dk.dx + dk.dy + 0.6, desk: dk, room: r });
+    for (const sp of Object.values(W3.sprites)) if (sp.desk) items.push({ k: sp.x + sp.y, sp });
+    items.sort((a, b) => a.k - b.k);
+    for (const it of items) {
+      if (it.desk) {
+        const dk = it.desk, st = dk.kind === "agent" ? wf3State(dk.a).id : "human", c = it.room.color;
+        box(dk.dx, dk.dy, 1.4, 0.7, 0.36, dark ? "#4a4f5c" : "#fbfaf7", dark ? "#343842" : "#d8d4cb", dark ? "#2b2e36" : "#c8c3b8");
+        const I = wf3Iso;
+        poly([I(dk.dx + 0.3, dk.dy + 0.18, 0.4), I(dk.dx + 1.05, dk.dy + 0.18, 0.4), I(dk.dx + 1.05, dk.dy + 0.18, 0.86), I(dk.dx + 0.3, dk.dy + 0.18, 0.86)], screenColor(st, t), "#111");
+        if (st === "busy") { ctx.fillStyle = "rgba(74,222,128,.18)"; const [gx, gy] = I(dk.dx + 0.68, dk.dy + 0.3, 0.6); ctx.beginPath(); ctx.arc(gx, gy, 22, 0, Math.PI * 2); ctx.fill(); }
+        const [lx, ly] = I(dk.dx + 0.7, dk.dy + 1.95, 0);
+        ctx.fillStyle = dark ? "rgba(255,255,255,.75)" : "rgba(0,0,0,.6)"; ctx.font = "600 11px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.fillText(dk.kind === "agent" ? dk.a.name.replace(/^AI |^Ask DPA AD \(|\)$/g, "") : dk.name.split(" ")[0], lx, ly);
+        W3.hits.push({ id: dk.id, x: lx, y: ly - 40, r: 34, dk });
+      } else {
+        const sp = it.sp, dk = sp.desk, st = sp.state.id, c = dk.room.color, moving = sp.mode === "walk" || sp.mode === "return";
+        const bob = moving ? Math.abs(Math.sin(sp.t * 9)) * 3 : 0, sit = sp.mode === "sit" ? 6 : 0;
+        const [x, y] = wf3Iso(sp.x, sp.y, 0);
+        ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.beginPath(); ctx.ellipse(x, y, 11, 5, 0, 0, Math.PI * 2); ctx.fill();
+        const by = y - 18 - bob + sit;
+        if (moving) { ctx.strokeStyle = shade(c, -0.4); ctx.lineWidth = 3; const sw = Math.sin(sp.t * 9) * 4; ctx.beginPath(); ctx.moveTo(x - 3, by + 12); ctx.lineTo(x - 3 + sw, y - 1); ctx.moveTo(x + 3, by + 12); ctx.lineTo(x + 3 - sw, y - 1); ctx.stroke(); }
+        ctx.globalAlpha = st === "off" ? 0.45 : 1;
+        if (dk.kind === "agent") {
+          ctx.fillStyle = dark ? "#e7e9ee" : "#ffffff"; ctx.strokeStyle = c; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.roundRect(x - 9, by - 2, 18, 16, 5); ctx.fill(); ctx.stroke();
+          ctx.beginPath(); ctx.roundRect(x - 12, by - 26, 24, 22, 7); ctx.fill(); ctx.stroke();
+          ctx.font = "14px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji'"; ctx.textAlign = "center"; ctx.fillText(WF_ICON[dk.id] || "✦", x, by - 10);
+          ctx.fillStyle = c; ctx.fillRect(x - 1, by - 32, 2, 6); ctx.beginPath(); ctx.arc(x, by - 33, 3, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.fillStyle = c; ctx.beginPath(); ctx.roundRect(x - 9, by - 2, 18, 18, 6); ctx.fill();
+          ctx.fillStyle = "#e9b48a"; ctx.beginPath(); ctx.arc(x, by - 11, 9, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#3b2a20"; ctx.beginPath(); ctx.arc(x, by - 14, 9, Math.PI, 0); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        if (st === "off") { ctx.fillStyle = "#8a8a8a"; ctx.font = "italic 700 12px system-ui"; ctx.fillText("z", x + 14, by - 26 - ((t * 10) % 8)); }
+        if (st === "error") { ctx.fillStyle = "#dc2626"; ctx.beginPath(); ctx.arc(x + 13, by - 28, 7, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = "#fff"; ctx.font = "700 10px system-ui"; ctx.fillText("!", x + 13, by - 24); }
+        if (st === "busy" && !moving) { ctx.fillStyle = dark ? "#2b2e36" : "#fff"; ctx.beginPath(); ctx.roundRect(x + 8, by - 46, 26, 14, 7); ctx.fill(); ctx.fillStyle = "#888"; for (let k = 0; k < 3; k++) { ctx.globalAlpha = 0.4 + 0.6 * ((Math.floor(t * 3) % 3) === k); ctx.beginPath(); ctx.arc(x + 15 + k * 6, by - 39, 2, 0, Math.PI * 2); ctx.fill(); } ctx.globalAlpha = 1; }
+        if (dk.kind === "agent") W3.hits.push({ id: dk.id, x, y: by - 10, r: 18, dk });
+      }
+    }
+  };
+  const loop = (ts) => {
+    if (S.route !== "workforce" || !document.body.contains(cv)) return;
+    const dt = Math.min(0.05, (ts - (W3.last || ts)) / 1000); W3.last = ts;
+    step(dt); draw(ts / 1000);
+    W3.raf = requestAnimationFrame(loop);
+  };
+  W3.last = 0; W3.raf = requestAnimationFrame(loop);
+  // Hover tooltip and click to open.
+  const tip = $("#o3Tip");
+  const at = (e) => { const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / W3.scale, (e.clientY - b.top) / W3.scale]; };
+  const hit = (e) => { const [mx, my] = at(e); let best = null, bd = 1e9; for (const h of W3.hits) { const dd = Math.hypot(h.x - mx, h.y - my); if (dd < h.r && dd < bd) { best = h; bd = dd; } } return best; };
+  cv.onmousemove = (e) => {
+    const h = hit(e); cv.style.cursor = h?.dk.kind === "agent" ? "pointer" : "default";
+    if (!h) { tip.hidden = true; return; }
+    const dk = h.dk, b = cv.getBoundingClientRect();
+    tip.innerHTML = dk.kind === "agent" ? `<b>${esc(dk.a.name)}</b><span>${esc(dk.a.team)} · level ${dk.a.config.paused ? 0 : dk.a.config.level} · ${esc(wf3State(dk.a).label)}</span>${dk.a.stats.last_note?.note ? `<span dir="auto">Last: ${esc(dk.a.stats.last_note.note.slice(0, 60))}</span>` : ""}`
+      : `<b>${esc(dk.name)}</b><span>${esc(dk.role)} · owns agents in ${esc(h.dk.room?.tm || "this team")}</span>`;
+    tip.style.left = Math.min(e.clientX - b.left + 14, b.width - 220) + "px"; tip.style.top = e.clientY - b.top + 14 + "px"; tip.hidden = false;
+  };
+  cv.onmouseleave = () => { tip.hidden = true; };
+  cv.onclick = (e) => { const h = hit(e); if (h?.dk.kind === "agent") wfOpen(h.dk.id); };
+}
+const wf3State = (a) => wfState(a);
