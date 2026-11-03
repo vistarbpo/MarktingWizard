@@ -114,7 +114,13 @@ export function cleanVariant(channel, v = {}) {
     media: [...new Set((Array.isArray(v.media) ? v.media : []).map((x) => String(x)).filter((x) => /^\d{1,12}$/.test(x)))].slice(0, 10),
     cover_id: /^\d{1,12}$/.test(String(v.cover_id || "")) ? String(v.cover_id) : "" };
   const kind = channelInfo(channel)?.kind;
-  if (kind === "video") o.script = str(v.script, 4000);
+  if (kind === "video") {
+    o.script = str(v.script, 4000);
+    // Reel builder spec (phase 3), so the reel can be re-made after edits.
+    if (v.reel && Array.isArray(v.reel.scenes)) o.reel = { scenes: v.reel.scenes.slice(0, 20).map((s) => ({ media_id: /^\d{1,12}$/.test(String(s.media_id || "")) ? String(s.media_id) : "", text: str(s.text, 300),
+      duration: Math.max(1, Math.min(15, Number(s.duration) || 3)), motion: ["zoom_in", "zoom_out", "slide_left", "slide_right", "none"].includes(s.motion) ? s.motion : "zoom_in" })),
+      audio_id: /^\d{1,12}$/.test(String(v.reel.audio_id || "")) ? String(v.reel.audio_id) : "", volume: Math.max(0, Math.min(1, Number(v.reel.volume ?? 0.8))), cover_scene: Math.max(0, Math.min(19, Number(v.reel.cover_scene) || 0)) };
+  }
   if (kind === "carousel") o.slides = list(v.slides, 10, 400);
   if (kind === "email") { o.subject = str(v.subject, 150); o.preheader = str(v.preheader, 150); o.blocks = (v.blocks || []).slice(0, 25).map(cleanBlock); }
   if (kind === "whatsapp") { o.template_name = str(v.template_name, 80); o.button = str(v.button, 25); }

@@ -84,7 +84,7 @@ async function supOpen(id) {
       <div class="row gap-8" style="flex-wrap:wrap"><span class="badge ${ST_TONE[t.status]}">${ST_LABEL[t.status]}</span>
         <select class="input input-sm" id="su-cat" aria-label="Category">${SUP.meta.categories.map((c) => `<option ${c === t.category ? "selected" : ""}>${c}</option>`).join("")}</select></div></div>
     ${t.status === "needs_human" ? `<div class="notice su-esc">Needs you${t.escalation_reason ? ": " + esc(t.escalation_reason) : ""}</div>` : ""}
-    <div class="su-msgs">${t.messages.map((m) => `<div class="su-msg ${m.from}"><div class="row gap-8">${fromBadge(m.from)}<span class="subtle s-small num">${fmtDate(m.at)}</span></div><div class="su-bubble" ${isAr(m.text) ? 'dir="rtl"' : ""}>${esc(m.text)}</div></div>`).join("")}</div>
+    <div class="su-msgs">${t.messages.map((m) => `<div class="su-msg ${m.from}"><div class="row gap-8">${fromBadge(m.from)}<span class="subtle s-small num">${fmtDate(m.at)}</span></div><div class="su-bubble" ${isAr(m.text) ? 'dir="rtl"' : ""}>${esc(m.text)}</div>${m.delivery ? `<span class="subtle s-small">${m.delivery === "sent" ? "Sent through Meta" : "Test mode: not sent"}</span>` : ""}</div>`).join("")}</div>
     <div class="su-compose">
       <div id="suDraftInfo" class="s-small subtle"></div>
       <textarea class="input" id="su-reply" rows="4" placeholder="Write a reply, or let AI draft one from the help center"></textarea>
@@ -93,13 +93,17 @@ async function supOpen(id) {
         <div class="row gap-8" style="flex-wrap:wrap">
           ${t.status !== "needs_human" ? `<button class="btn btn-sm" data-suaction="handover">Hand to a person</button>` : ""}
           ${t.status !== "resolved" ? `<button class="btn btn-sm" data-suaction="resolve">Resolve</button>` : `<button class="btn btn-sm" data-suaction="reopen">Reopen</button>`}
-          <button class="btn btn-primary" data-suaction="send">I sent this reply</button></div>
+          <button class="btn btn-primary" data-suaction="send">${t.social ? `Send on ${t.social.platform === "instagram" ? "Instagram" : "Facebook"}` : "I sent this reply"}</button></div>
       </div>
-      <p class="subtle s-small">Copy the reply into ${esc(t.channel === "Website chat" ? "the chat follow-up (by email or WhatsApp)" : t.channel)}, send it, then click "I sent this reply" to log it.</p>
+      ${t.social ? `<p class="subtle s-small">Sends as a ${t.social.kind === "dm" ? "direct message (only within 24 hours of their last message)" : "reply under their comment"} through the connected Meta account. In Creative Studio Test mode it's logged, not sent.${t.social.permalink ? ` <a href="${esc(t.social.permalink)}" target="_blank" rel="noopener">Open the post</a>` : ""}</p>`
+        : `<p class="subtle s-small">Copy the reply into ${esc(t.channel === "Website chat" ? "the chat follow-up (by email or WhatsApp)" : t.channel)}, send it, then click "I sent this reply" to log it.</p>`}
       <div class="row between"><span></span><button class="btn btn-ghost btn-danger btn-sm" data-suaction="delete">Delete conversation</button></div>
     </div>`;
   const ta = $("#su-reply");
   ta.addEventListener("input", () => (ta.dir = isAr(ta.value) ? "rtl" : "ltr"));
+  // Comments and DMs arrive with an AI draft already written: review it, edit, send.
+  SUP.draft = null;
+  if (t.ai_draft?.text) { ta.value = t.ai_draft.text; ta.dir = isAr(ta.value) ? "rtl" : "ltr"; SUP.draft = t.ai_draft.text; $("#suDraftInfo").textContent = "AI draft from the help center · review, edit if needed, then send."; }
   box.querySelector(".su-msgs").scrollTop = 1e9;
 }
 
@@ -206,10 +210,10 @@ document.addEventListener("click", async (e) => {
     if (act === "send") {
       const text = $("#su-reply").value.trim(); if (!text) return toast("Write or draft a reply first", true);
       const from = SUP.draft && text === SUP.draft.trim() ? "ai" : "you";
-      await api(`${base}/tickets/${SUP.openId}/messages`, { method: "POST", body: JSON.stringify({ from, text }) });
+      const sent = await api(`${base}/tickets/${SUP.openId}/messages`, { method: "POST", body: JSON.stringify({ from, text }) });
       const tk = SUP.data.tickets.find((x) => x.id === SUP.openId);
       if (tk && tk.status === "new") await api(`${base}/tickets/${SUP.openId}`, { method: "PUT", body: JSON.stringify({ status: from === "ai" ? "ai_answered" : "needs_human" }) });
-      SUP.draft = null; await supLoad(); supRerender(); return toast(from === "ai" ? "Logged: AI reply sent" : "Logged: your reply sent");
+      SUP.draft = null; await supLoad(); supRerender(); return sent?.delivery ? toast(sent.delivery === "sent" ? "Sent through Meta" : sent.note || "Test mode: logged, not sent") : toast(from === "ai" ? "Logged: AI reply sent" : "Logged: your reply sent");
     }
     if (act === "customer-msg") {
       const text = $("#su-reply").value.trim(); if (!text) return toast("Paste the customer's new message in the box first", true);
