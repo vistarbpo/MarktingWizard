@@ -2,6 +2,7 @@
 // brand kit, an email designer used by Store CRM campaigns, and "download and post" for every platform.
 // Rendering images/video and direct publishing come in later phases (docs/creative-studio-plan.md).
 import { renderTemplate } from "./crm.js";
+import { withImages } from "./products.js";
 
 // Where content goes. Limits are the platforms' own; "tip" is our house guidance.
 export const CHANNELS = [
@@ -91,7 +92,23 @@ export function cleanBrand(b = {}, cur = DEFAULT_BRAND) {
 }
 
 // ---- Content items. One idea, with a variant per channel.
-export const BLOCK_TYPES = ["header", "hero", "text", "button", "image", "compare", "products", "quote", "divider"];
+export const BLOCK_TYPES = ["header", "hero", "text", "button", "image", "compare", "products", "store_products", "quote", "divider"];
+// "Your products as ads": each recipient sees their own store's sample products (Store CRM) as designed
+// ad cards. Stores without samples get the fallback text instead. Best effort until DPA AD's render
+// engine can supply real designed images.
+export const STORE_PRODUCTS_DEFAULTS = {
+  title: "هكذا تطلع منتجات {{store_name}} كإعلانات مصممة", count: 3, headline: "تسوّق الآن", cta_label: "", cta_url: "https://dpa.ad",
+  fallback_text: "نقدر نحوّل منتجات {{store_name}} نفسها إلى إعلانات مصممة لسناب وتيك توك وميتا، ونرسل لكم نماذج مجانية بدون أي إعداد من طرفكم.",
+};
+// Used only by previews: a made-up store with example.com product photos (never sent).
+export const PREVIEW_STORE = {
+  store_name: "متجر نموذج", category: "Fashion & abayas", products: 250, sample: true, products_source: "sample",
+  products_sample: [
+    { title: "عباية كريب سوداء", price: "[السعر]", image_url: "https://example.com/dpa-preview/abaya.jpg", url: "https://example.com/p/1" },
+    { title: "طرحة شيفون", price: "[السعر]", image_url: "https://example.com/dpa-preview/scarf.jpg", url: "https://example.com/p/2" },
+    { title: "عطر عود ملكي", price: "[السعر]", image_url: "https://example.com/dpa-preview/oud.jpg", url: "https://example.com/p/3" },
+  ],
+};
 function cleanBlock(b) {
   const t = BLOCK_TYPES.includes(b?.type) ? b.type : "text";
   const o = { type: t };
@@ -104,6 +121,12 @@ function cleanBlock(b) {
   if (t === "compare") { o.before_url = safeUrl(b.before_url); o.after_url = safeUrl(b.after_url); o.caption = str(b.caption, 300); }
   if (t === "products") o.items = (b.items || []).slice(0, 3).map((p) => ({ title: str(p.title, 80), price: str(p.price, 30), image_url: safeUrl(p.image_url), url: safeUrl(p.url) }));
   if (t === "quote") o.author = str(b.author, 100);
+  if (t === "store_products") {
+    const D = STORE_PRODUCTS_DEFAULTS;
+    o.title = str(b.title ?? D.title, 200); o.count = Math.max(1, Math.min(3, Math.round(Number(b.count) || D.count)));
+    o.headline = str(b.headline ?? D.headline, 40); o.cta_label = str(b.cta_label, 40); o.cta_url = safeUrl(b.cta_url) || D.cta_url;
+    o.fallback_text = str(b.fallback_text, 1000) || D.fallback_text;
+  }
   return o;
 }
 export function cleanVariant(channel, v = {}) {
@@ -181,6 +204,26 @@ export function packText(item, ch) {
 // ---- Email designer: blocks → table-based HTML that works in Gmail, Outlook and phones, RTL-aware.
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const para = (s) => esc(s).replace(/\n/g, "<br>");
+// Readable text on a brand colour: dark ink on light colours, white on dark ones.
+const onColor = (hex) => { const n = parseInt(String(hex || "#000000").slice(1), 16); const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255]; return 0.299 * r + 0.587 * g + 0.114 * b > 165 ? "#111111" : "#ffffff"; };
+// Designed ad cards for the store's own products. Hybrid layout: inline-block cards that wrap to one
+// per row on phones, with an Outlook (mso) table so desktop Outlook keeps the columns.
+function storeProductsHtml(b, items, { C, align, v, rtl }) {
+  const n = items.length, w = n === 1 ? 300 : n === 2 ? 260 : 176, fg = onColor(C.primary);
+  const cta = b.cta_label && safeUrl(b.cta_url) ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:8px 0 0;text-align:center"><a href="${esc(safeUrl(b.cta_url))}" style="display:inline-block;background:${C.ink};color:${onColor(C.ink)};text-decoration:none;font-weight:bold;font-size:13px;line-height:1.4;padding:8px 16px;border-radius:8px">${esc(v(b.cta_label))}</a></td></tr></table>` : "";
+  const card = (p) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.primary};border-radius:14px;border-collapse:separate">
+<tr><td style="padding:8px 10px 0;text-align:${align}"><span style="display:inline-block;background:${C.ink};color:${onColor(C.ink)};font-size:10px;line-height:1.5;font-weight:bold;padding:2px 8px;border-radius:999px;white-space:nowrap">إعلان مصمم · DPA AD</span></td></tr>
+<tr><td style="padding:8px 10px 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;border-collapse:separate"><tr><td style="padding:6px;text-align:center"><img src="${esc(p.image_url)}" alt="${esc(p.title)}" width="${w - 32}" style="display:block;width:100%;max-width:${w - 32}px;height:auto;border:0;border-radius:8px;margin:0 auto"></td></tr></table></td></tr>
+${b.headline ? `<tr><td style="padding:2px 12px 0;text-align:center;color:${fg};font-size:17px;line-height:1.4;font-weight:bold">${esc(v(b.headline))}</td></tr>` : ""}
+${p.title ? `<tr><td dir="auto" style="padding:2px 12px 0;text-align:center;color:${fg};font-size:13px;line-height:1.5">${esc(p.title)}</td></tr>` : ""}
+<tr><td style="padding:8px 12px 12px;text-align:center">${p.price ? `<span dir="auto" style="display:inline-block;background:${C.accent};color:${onColor(C.accent)};font-size:15px;line-height:1.4;font-weight:bold;padding:4px 14px;border-radius:999px">${esc(p.price)}</span>` : ""}</td></tr>
+</table>${cta}`;
+  return `${b.title ? `<h2 style="margin:0 0 12px;padding:0 16px;font-size:19px;line-height:1.5;color:${C.ink};text-align:${align}">${para(v(b.title))}</h2>` : ""}<div style="font-size:0;line-height:0;text-align:center">
+<!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" align="center" dir="${rtl ? "rtl" : "ltr"}"><tr><![endif]-->
+${items.map((p) => `<!--[if mso]><td width="${w + 12}" valign="top" style="padding:0 6px"><![endif]--><div style="display:inline-block;width:100%;max-width:${w}px;margin:0 6px 12px;vertical-align:top;font-size:14px;line-height:1.5;text-align:${align}">${card(p)}</div><!--[if mso]></td><![endif]-->`).join("\n")}
+<!--[if mso]></tr></table><![endif]--></div>`;
+}
+const storeItems = (b, contact) => withImages(contact).slice(0, Math.max(1, Math.min(3, Number(b.count) || 3)));
 export function renderEmail(design = {}, brand = DEFAULT_BRAND, { vars = {}, footer = null } = {}) {
   const v = (s) => renderTemplate(s || "", vars.contact || {}, vars.extra || {});
   const blocks = design.blocks || [];
@@ -203,6 +246,12 @@ export function renderEmail(design = {}, brand = DEFAULT_BRAND, { vars = {}, foo
         ${b.caption ? `<p style="margin:10px 0 0;font-size:14px;color:#555;text-align:center">${para(v(b.caption))}</p>` : ""}`);
       case "products": return row(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${(b.items || []).map((p) => `<td width="${Math.floor(100 / Math.max(1, b.items.length))}%" style="padding:0 6px;vertical-align:top;text-align:center">
         ${p.image_url ? (p.url ? `<a href="${esc(p.url)}">${img(p.image_url, p.title, 170)}</a>` : img(p.image_url, p.title, 170)) : ""}<div style="font-size:14px;color:${C.ink};padding-top:6px">${esc(v(p.title))}</div>${p.price ? `<div style="font-size:14px;font-weight:bold;color:${C.accent}">${esc(p.price)}</div>` : ""}</td>`).join("")}</tr></table>`);
+      case "store_products": {
+        const items = storeItems(b, vars.contact);
+        if (items.length) return row(storeProductsHtml(b, items, { C, align, v, rtl }), "16px 16px 4px");
+        const fb = v(b.fallback_text || STORE_PRODUCTS_DEFAULTS.fallback_text);
+        return fb.trim() ? row(`<p style="margin:0;font-size:16px;line-height:1.8;color:#333">${para(fb)}</p>`) : "";
+      }
       case "quote": return row(`<div style="border-${rtl ? "right" : "left"}:4px solid ${C.accent};padding:4px 16px"><p style="margin:0;font-size:16px;line-height:1.8;font-style:italic;color:#333">${para(v(b.text))}</p><p style="margin:6px 0 0;font-size:13px;color:#777">— ${esc(b.author)}</p></div>`);
       case "divider": return row(`<div style="border-top:1px solid #e6e6e6"></div>`);
       default: return "";
@@ -217,7 +266,8 @@ export function renderEmail(design = {}, brand = DEFAULT_BRAND, { vars = {}, foo
 ${parts}
 ${foot}
 </table></td></tr></table></body></html>`;
-  const text = blocks.map((b) => ({ hero: `${v(b.title)}\n${v(b.text)}`, text: v(b.text), button: b.url ? `${v(b.label)}: ${b.url}` : "", quote: `"${v(b.text)}" — ${b.author}`, compare: v(b.caption), products: (b.items || []).map((p) => `${v(p.title)} ${p.price}`).join(" · ") })[b.type] || "").filter(Boolean).join("\n\n");
+  const storeText = (b) => { const it = storeItems(b, vars.contact); return it.length ? `${v(b.title)}\n${it.map((p) => `· ${p.title}${p.price ? " — " + p.price : ""}`).join("\n")}${b.cta_label && b.cta_url ? `\n${v(b.cta_label)}: ${b.cta_url}` : ""}` : v(b.fallback_text || STORE_PRODUCTS_DEFAULTS.fallback_text); };
+  const text = blocks.map((b) => (b.type === "store_products" ? storeText(b) : ({ hero: `${v(b.title)}\n${v(b.text)}`, text: v(b.text), button: b.url ? `${v(b.label)}: ${b.url}` : "", quote: `"${v(b.text)}" — ${b.author}`, compare: v(b.caption), products: (b.items || []).map((p) => `${v(p.title)} ${p.price}`).join(" · ") })[b.type] || "")).filter(Boolean).join("\n\n");
   return { html, text, subject: v(design.subject), rtl };
 }
 
@@ -228,6 +278,7 @@ export const STARTER_EMAIL = {
   blocks: [
     { type: "header", preheader: "شوف الفرق بين الصورة العادية والإعلان المصمم" },
     { type: "hero", title: "منتجاتكم تستاهل أكثر من صورة على خلفية بيضاء", text: "DPA AD يحوّل كتالوج {{store_name}} إلى إعلانات صور وفيديو مصممة بالعربي لسناب وتيك توك وميتا، والسعر والخصم يتحدّثون تلقائياً." },
+    { type: "store_products", ...STORE_PRODUCTS_DEFAULTS },
     { type: "compare", before_url: "", after_url: "", caption: "نفس المنتج: صورة الكتالوج العادية مقابل إعلان مصمم" },
     { type: "text", text: "نجهّز لكم ٣ نماذج مجانية من منتجاتكم أنتم، بدون أي إعداد من طرفكم." },
     { type: "button", label: "أبي ٣ نماذج مجانية", url: "https://dpa.ad" },

@@ -48,6 +48,7 @@ export const CATEGORY_AR = { "Fashion & abayas": "الأزياء والعباي�
   "Health & supplements": "الصحة والمكملات", "Sports": "الرياضة", "Jewelry & watches": "المجوهرات والساعات", "Books & stationery": "الكتب والقرطاسية", Other: "التجارة الإلكترونية" };
 
 import { detectPlatform } from "./platforms.js";
+import { cleanProducts } from "./products.js";
 
 // ---- CSV import -------------------------------------------------------------------------
 export function splitCsv(text) {
@@ -83,9 +84,28 @@ export const IMPORT_FIELDS = {
   wa_opt_in: [/consent/, /opt.?in/, /موافقة/],
 };
 
+// Product sample columns: product1_title, product1_price, product1_image, product1_url … product6_*,
+// or "Product 2 name", "اسم المنتج 1", "سعر المنتج ٢", "صورة المنتج 3", "رابط المنتج 4".
+const PRODUCT_COL = /(?:products?|items?|منتجات|المنتج|منتج)\s*[_\-\s#:.]*([1-6١-٦])(?![\d٠-٩])/;
+const PRODUCT_KEY = [["price", /price|cost|سعر|السعر/], ["image", /image|img|photo|picture|pic|صورة|صوره|الصورة/], ["url", /url|link|href|رابط|الرابط/], ["title", /title|name|اسم|عنوان|الاسم/]];
+export function productColumns(header) {
+  const out = {};
+  header.forEach((x, i) => {
+    const h = String(x || "").toLowerCase().trim(), m = PRODUCT_COL.exec(h);
+    if (!m) return;
+    const n = "١٢٣٤٥٦".includes(m[1]) ? "١٢٣٤٥٦".indexOf(m[1]) + 1 : Number(m[1]);
+    const key = (PRODUCT_KEY.find(([, re]) => re.test(h.replace(m[0], " "))) || ["title"])[0];
+    out[n] ||= {};
+    if (out[n][key] == null) out[n][key] = i;
+  });
+  return out;
+}
+
 export function mapHeader(header) {
   const h = header.map((x) => String(x || "").toLowerCase().trim());
   const map = {}, used = new Set();
+  // Product sample columns never count as the store's own name, link or product count.
+  for (const cols of Object.values(productColumns(header))) for (const i of Object.values(cols)) used.add(i);
   for (const [field, pats] of Object.entries(IMPORT_FIELDS)) {
     for (const p of pats) {
       const i = h.findIndex((x, j) => !used.has(j) && p.test(x));
@@ -139,7 +159,8 @@ export function parseStores(text, { platform = "Salla", source = "import" } = {}
   const map = mapHeader(rows[0]);
   if (map.store_name == null && map.domain == null) return { error: "Couldn't find a store name or store link column. Name the columns e.g. store_name, domain, email, phone, category, city, products." };
   const get = (r, f) => (map[f] == null ? "" : r[map[f]] || "");
-  const out = []; let noContact = 0;
+  const pcols = productColumns(rows[0]), now = new Date().toISOString();
+  const out = []; let noContact = 0, withProducts = 0;
   for (const r of rows.slice(1)) {
     const domain = normDomain(get(r, "domain"));
     const name = String(get(r, "store_name") || domain).trim().slice(0, 160);
@@ -152,10 +173,17 @@ export function parseStores(text, { platform = "Salla", source = "import" } = {}
       platform: detectPlatform(get(r, "platform"), domain) || (String(get(r, "platform")).trim() ? "Other" : platform), rating: parseFloat(get(r, "rating")) || null,
       wa_opt_in: truthy(get(r, "wa_opt_in")), source,
     };
+    const sample = cleanProducts(Object.keys(pcols).sort((a, b) => a - b).map((n) => {
+      const pc = pcols[n], cell = (k) => (pc[k] == null ? "" : r[pc[k]] || "");
+      return { title: cell("title"), price: cell("price"), image_url: cell("image"), url: cell("url") };
+    }), domain ? `https://${domain}/` : undefined);
+    if (sample.length) { Object.assign(c, { products_sample: sample, products_source: "csv", products_fetched_at: now }); withProducts++; }
     if (!c.email && !c.phone) noContact++;
     out.push(c);
   }
-  return { rows: out, columns: Object.fromEntries(Object.entries(map).map(([k, i]) => [k, rows[0][i]])), no_contact: noContact, total: out.length };
+  const columns = Object.fromEntries(Object.entries(map).map(([k, i]) => [k, rows[0][i]]));
+  for (const [n, pc] of Object.entries(pcols)) for (const [k, i] of Object.entries(pc)) columns[`product${n}_${k}`] = rows[0][i];
+  return { rows: out, columns, no_contact: noContact, with_products: withProducts, total: out.length };
 }
 
 // ---- scoring: who to contact first ---------------------------------------------------------
@@ -188,7 +216,7 @@ export function cleanFilter(f = {}) {
   return {
     q: String(f.q || "").trim().slice(0, 100), category: arr(f.category), city: arr(f.city), stage: arr(f.stage), platform: arr(f.platform), tags: arr(f.tags),
     owner_id: f.owner_id ? String(f.owner_id) : "", min_products: Number(f.min_products) || 0, max_products: Number(f.max_products) || 0,
-    min_score: Number(f.min_score) || 0, has_email: !!f.has_email, has_whatsapp: !!f.has_whatsapp,
+    min_score: Number(f.min_score) || 0, has_email: !!f.has_email, has_whatsapp: !!f.has_whatsapp, has_products: !!f.has_products,
     quiet_days: Number(f.quiet_days) || 0, // not contacted in N days
   };
 }
@@ -205,6 +233,7 @@ export function matches(c, f, now = Date.now()) {
   if (f.min_score && (c.score || 0) < f.min_score) return false;
   if (f.has_email && (!c.email || c.email_opt_out || c.bounced)) return false;
   if (f.has_whatsapp && !c.phone) return false;
+  if (f.has_products && !(c.products_sample || []).some((p) => p.image_url)) return false;
   if (f.quiet_days && c.last_contacted_at && now - Date.parse(c.last_contacted_at) < f.quiet_days * 864e5) return false;
   return true;
 }

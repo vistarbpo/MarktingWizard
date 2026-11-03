@@ -1238,3 +1238,234 @@ test("Ask DPA AD: tools over the API with the person's permissions, confirm befo
   assert.equal((await j(vc, "/api/assistant/confirm", { thread_id: a1.thread_id, action_id: "x", approve: true })).status, 409);
   srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true });
 });
+
+// ---- Creative Studio phase 4a: "your products as ads". All network calls are mocked.
+const mockWeb = (pages, calls = []) => async (url, opts) => {
+  calls.push(url);
+  assert.equal(opts.redirect, "manual"); assert.equal(opts.headers["User-Agent"], "DPA-AD-bot (+https://dpa.ad)");
+  const p = pages[url];
+  if (!p) return new Response("not found", { status: 404 });
+  if (p.delay) await new Promise((r) => setTimeout(r, p.delay));
+  return new Response(p.body ?? "", { status: p.status || 200, headers: { "content-type": p.type || "text/html", ...(p.headers || {}) } });
+};
+const publicDns = async (host) => (/internal|evil/.test(host) ? [{ address: "10.0.0.7", family: 4 }] : [{ address: "93.184.216.34", family: 4 }]);
+const SHOPIFY_JSON = JSON.stringify({ products: [
+  { title: "Oud Royal", handle: "oud-royal", images: [{ src: "https://cdn.shopify.com/oud.jpg" }], variants: [{ price: "149.00" }] },
+  { title: "No photo", handle: "x", images: [], variants: [{ price: "10" }] },
+  { title: "Insecure", handle: "y", images: [{ src: "http://cdn.example/insecure.jpg" }], variants: [{ price: "5" }] },
+  { title: "Protocol-relative", handle: "z", images: [{ src: "//cdn.shopify.com/z.jpg" }], variants: [{ price: "99.5" }] },
+] });
+const LD_HOME = `<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"X"},
+  {"@type":"ItemList","itemListElement":[{"@type":"ListItem","item":{"@type":"Product","name":"عباية &amp; طرحة","image":["https://cdn.salla.sa/a.jpg"],"url":"https://lamsa.salla.sa/abaya/p111111","offers":{"@type":"Offer","price":"250","priceCurrency":"SAR"}}},
+  {"@type":"ListItem","item":{"@type":"Product","name":"<b>Bad</b>","image":{"url":"https://cdn.salla.sa/b.jpg"},"offers":[{"price":99,"priceCurrency":"USD"}]}}]}]}</script>
+  <script type="application/ld+json">{ not json </script></head><body></body></html>`;
+
+test("product samples: CSV columns, Shopify, JSON-LD, og pages, SSRF guard", async () => {
+  const { parseStores } = await import("../lib/crm.js");
+  const P = await import("../lib/products.js");
+  // CSV: English and Arabic product columns; the store's own link and product count still map right.
+  const csv = "store_name,رابط المتجر,رابط المنتج 1,product1_title,product1_price,product1_image,اسم المنتج 2,سعر المنتج ٢,صورة المنتج 2,Products,email\n" +
+    "Lamsa,https://lamsa.salla.sa,https://lamsa.salla.sa/abaya/p1,Black abaya,250 SAR,https://cdn.salla.sa/1.jpg,طرحة,٩٠,http://insecure/2.jpg,420,a@lamsa.sa\n" +
+    "Volt,volt.zid.store,,,,,,,,15,v@volt.sa\n";
+  const r = parseStores(csv);
+  assert.equal(r.rows[0].domain, "lamsa.salla.sa"); assert.equal(r.rows[0].products, 420);
+  assert.equal(r.with_products, 1); assert.equal(r.rows[0].products_source, "csv");
+  assert.deepEqual(r.rows[0].products_sample[0], { title: "Black abaya", price: "250 SAR", image_url: "https://cdn.salla.sa/1.jpg", url: "https://lamsa.salla.sa/abaya/p1" });
+  assert.equal(r.rows[0].products_sample[1].title, "طرحة"); assert.equal(r.rows[0].products_sample[1].image_url, ""); // http photos are dropped
+  assert.equal(r.rows[1].products_sample, undefined);
+  assert.equal(r.columns.product1_image, "product1_image"); assert.equal(r.columns.product2_title, "اسم المنتج 2");
+
+  // Shopify products.json: first image, first variant price, https only.
+  const sp = P.parseShopifyProducts(JSON.parse(SHOPIFY_JSON), "oud.myshopify.com");
+  assert.deepEqual(sp[0], { title: "Oud Royal", price: "149", image_url: "https://cdn.shopify.com/oud.jpg", url: "https://oud.myshopify.com/products/oud-royal" });
+  assert.equal(sp.find((p) => p.title === "Insecure").image_url, "");
+  assert.equal(sp.find((p) => p.title === "Protocol-relative").image_url, "https://cdn.shopify.com/z.jpg");
+
+  // JSON-LD: @graph + ItemList, arrays and objects for image, offers as array, broken blocks ignored.
+  const ld = P.extractJsonLdProducts(LD_HOME, "https://lamsa.salla.sa/");
+  assert.equal(ld.length, 2);
+  assert.deepEqual(ld[0], { title: "عباية & طرحة", price: "250 ر.س", image_url: "https://cdn.salla.sa/a.jpg", url: "https://lamsa.salla.sa/abaya/p111111" });
+  assert.equal(ld[1].price, "99 USD"); assert.equal(ld[1].image_url, "https://cdn.salla.sa/b.jpg");
+  const og = P.extractOgProduct(`<meta property="og:title" content="عطر الليل"><meta property="og:image" content="https://cdn.zid.store/n.jpg"><meta property="product:price:amount" content="180"><meta property="product:price:currency" content="SAR">`, "https://n.zid.store/products/night");
+  assert.deepEqual(og, { title: "عطر الليل", price: "180 ر.س", image_url: "https://cdn.zid.store/n.jpg", url: "https://n.zid.store/products/night" });
+  assert.deepEqual(P.productLinks(`<a href="/abaya/p123456">a</a><a href="https://other.com/products/x">x</a><a href="/products/">all</a><a href="/products/rose">r</a><a href="/about">about</a>`, "https://lamsa.salla.sa/"),
+    ["https://lamsa.salla.sa/abaya/p123456", "https://lamsa.salla.sa/products/rose"]);
+
+  // SSRF: private, loopback, link-local and odd schemes are refused, also behind DNS and redirects.
+  for (const ip of ["10.1.2.3", "127.0.0.1", "169.254.169.254", "172.20.0.1", "192.168.1.1", "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "not-an-ip"]) assert.equal(P.isPrivateIp(ip), true, ip);
+  for (const ip of ["93.184.216.34", "8.8.8.8", "2606:4700::1111"]) assert.equal(P.isPrivateIp(ip), false, ip);
+  for (const u of ["http://127.0.0.1/", "http://[::1]/", "ftp://x.com/", "file:///etc/passwd", "http://localhost/", "https://internal.corp/", "http://a:b@x.com/"]) await assert.rejects(P.assertPublicUrl(u, publicDns), P.FetchRefused, u);
+  await assert.doesNotReject(P.assertPublicUrl("https://lamsa.salla.sa/", publicDns));
+  const calls = [];
+  const redirecting = mockWeb({ "https://shop.example/": { status: 302, headers: { location: "http://evil.example/admin" } } }, calls);
+  await assert.rejects(P.safeGet("https://shop.example/", { fetchImpl: redirecting, lookup: publicDns }), /Private/);
+  assert.deepEqual(calls, ["https://shop.example/"]); // the private hop was never requested
+  // Size cap: big pages are cut at maxBytes.
+  const big = await P.safeGet("https://big.example/", { fetchImpl: mockWeb({ "https://big.example/": { body: "x".repeat(5000) } }), lookup: publicDns, limits: { ...P.FETCH_LIMITS, maxBytes: 1000 } });
+  assert.equal(big.text.length, 1000); assert.equal(big.truncated, true);
+  // The real transport re-checks the address when it connects (a DNS answer that turns private is refused).
+  await assert.rejects(P.guardedFetch(base.replace("127.0.0.1", "localhost") + "/healthz", {}), P.FetchRefused);
+
+  // One store, end to end, for each source.
+  const web = mockWeb({
+    "https://oud.myshopify.com/products.json?limit=6": { body: SHOPIFY_JSON, type: "application/json" },
+    "https://lamsa.salla.sa/": { body: LD_HOME },
+    "https://night.zid.store/": { body: `<a href="/products/night">Night</a><a href="/products/day">Day</a>` },
+    "https://night.zid.store/products/night": { body: `<meta property="og:title" content="عطر الليل"><meta property="og:image" content="https://cdn.zid.store/n.jpg">` },
+    "https://night.zid.store/products/day": { body: `<meta property="og:title" content="no photo">` },
+    "https://empty.example/": { body: "<html><body>Loading…</body></html>" },
+  });
+  const o = { fetchImpl: web, lookup: publicDns };
+  const shop = await P.fetchStoreProducts({ domain: "oud.myshopify.com", platform: "Shopify" }, o);
+  assert.equal(shop.source, "shopify"); assert.equal(shop.products.length, 2); // only products with an https photo
+  const sal = await P.fetchStoreProducts({ domain: "lamsa.salla.sa", platform: "Salla" }, o);
+  assert.equal(sal.source, "jsonld"); assert.equal(sal.products.length, 2);
+  const zid = await P.fetchStoreProducts({ domain: "night.zid.store", platform: "Zid" }, o);
+  assert.equal(zid.source, "og"); assert.deepEqual(zid.products.map((p) => p.title), ["عطر الليل"]);
+  const none = await P.fetchStoreProducts({ domain: "empty.example", platform: "Other" }, o);
+  assert.equal(none.ok, false); assert.match(none.reason, /No product data/);
+  const priv = await P.fetchStoreProducts({ domain: "internal.example", platform: "Other" }, o);
+  assert.equal(priv.ok, false); assert.match(priv.reason, /Private/);
+  assert.match((await P.fetchStoreProducts({ domain: "" }, o)).reason, /No store link/);
+});
+
+test("email block store_products: designed cards per store, fallback, escaping", async () => {
+  const { renderEmail, cleanVariant, checkItem, cleanItem, DEFAULT_BRAND, STARTER_EMAIL, STORE_PRODUCTS_DEFAULTS } = await import("../lib/creative.js");
+  assert.ok(STARTER_EMAIL.blocks.some((b) => b.type === "store_products"));
+  const d = cleanVariant("email", { subject: "منتجات {{store_name}}", blocks: [{ type: "store_products", title: "منتجات {{store_name}}", count: 2, headline: "تسوّق الآن", cta_label: "أبي نماذج", cta_url: "https://dpa.ad/?s=1" }] });
+  const contact = { store_name: "لمسة", products_sample: [
+    { title: `<img src=x onerror=alert(1)> "عباية"`, price: "250 ر.س", image_url: "https://cdn.salla.sa/a.jpg?x=1&y=2", url: "https://lamsa.salla.sa/p1" },
+    { title: "No https photo", price: "1", image_url: "http://cdn/insecure.jpg" },
+    { title: "طرحة", price: "", image_url: "https://cdn.salla.sa/b.jpg" },
+    { title: "Third", price: "3", image_url: "https://cdn.salla.sa/c.jpg" },
+  ] };
+  const r = renderEmail(d, DEFAULT_BRAND, { vars: { company: "DPA AD", contact } });
+  assert.equal(r.rtl, true);
+  assert.equal((r.html.match(/إعلان مصمم · DPA AD/g) || []).length, 2); // count 2 cards
+  assert.match(r.html, /https:\/\/cdn\.salla\.sa\/a\.jpg\?x=1&amp;y=2/); assert.match(r.html, /cdn\.salla\.sa\/b\.jpg/);
+  assert.ok(!r.html.includes("insecure.jpg") && !r.html.includes("c.jpg"));
+  assert.ok(!r.html.includes("<img src=x") && r.html.includes("&lt;img src=x onerror=alert(1)&gt; &quot;عباية&quot;"));
+  assert.match(r.html, /250 ر\.س/); assert.match(r.html, /href="https:\/\/dpa\.ad\/\?s=1"/); assert.match(r.html, /منتجات لمسة/);
+  assert.match(r.html, /<!--\[if mso\]>/); // Outlook keeps the columns
+  assert.match(r.text, /منتجات لمسة\n· .*250 ر\.س/);
+  // No samples: the fallback text, never an empty block.
+  const fb = renderEmail(d, DEFAULT_BRAND, { vars: { contact: { store_name: "زد ستور" } } });
+  assert.ok(!fb.html.includes("إعلان مصمم · DPA AD"));
+  assert.match(fb.html, /زد ستور/); assert.match(fb.text, new RegExp(STORE_PRODUCTS_DEFAULTS.fallback_text.slice(0, 12)));
+  // Cleaning: count clamps to 1–3, unsafe links fall back to dpa.ad, checks accept the block.
+  const c2 = cleanVariant("email", { blocks: [{ type: "store_products", count: 9, cta_url: "javascript:alert(1)", fallback_text: "<script>" }] }).blocks[0];
+  assert.equal(c2.count, 3); assert.equal(c2.cta_url, "https://dpa.ad");
+  assert.ok(!renderEmail({ blocks: [c2] }, DEFAULT_BRAND, { vars: { contact: {} } }).html.includes("<script>"));
+  const item = cleanItem({ title: "T", date: "2026-12-01", channels: ["email"], variants: { email: { subject: "S", blocks: [{ type: "store_products" }, { type: "text", text: "x" }] } } });
+  assert.deepEqual(checkItem(item, DEFAULT_BRAND).filter((x) => x.level === "bad"), []);
+
+  // Studio preview: sample store (example.com photos) or a real CRM store with samples.
+  const [ws] = await json("/api/workspaces");
+  const P = `/api/workspaces/${ws.id}/creative`;
+  const em = await (await post(`${P}/items`, { title: "Your products", starter_email: true })).json();
+  const prev = await (await call(`${P}/items/${em.id}/email`)).text();
+  assert.match(prev, /https:\/\/example\.com\/dpa-preview\/abaya\.jpg/);
+  const c = appRef.locals.crm.add(ws.id, { store_name: "متجر الورد", domain: "ward.salla.sa", products_sample: [{ title: "باقة ورد", price: "120 ر.س", image_url: "https://cdn.salla.sa/ward.jpg", url: "" }] });
+  assert.ok((await json(`${P}/preview-stores`)).some((x) => x.id === c.id));
+  const prev2 = await (await call(`${P}/items/${em.id}/email?contact_id=${c.id}`)).text();
+  assert.match(prev2, /cdn\.salla\.sa\/ward\.jpg/); assert.match(prev2, /متجر الورد/); assert.ok(!prev2.includes("example.com/dpa-preview"));
+  assert.ok((await json(`${P}/meta`)).block_defaults.store_products.title);
+  appRef.locals.crm.remove(ws.id, [c.id]); await call(`${P}/items/${em.id}`, { method: "DELETE" });
+});
+
+test("WhatsApp header image: the store's first product photo in the template payload", async () => {
+  const { CrmStore } = await import("../lib/crmstore.js");
+  const { createOutreach, makeSenders, whatsappPayload } = await import("../lib/outreach.js");
+  const [ws] = await json("/api/workspaces");
+  const crm = new CrmStore(fs.mkdtempSync(path.join(os.tmpdir(), "crm-wa-")), { flushMs: 5 });
+  const cfg = { email: { ready: false, imap: { ready: false } }, whatsapp: { ready: true, token: "t", phone_id: "123", lang: "ar" }, public_url: "https://x.test", address: "Riyadh", inbound_secret: "" };
+  const out = createOutreach({ store, crm, provider, cfg, senders: makeSenders(cfg) });
+  crm.db.settings[ws.id] = { mode: "live", sender_name: "Noura" };
+  const withPhoto = crm.add(ws.id, { store_name: "Lamsa", phone: "966551111111", wa_opt_in: true, owner_name: "Huda", products_sample: [{ title: "x", price: "", image_url: "http://no/1.jpg" }, { title: "Abaya", price: "250", image_url: "https://cdn.salla.sa/a.jpg" }] });
+  const noPhoto = crm.add(ws.id, { store_name: "Reem", phone: "966553333333", wa_opt_in: true });
+  const step = { channel: "whatsapp", body: "hi {{store_name}}", wa_template: "dpa_intro_img", wa_header: "product" };
+  const realFetch = globalThis.fetch, bodies = [];
+  globalThis.fetch = async (url, opts) => { bodies.push({ url, body: JSON.parse(opts.body) }); return new Response(JSON.stringify({ messages: [{ id: "wamid.1" }] }), { status: 200 }); };
+  try {
+    const m = await out.sendOne(ws.id, withPhoto, step);
+    assert.equal(m.status, "sent"); assert.equal(m.wa_header_image, "https://cdn.salla.sa/a.jpg");
+    const comps = bodies[0].body.template.components;
+    assert.equal(bodies[0].url, "https://graph.facebook.com/v21.0/123/messages");
+    assert.deepEqual(comps[0], { type: "header", parameters: [{ type: "image", image: { link: "https://cdn.salla.sa/a.jpg" } }] });
+    assert.equal(comps[1].type, "body"); assert.deepEqual(comps[1].parameters.map((p) => p.text), ["Huda", "Lamsa"]);
+    // No product photo and no fallback: skipped with a clear reason, nothing sent.
+    const sk = await out.sendOne(ws.id, noPhoto, step);
+    assert.equal(sk.status, "skipped"); assert.match(sk.error, /product photo/); assert.equal(bodies.length, 1);
+    // A fixed fallback image on the step is used instead.
+    const fbm = await out.sendOne(ws.id, noPhoto, { ...step, wa_header_url: "https://dpa.ad/sample.jpg" });
+    assert.equal(fbm.status, "sent"); assert.equal(bodies[1].body.template.components[0].parameters[0].image.link, "https://dpa.ad/sample.jpg");
+    // Opt-in still required; Test mode logs the header without sending.
+    const noOpt = crm.add(ws.id, { store_name: "NoOpt", phone: "966554444444", products_sample: withPhoto.products_sample });
+    assert.match((await out.sendOne(ws.id, noOpt, step)).error, /opt-in/);
+    crm.db.settings[ws.id] = { mode: "test" };
+    const t = await out.sendOne(ws.id, withPhoto, step);
+    assert.equal(t.status, "test"); assert.equal(t.wa_header_image, "https://cdn.salla.sa/a.jpg"); assert.equal(bodies.length, 2);
+  } finally { globalThis.fetch = realFetch; }
+  assert.deepEqual(whatsappPayload({ to: "1", text: "x" }), { messaging_product: "whatsapp", to: "1", type: "text", text: { body: "x" } });
+  // Campaign steps keep the option (WhatsApp only).
+  const C = `/api/workspaces/${ws.id}/crm`;
+  const camp = await (await post(`${C}/campaigns`, { name: "WA header", type: "outreach", filter: {}, steps: [{ channel: "whatsapp", body: "x", wa_template: "t", wa_header: "product", wa_header_url: "http://insecure/x.jpg" }, { channel: "email", subject: "s", body: "b", wa_header: "product" }] })).json();
+  assert.equal(camp.steps[0].wa_header, "product"); assert.equal(camp.steps[0].wa_header_url, ""); assert.equal(camp.steps[1].wa_header, "");
+  await call(`${C}/campaigns/${camp.id}`, { method: "DELETE" });
+});
+
+test("product fetch: store drawer, edits, bulk job with progress, personalized previews", async () => {
+  const pages = {
+    "https://lamsa.salla.sa/": { body: LD_HOME, delay: 30 },
+    "https://oud.myshopify.com/products.json?limit=6": { body: SHOPIFY_JSON, type: "application/json", delay: 30 },
+    "https://empty.example/": { body: "<html></html>", delay: 30 },
+  };
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-pf-"));
+  const st2 = new Store(d2), app2 = createApp({ store: st2, provider, password: "pw-pf", productOptions: { fetchImpl: mockWeb(pages), lookup: publicDns, delayMs: 0, pageDelayMs: 0 } }), srv = app2.listen(0);
+  await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const ck = (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ password: "pw-pf" }) })).headers.get("set-cookie").split(";")[0];
+  const req = (p, method = "GET", b) => fetch(b2 + p, { method, headers: { "Content-Type": "application/json", cookie: ck }, body: b && JSON.stringify(b) });
+  try {
+    const [w] = await (await req("/api/workspaces")).json();
+    const C = `/api/workspaces/${w.id}/crm`, crm = app2.locals.crm;
+    const lamsa = crm.add(w.id, { store_name: "Lamsa", domain: "lamsa.salla.sa", platform: "Salla", email: "a@lamsa.sa", phone: "966551111111", wa_opt_in: true });
+    const oud = crm.add(w.id, { store_name: "Oud", domain: "oud.myshopify.com", platform: "Shopify", email: "o@oud.sa" });
+    const empty = crm.add(w.id, { store_name: "Empty", domain: "empty.example", platform: "Other", email: "e@empty.sa", products_sample: [{ title: "From CSV", price: "", image_url: "https://cdn.x/csv.jpg", url: "" }], products_source: "csv" });
+    crm.add(w.id, { store_name: "Sample", domain: "s.example.com", sample: true });
+    // One store from the drawer.
+    const one = await (await req(`${C}/contacts/${lamsa.id}/products/fetch`, "POST")).json();
+    assert.equal(one.ok, true); assert.equal(one.contact.products_source, "jsonld"); assert.equal(one.contact.products_sample.length, 2);
+    // Bulk for a filter: background job with progress; a second start while running is refused.
+    const job = await (await req(`${C}/products/fetch`, "POST", { filter: {} })).json();
+    assert.equal(job.status, "running"); assert.equal(job.total, 3); // sample stores are skipped
+    assert.equal((await req(`${C}/products/fetch`, "POST", { filter: {} })).status, 409);
+    await app2.locals.products.wait(job.id);
+    const done = await (await req(`${C}/products/jobs/${job.id}`)).json();
+    assert.deepEqual([done.status, done.done, done.found, done.failed], ["done", 3, 2, 1]);
+    assert.equal(done.errors[0].store, "Empty"); assert.match(done.errors[0].reason, /No product data/);
+    assert.equal((await (await req(`${C}/products/jobs/latest`)).json()).id, job.id);
+    assert.equal((await (await req(`${C}/meta`)).json()).products_job.id, job.id);
+    assert.equal(crm.get(w.id, oud.id).products_source, "shopify");
+    const e2 = crm.get(w.id, empty.id); // a failed fetch keeps the CSV samples and records why
+    assert.equal(e2.products_sample[0].title, "From CSV"); assert.match(e2.products_error, /No product data/);
+    // Edit or remove samples by hand: cleaned, https photos only.
+    const ed = await (await req(`${C}/contacts/${oud.id}/products`, "PUT", { products: [{ title: "Edited", price: "10", image_url: "javascript:x" }, { title: "Kept", image_url: "https://cdn.shopify.com/k.jpg" }, ...Array(8).fill({ title: "more" })] })).json();
+    assert.equal(ed.products_sample.length, 6); assert.equal(ed.products_sample[0].image_url, ""); assert.equal(ed.products_source, "manual");
+    const has = await (await req(`${C}/contacts?f=${encodeURIComponent(JSON.stringify({ has_products: true }))}`)).json();
+    assert.deepEqual(has.rows.map((r) => r.store_name).sort(), ["Empty", "Lamsa", "Oud"]);
+    // Campaign preview defaults to a store with products and can pick any; designed email shown as that store gets it.
+    const P = `/api/workspaces/${w.id}/creative`;
+    const em = await (await req(`${P}/items`, "POST", { title: "Your products", starter_email: true })).json();
+    await req(`${P}/items/${em.id}/status`, "POST", { status: "approved" });
+    const camp = await (await req(`${C}/campaigns`, "POST", { name: "Products", type: "outreach", filter: {}, steps: [{ channel: "email", subject: "", body: "", design_id: em.id }, { channel: "whatsapp", body: "x", wa_template: "t", wa_header: "product" }] })).json();
+    const pv = await (await req(`${C}/campaigns/${camp.id}/preview?contact_id=${lamsa.id}`)).json();
+    assert.equal(pv.store, "Lamsa"); assert.ok(pv.stores_with_products.length >= 3);
+    assert.match(pv.steps[0].body, /عباية & طرحة/); assert.equal(pv.steps[1].header_image, "https://cdn.salla.sa/a.jpg");
+    const html = await (await req(pv.steps[0].email_url)).text();
+    assert.match(html, /cdn\.salla\.sa\/a\.jpg/); assert.match(html, /إعلان مصمم · DPA AD/); assert.match(html, /Unsubscribe/);
+    const noP = crm.add(w.id, { store_name: "NoPhotos", domain: "np.example", email: "n@np.sa" });
+    const pv2 = await (await req(`${C}/campaigns/${camp.id}/preview?contact_id=${noP.id}`)).json();
+    assert.match(pv2.steps[1].warning, /skipped/); assert.ok(!(await (await req(pv2.steps[0].email_url)).text()).includes("إعلان مصمم · DPA AD"));
+  } finally { srv.close(); app2.locals.crm.flush(); fs.rmSync(d2, { recursive: true, force: true }); }
+});

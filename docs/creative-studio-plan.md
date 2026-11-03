@@ -37,7 +37,7 @@ The approvals take weeks, so each platform gets a **"download and post"** fallba
 
 ## 3. Features beyond the basics
 
-1. **"Your products as ads" emails.** Every outreach email can show 3 sample ads made from that store's own products, using DPA AD's own rendering. This is the strongest possible hook for cold outreach, and it shows the product instead of describing it. It needs DPA AD's render engine to accept a store link.
+1. **"Your products as ads" emails.** Every outreach email can show 3 sample ads made from that store's own products. This is the strongest possible hook for cold outreach, and it shows the product instead of describing it. **Built (phase 4a, best effort):** the store's own product photos inside designed ad cards drawn in the email itself, plus the first product photo as the WhatsApp header. Real rendered ads replace the cards once DPA AD's render engine accepts a store link.
 2. **One idea, every format.** Write once and get the reel, carousel, post, story, email and WhatsApp version, in Arabic and English, sized for each platform.
 3. **Saudi season calendar built in.** White Friday, Ramadan, Eid al-Fitr, Eid al-Adha, Founding Day (22 Feb), National Day (23 Sep), back to school and payday weeks. Lead times are set for each: Ramadan content is ready in January.
 4. **Best times for Saudi audiences**, learned from your own results, with a different schedule during Ramadan (after iftar into the night).
@@ -82,7 +82,15 @@ People: a creative lead approves, the founder films talking-head clips and appro
 | **1. Plan and write** | 2 | Brand kit, calendar with the Saudi seasons, idea bank, AI copy in Arabic and English, approvals, Creative role, email designer plugged into CRM campaigns, "download and post" for every platform | Nothing new |
 | **2. Design and publish** | 2–3 | Image templates (posts, carousels, stories, WhatsApp headers), rendering, scheduler, direct publishing to Instagram, Facebook and LinkedIn, publish log | Rendering choice; Meta app review |
 | **3. Reels and video** | 3 | Reel builder with voiceover, captions and music; YouTube Shorts and TikTok publishing; results pulled from each platform | Rendering; YouTube and TikTok audits; voice and music budget |
-| **4. Personal and social** | 2–3 | "Your products as ads" outreach emails and WhatsApp, comments and DMs into AI Support, content A/B tests | DPA AD render API |
+| **4. Personal and social** | 2–3 | "Your products as ads" outreach emails and WhatsApp (**4a built**, best effort), comments and DMs into AI Support, content A/B tests | DPA AD render API for real rendered ads |
+
+**Phase 4a, "your products as ads" (built, Nov 2026).** Best effort until DPA AD's render engine can supply real designed images.
+- **Product samples per store** (up to 6: title, price, photo, link) in Store CRM, from CSV columns (`product1_title`, `product1_price`, `product1_image`, `product1_url` … `product6_*`, or Arabic headers such as `اسم المنتج 1`, `سعر المنتج 1`, `صورة المنتج 1`, `رابط المنتج 1`), from Shopify's public `/products.json`, or read from the store's home page (schema.org Product data, then `og:image` on the product pages it links to). "Fetch products" on a store, or for the current filter (up to 500, in the background with progress). Samples can be edited or removed by hand.
+- **Fetching is careful:** server-side, 8 s timeout, about 2 MB per page, user agent `DPA-AD-bot (+https://dpa.ad)`, 2 stores at a time with a pause between stores, http/https only, private and internal addresses refused (checked again on every redirect and at connect time), https photos only.
+- **Email block "Store's own products as ads"**: for each recipient, 1–3 of their products as designed ad cards (their photo in a brand-coloured frame, Arabic headline, price badge, "إعلان مصمم · DPA AD" ribbon, optional button to dpa.ad). Pure HTML, works in Gmail, Outlook and phones. Stores without samples get a fallback text. It is in the starter outreach email.
+- **WhatsApp header image**: a campaign step can use the store's first product photo as the template's image header (the template must be approved with an image header). Stores without a photo are skipped with the reason, unless the step has a fixed fallback image.
+- **Previews** in Store CRM campaigns and the Studio email editor can be shown as any store with product photos.
+- **What it can't do yet:** stores that build their pages with JavaScript only, or block bots, give nothing; add their samples by CSV or by hand. The cards show the store's photo as it is; they are not rendered ads.
 
 ## 7. Decisions needed from the founder
 

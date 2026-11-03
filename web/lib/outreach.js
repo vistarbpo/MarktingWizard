@@ -5,7 +5,8 @@
 // Without credentials, or in Test mode, nothing leaves the server: messages are logged as "test".
 import { CITIES, PLATFORMS } from "./sales.js";
 import { emailDesign, creativeSettings } from "./creativeroutes.js";
-import { renderEmail } from "./creative.js";
+import { renderEmail, safeUrl } from "./creative.js";
+import { withImages } from "./products.js";
 import { CHANNELS, guessIntent, inWindow, nextWindowStart, parseTriage, renderTemplate, replyTriagePrompt, riyadhDay, normEmail, normPhone } from "./crm.js";
 
 export function channelConfig(env = process.env) {
@@ -47,16 +48,24 @@ export function makeSenders(cfg) {
       const r = await mailer.sendMail({ from: cfg.email.from, to, subject, text, html, headers, replyTo: cfg.email.reply_to || undefined });
       return { provider_id: r.messageId };
     },
-    async whatsapp({ to, text, template, params }) {
-      const body = template
-        ? { messaging_product: "whatsapp", to, type: "template", template: { name: template, language: { code: cfg.whatsapp.lang }, components: params?.length ? [{ type: "body", parameters: params.map((p) => ({ type: "text", text: String(p || "-") })) }] : [] } }
-        : { messaging_product: "whatsapp", to, type: "text", text: { body: text } };
+    async whatsapp({ to, text, template, params, header_image }) {
+      const body = whatsappPayload({ to, text, template, params, header_image, lang: cfg.whatsapp.lang });
       const res = await fetch(`https://graph.facebook.com/v21.0/${cfg.whatsapp.phone_id}/messages`, { method: "POST", headers: { Authorization: `Bearer ${cfg.whatsapp.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error?.message || `WhatsApp error ${res.status}`);
       return { provider_id: j?.messages?.[0]?.id || "" };
     },
   };
+}
+
+// The Cloud API request body. A template can carry an image header (the store's own product photo):
+// the header component goes before the body component, as Meta expects.
+export function whatsappPayload({ to, text, template, params, header_image = "", lang = "ar" }) {
+  if (!template) return { messaging_product: "whatsapp", to, type: "text", text: { body: text } };
+  const components = [];
+  if (header_image) components.push({ type: "header", parameters: [{ type: "image", image: { link: header_image } }] });
+  if (params?.length) components.push({ type: "body", parameters: params.map((p) => ({ type: "text", text: String(p || "-") })) });
+  return { messaging_product: "whatsapp", to, type: "template", template: { name: template, language: { code: lang }, components } };
 }
 
 // DPA AD's own funnel targets (editable in Store CRM → Settings). Starting points: cold email ~2% replies,
@@ -74,7 +83,7 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
   const sentToday = (wsId, channel, day) => crm.db.messages.filter((m) => m.workspace_id === wsId && m.direction === "out" && m.channel === channel && ["sent", "test"].includes(m.status) && riyadhDay(new Date(m.at)) === day).length;
 
   // Sends one message to one store, or records why it couldn't. Never throws.
-  async function sendOne(wsId, c, { channel, subject = "", body, wa_template = "", wa_params = null, campaign_id = null, step = null, by = "ai", design_id = "" }) {
+  async function sendOne(wsId, c, { channel, subject = "", body, wa_template = "", wa_params = null, wa_header = "", wa_header_url = "", campaign_id = null, step = null, by = "ai", design_id = "" }) {
     const s = settings(wsId), w = ws(wsId), company = w?.brief?.company_name || "DPA AD";
     const vars = { sender_name: s.sender_name || company, company };
     // A designed email from Creative Studio (approved only) replaces the plain-text body.
@@ -99,13 +108,19 @@ export function createOutreach({ store, crm, provider, cfg = channelConfig(), se
       if (!inSession && !c.wa_opt_in) return skip("No WhatsApp opt-in: WhatsApp only allows business-first messages to people who agreed");
       if (!inSession && !wa_template) return skip("Outside the 24h window: needs an approved WhatsApp template");
       base.wa_template = inSession ? "" : wa_template;
+      // "Header image: store's first product photo" (template messages only).
+      if (base.wa_template && wa_header === "product") {
+        const link = withImages(c)[0]?.image_url || safeUrl(wa_header_url);
+        if (!link) return skip("Header image needs the store's product photo: none fetched yet (Store CRM → Fetch products) and no fallback image on the step");
+        base.wa_header_image = link;
+      }
     }
     const live = s.mode === "live" && cfg[channel].ready && !c.sample;
     if (!live) { touch(c, campaign_id); return crm.addMessage({ ...base, status: "test", error: c.sample ? "Sample store: never sent for real" : cfg[channel].ready ? "Test mode: not sent" : `${channel === "email" ? "Email" : "WhatsApp"} isn't connected yet: not sent` }); }
     try {
       const r = channel === "email"
         ? await senders.email({ to: c.email, ...emailParts(cfg, c, subj, text, company), ...(design ? { html: design.html } : {}) })
-        : await senders.whatsapp({ to: c.phone, text, template: base.wa_template, params: (wa_params || ["owner_name", "store_name"]).map((k) => (k === "sender_name" ? vars.sender_name : c[k] || c.store_name)) });
+        : await senders.whatsapp({ to: c.phone, text, template: base.wa_template, header_image: base.wa_header_image || "", params: (wa_params || ["owner_name", "store_name"]).map((k) => (k === "sender_name" ? vars.sender_name : c[k] || c.store_name)) });
       touch(c, campaign_id);
       return crm.addMessage({ ...base, status: "sent", provider_id: r?.provider_id || "" });
     } catch (e) {
