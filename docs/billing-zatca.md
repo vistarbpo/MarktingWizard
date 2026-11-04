@@ -175,4 +175,5 @@ logged recurring income or the Sales estimate.
 7. Billing emails without an unsubscribe link under the PDPL.
 8. The phase 2 wave date for DPA AD and the onboarding timeline.
 9. Coupons: zero-value invoices from 100% coupons; whether coupon discounts should show per line (line-level
-   allowance) instead of as a document discount; discounting proration invoices with percent coupons.
+   allowance) instead of as a document discount. (Discounting proration invoices with percent coupons is a business
+   default the founder confirmed on 2026-11-04; the accountant should still check its VAT treatment.)
