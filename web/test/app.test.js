@@ -7231,3 +7231,395 @@ test("investor room: Ask DPA AD tools (list, note after a confirm), data request
     assert.ok(!fs.existsSync(path.join(k.dir, "legal", file)));
   } finally { k.done(); }
 });
+
+// ---- Coupons (Partners & referrals → Coupons; applied in Billing)
+async function cpKit({ clock = "2026-11-03T09:00:00Z", assistantClient = null } = {}) {
+  const { adsConfig } = await import("../lib/adsapi.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-cp-")), st = new Store(d);
+  let t = Date.parse(clock);
+  const prov = { name: "test", model: "test", generate: (a) => demoProvider().generate(a) };
+  const app2 = createApp({ store: st, provider: prov, password: "pw-cp", assistantClient, env: { ...process.env, PUBLIC_URL: "https://wizard.dpa.ad" },
+    adsOptions: { cfg: adsConfig({ ADS_LEAD_SECRET: "lead-secret-cp" }, "pw") }, partnersOptions: { clock: () => t }, billingOptions: { now: () => new Date(t) } });
+  const srv = app2.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b2 = `http://127.0.0.1:${srv.address().port}`;
+  const login = async (body) => (await fetch(b2 + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams(body) })).headers.get("set-cookie").split(";")[0];
+  const ck = await login({ password: "pw-cp" });
+  const as = async (c, p, m = "GET", body, headers = {}) => { const r = await fetch(b2 + p, { method: m, redirect: "manual", headers: { "Content-Type": "application/json", cookie: c, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }); const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { j = txt; } return { status: r.status, body: j, headers: r.headers }; };
+  const j = (p, body, m) => as(ck, p, m || (body === undefined ? "GET" : "POST"), body);
+  const [w0] = (await j("/api/workspaces")).body;
+  const w = st.getWorkspace(w0.id);
+  const user = async (role, tag = role) => { const email = `cp-${tag}@dpa.ad`; await j("/api/admin/users", { name: `Cp ${tag}`, email, password: `cp-${tag}-pass1`, role_id: role }); return { ck: await login({ email, password: `cp-${tag}-pass1` }) }; };
+  const X = `/api/workspaces/${w.id}/partners`, W = `/api/workspaces/${w.id}`;
+  return { app: app2, st, w, X, W, j, as, ck, user, b2, bl: app2.locals.billing,
+    cp: (b, c = ck) => as(c, `${X}/coupons`, "POST", { discount_type: "percent", value: 10, duration: "once", ...b }),
+    apply: (cid, code, c = ck) => as(c, `${W}/billing/customers/${cid}/coupon`, "POST", { code }),
+    preview: (cid, code, c = ck) => as(c, `${W}/billing/customers/${cid}/coupon/preview?code=${encodeURIComponent(code)}`),
+    run: () => j(`${W}/billing/run`, {}),
+    invs: (cid) => st.db.billing_invoices.filter((i) => i.customer_id === cid && i.kind === "invoice").sort((a, b) => Number(a.id) - Number(b.id)),
+    at: (iso) => { t = Date.parse(iso); },
+    done: () => { srv.close(); app2.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); } };
+}
+
+test("coupons: code rules (uppercase, Arabic digits, unique across referral codes except the partner's own), validation, Owner-only rules, change log, partner page, delete rules, permissions and the activity log", async () => {
+  const { cleanCouponCode, normCouponCode } = await import("../lib/coupons.js");
+  assert.equal(normCouponCode(" najd-١٠ "), "NAJD-10"); assert.equal(cleanCouponCode("rmd-۲۰۲۶"), "RMD-2026");
+  for (const bad of ["abc", "TOO-LONG-CODE-1234567", "NA JD", "-ABC", "كود-10", ""]) assert.equal(cleanCouponCode(bad), "", bad);
+  const k = await cpKit();
+  try {
+    const p = (await k.j(k.X, { name: "Najd Agency", status: "active" })).body, q = (await k.j(k.X, { name: "Other Agency", status: "active" })).body;
+    const ref = p.codes[0].code;
+    // The default suggestion is the partner's referral code in capitals; it may repeat its own partner's code only.
+    const sug = (await k.j(`${k.X}/coupons/suggest?partner_id=${p.id}`)).body.code;
+    assert.equal(sug, ref.toUpperCase().slice(0, 20).replace(/-+$/, ""));
+    assert.equal((await k.cp({ code: sug, partner_id: q.id })).status, 409, "another partner's referral code");
+    assert.equal((await k.cp({ code: sug })).status, 409, "a company coupon can't take a referral code");
+    const own = await k.cp({ code: sug.toLowerCase(), partner_id: p.id });
+    assert.equal(own.status, 201); assert.equal(own.body.code, sug); assert.equal(own.body.partner_name, "Najd Agency"); assert.equal(own.body.state, "active");
+    assert.notEqual((await k.j(`${k.X}/coupons/suggest?partner_id=${p.id}`)).body.code, sug, "the next suggestion is free");
+    const najd = (await k.cp({ code: "najd-١٠", partner_id: p.id, value: 20, duration: "months", months: 3 })).body;
+    assert.equal(najd.code, "NAJD-10"); assert.equal(najd.terms_text, "20% off for 3 billing months");
+    assert.equal((await k.cp({ code: "Najd-10" })).status, 409, "case-insensitive uniqueness");
+    // Referral codes can't take a coupon code of another partner (the partner's own is fine).
+    assert.equal((await k.j(`${k.X}/${q.id}/codes`, { code: "najd-10" })).status, 409);
+    assert.equal((await k.j(`${k.X}/${p.id}/codes`, { code: "najd-10" })).status, 201);
+    // Validation.
+    const bad = async (b) => (await k.cp({ code: "BAD-ONE", ...b })).status;
+    for (const b of [{ value: 0 }, { value: 101 }, { value: 12.5 }, { discount_type: "fixed", value: -1 }, { discount_type: "fixed", value: 10, currency: "EUR" }, { duration: "months" }, { duration: "months", months: 37 },
+      { plans: ["Gold"] }, { cycles: "weekly" }, { valid_from: "2026-12-01", valid_until: "2026-11-01" }, { valid_until: "31/12/2026" }, { status: "expired" }, { partner_id: "999" }, { code: "x" }]) assert.equal(await bad(b), 422, JSON.stringify(b));
+    const fixed = (await k.cp({ code: "FIX-100", discount_type: "fixed", value: 100, currency: "sar", plans: ["growth", "Scale"], cycles: "monthly", max_redemptions: 50, valid_from: "2026-11-01", valid_until: "2026-12-31", first_time_only: false, note: "internal" })).body;
+    assert.deepEqual([fixed.currency, fixed.plans, fixed.cycles, fixed.max_redemptions, fixed.first_time_only], ["SAR", ["Growth", "Scale"], "monthly", 50, false]);
+    assert.deepEqual((await k.cp({ code: "ALL-PLANS", plans: ["Starter", "Growth", "Scale", "Enterprise"] })).body.plans, [], "every plan = all");
+    // Owner-only: above 50% or forever. Finance has Partners Edit but isn't the Owner.
+    const fin = await k.user("finance", "fin");
+    assert.match((await k.cp({ code: "SIXTY-PCT", value: 60 }, fin.ck)).body.detail, /Only the Owner/);
+    assert.equal((await k.cp({ code: "FOREVER-5", value: 5, duration: "forever" }, fin.ck)).status, 403);
+    const half = (await k.cp({ code: "HALF-OFF", value: 50, duration: "months", months: 2 }, fin.ck));
+    assert.equal(half.status, 201);
+    assert.equal((await k.as(fin.ck, `${k.X}/coupons/${half.body.id}`, "PUT", { value: 60 })).status, 403);
+    const big = (await k.cp({ code: "BIG-DEAL", value: 80 })).body; assert.equal(big.owner_only, true);
+    assert.equal((await k.as(fin.ck, `${k.X}/coupons/${big.id}`, "PUT", { status: "paused" })).body.state, "paused", "pausing doesn't need the Owner");
+    // Change log and the activity log.
+    const ed = (await k.j(`${k.X}/coupons/${najd.id}`, { valid_until: "2026-12-31", note: "x" }, "PUT")).body;
+    assert.ok(ed.log.some((l) => l.text === "valid until: – → 2026-12-31")); assert.ok(ed.log.some((l) => l.text === "note edited"));
+    assert.ok(k.st.db.audit.some((a) => a.summary.startsWith("created coupon NAJD-10")));
+    assert.ok(k.st.db.audit.some((a) => a.summary.startsWith("changed coupon NAJD-10")));
+    // The partner page lists its coupons.
+    assert.deepEqual((await k.j(`${k.X}/coupons?partner_id=${p.id}`)).body.coupons.map((c) => c.code).sort(), [sug, "NAJD-10"].sort());
+    // Permissions: Team member views (no money), Creative has no access.
+    const mem = await k.user("member", "mem"), cr = await k.user("creative", "cr");
+    const ml = (await k.as(mem.ck, `${k.X}/coupons`)).body;
+    assert.equal(ml.money, false); assert.equal(ml.coupons[0].stats.discount_sar, undefined);
+    assert.equal((await k.cp({ code: "MEMBER-1" }, mem.ck)).status, 403);
+    assert.equal((await k.as(cr.ck, `${k.X}/coupons`)).status, 403);
+    // Delete: only never-redeemed coupons; a partner whose coupon was redeemed can't be deleted.
+    const c = k.bl.addCustomer(k.w, { store_name: "Delete Rule Store", plan: "Growth", status: "trial" }, "test");
+    assert.equal((await k.apply(c.id, "NAJD-10")).status, 201);
+    assert.equal((await k.j(`${k.X}/coupons/${najd.id}`, undefined, "DELETE")).status, 409);
+    assert.equal((await k.j(`${k.X}/coupons/${najd.id}`, { code: "NAJD-11" }, "PUT")).status, 409, "a redeemed code can't be renamed");
+    assert.equal((await k.j(`${k.X}/coupons/${najd.id}`, { partner_id: q.id }, "PUT")).status, 409, "nor move to another partner");
+    assert.equal((await k.j(`${k.X}/${p.id}`, undefined, "DELETE")).status, 409);
+    assert.equal((await k.j(`${k.X}/coupons/${fixed.id}`, undefined, "DELETE")).body.ok, true);
+    assert.equal((await k.j(`${k.X}/${q.id}`, undefined, "DELETE")).body.ok, true, "a partner with no redeemed coupon can go");
+  } finally { k.done(); }
+});
+
+test("coupons in Billing: every refusal reason (preview and apply), apply on creation or from the drawer, remove before the first discounted invoice vs stop after; Billing Edit to apply", async () => {
+  const k = await cpKit();
+  try {
+    const p = (await k.j(k.X, { name: "Refusal Agency", status: "active" })).body;
+    const mk = async (b) => (await k.cp(b)).body;
+    await mk({ code: "OK-CODE", partner_id: p.id, value: 10 });
+    const paused = await mk({ code: "PAUSED-1" }); await k.j(`${k.X}/coupons/${paused.id}`, { status: "paused" }, "PUT");
+    await mk({ code: "OLD-ONE", valid_from: "2026-09-01", valid_until: "2026-10-31" });
+    await mk({ code: "LATER-1", valid_from: "2026-12-01" });
+    await mk({ code: "LIMIT-1", max_redemptions: 1 });
+    await mk({ code: "SCALE-ONLY", plans: ["Scale"] });
+    await mk({ code: "YEARLY-ONLY", cycles: "yearly" });
+    await mk({ code: "USD-50", discount_type: "fixed", value: 50, currency: "USD" });
+    await mk({ code: "SECOND-1" });
+    const cust = (name, f = {}) => k.bl.addCustomer(k.w, { store_name: name, plan: "Growth", cycle: "monthly", currency: "SAR", status: "trial", ...f }, "test");
+    const a = cust("Refusal A"), b = cust("Refusal B"), old = cust("Old Store", { status: "active", already_billed: true });
+    const why = async (c, code) => { const pv = (await k.preview(c.id, code)).body; const ap = await k.apply(c.id, code); assert.equal(ap.status, 422, code); assert.equal(ap.body.reason_code, pv.reason_code); return pv.reason_code; };
+    assert.equal(await why(a, "NOPE-1234"), "unknown");
+    assert.equal(await why(a, "PAUSED-1"), "paused");
+    assert.equal(await why(a, "OLD-ONE"), "expired");
+    assert.equal(await why(a, "LATER-1"), "not_yet_valid");
+    assert.equal(await why(a, "SCALE-ONLY"), "plan");
+    assert.equal(await why(a, "YEARLY-ONLY"), "cycle");
+    assert.equal(await why(a, "USD-50"), "currency");
+    assert.equal(await why(old, "OK-CODE"), "not_first_time");
+    const ok = (await k.preview(a.id, "ok-code")).body;
+    assert.equal(ok.ok, true); assert.equal(ok.partner, "Refusal Agency"); assert.equal(ok.preview.base, 1683.75); assert.equal(ok.preview.discount, 168.38); assert.equal(ok.preview.total, 1515.37);
+    assert.equal((await k.apply(a.id, "LIMIT-1")).status, 201);
+    assert.equal(await why(b, "LIMIT-1"), "limit_reached");
+    assert.equal(await why(a, "SECOND-1"), "has_coupon");
+    assert.equal(await why(a, "LIMIT-1"), "already_used");
+    assert.match((await k.apply(a.id, "SECOND-1")).body.detail, /already has a coupon/);
+    // Remove before any discounted invoice: as if it never happened (a new coupon can go on); the slot frees on LIMIT-1.
+    const r1 = (await k.j(`${k.W}/billing/customers/${a.id}/coupon`, {}, "DELETE")).body;
+    assert.equal(r1.status, "removed"); assert.equal(r1.current, null);
+    assert.equal((await k.apply(b.id, "LIMIT-1")).status, 201, "a removed redemption doesn't count to the limit");
+    // Permissions: Team lead has Billing view (preview yes, apply no); Finance has Billing Edit.
+    const lead = await k.user("manager", "lead"), fin = await k.user("finance", "fin");
+    assert.equal((await k.preview(a.id, "SECOND-1", lead.ck)).body.ok, true);
+    assert.equal((await k.apply(a.id, "SECOND-1", lead.ck)).status, 403);
+    assert.equal((await k.apply(a.id, "SECOND-1", fin.ck)).status, 201);
+    assert.ok(k.st.db.audit.some((x) => /^applied coupon SECOND-1 to customer Refusal A/.test(x.summary) && x.user_name === "Cp fin"));
+    // On creation: an invalid coupon stops the creation; a valid one is redeemed before the first invoice is drafted.
+    const n0 = k.st.db.billing_customers.length;
+    const badNew = await k.j(`${k.W}/billing/customers`, { store_name: "New Bad", plan: "Growth", coupon: "PAUSED-1" });
+    assert.equal(badNew.status, 422); assert.match(badNew.body.detail, /^Coupon: This coupon is paused/); assert.equal(k.st.db.billing_customers.length, n0);
+    const nw = (await k.j(`${k.W}/billing/customers`, { store_name: "New Good", plan: "Growth", coupon: "ok-code" })).body;
+    assert.equal(nw.coupon.code, "OK-CODE"); assert.equal(nw.coupon.invoices, 1); assert.equal(nw.coupon.status, "ended", "a once coupon ends with its first invoice");
+    assert.equal(k.invs(nw.id)[0].discount_reason, "Coupon OK-CODE");
+    // After the first discounted invoice: removing only stops future discounts (and that redemption still counts).
+    await mk({ code: "THREE-MO", value: 10, duration: "months", months: 3 });
+    const st3 = (await k.j(`${k.W}/billing/customers`, { store_name: "Stop Store", plan: "Growth", coupon: "THREE-MO" })).body;
+    const r2 = (await k.j(`${k.W}/billing/customers/${st3.id}/coupon`, { reason: "Asked to stop" }, "DELETE")).body;
+    assert.equal(r2.status, "stopped"); assert.equal(r2.current.status, "stopped");
+    k.at("2026-12-03T09:00:00Z"); await k.run();
+    assert.equal(k.invs(st3.id).length, 2); assert.equal(k.invs(st3.id)[1].totals.discount, 0, "no discount after stop");
+    assert.equal(await why(k.st.getOps("billing_customers", k.w.id, st3.id), "THREE-MO"), "already_used");
+    const det = (await k.j(`${k.W}/billing/customers/${st3.id}`)).body;
+    assert.equal(det.coupon.code, "THREE-MO"); assert.ok(det.timeline.some((x) => x.type === "coupon"));
+  } finally { k.done(); }
+});
+
+test("coupons on invoices: percent for N months with VAT and the ZATCA QR total, proration, void gives the month back, yearly scaling, fixed once with account credit after it, forever with overage not discounted, 100% to a paid zero invoice, no stacking, nothing in Finance expenses", async () => {
+  const { decodeTlv } = await import("../lib/zatca.js");
+  const { r2 } = await import("../lib/billing.js");
+  const k = await cpKit();
+  try {
+    k.w.finance = { ...(k.w.finance || {}), vat_registered: true };
+    k.bl.setSettings(k.w, { vat_number: "300000000000003" });
+    await k.cp({ code: "P20-M3", value: 20, duration: "months", months: 3 });
+    await k.cp({ code: "FIX-100", discount_type: "fixed", value: 100, currency: "SAR" });
+    await k.cp({ code: "TEN-FOREVER", value: 10, duration: "forever" });
+    await k.cp({ code: "FREE-ONCE", value: 100 });
+    const A = (await k.j(`${k.W}/billing/customers`, { store_name: "Coupon A", plan: "Growth", coupon: "P20-M3" })).body;
+    const [a1] = k.invs(A.id);
+    assert.deepEqual(a1.totals, { subtotal: 1683.75, discount: 336.75, taxable: 1347, vat: 202.05, total: 1549.05 });
+    assert.equal(a1.discount_reason, "Coupon P20-M3"); assert.equal(a1.coupon.months_used, 1); assert.equal(a1.zatca_type, "simplified");
+    const qr = decodeTlv(a1.zatca.qr);
+    assert.equal(qr[4], a1.totals_sar.total.toFixed(2)); assert.equal(qr[5], a1.totals_sar.vat.toFixed(2));
+    // No stacking.
+    assert.equal((await k.apply(A.id, "FIX-100")).body.reason_code, "has_coupon");
+    // Paid in full: Finance income is what was paid; a coupon is never an expense.
+    await k.j(`${k.W}/billing/invoices/${a1.id}/payments`, {});
+    const pay = (inv) => k.j(`${k.W}/billing/invoices/${inv.id}/payments`, {});
+    assert.equal(r2(k.st.db.finance_income.filter((x) => x.invoice_id === a1.id).reduce((s, x) => s + x.amount_sar, 0)), 1549.05);
+    // Upgrade mid-period: the proration line gets the percent too, without using a month.
+    k.at("2026-11-18T09:00:00Z");
+    const up = (await k.j(`${k.W}/billing/customers/${A.id}/plan`, { plan: "Scale", confirm: true })).body;
+    const pr = k.st.getOps("billing_invoices", k.w.id, up.invoice.id);
+    assert.equal(pr.coupon.kind, "proration"); assert.equal(pr.coupon.months_used, 0); assert.equal(pr.totals.discount, r2(pr.lines[0].net * 0.2));
+    await pay(pr);
+    k.at("2026-12-03T09:00:00Z"); await k.run();
+    await pay(k.invs(A.id).at(-1));
+    k.at("2027-01-03T09:00:00Z"); await k.run();
+    let iv = k.invs(A.id).filter((i) => i.period_key);
+    assert.equal(iv.length, 3); assert.equal(iv[1].totals.discount, 974.25); assert.equal(iv[2].totals.discount, 974.25);
+    // Void the third (unpaid): its month comes back, so February is still discounted; March isn't.
+    await k.j(`${k.W}/billing/invoices/${iv[2].id}/void`, { reason: "Wrong period" });
+    k.at("2027-02-03T09:00:00Z"); await k.run();
+    await pay(k.invs(A.id).at(-1));
+    k.at("2027-03-03T09:00:00Z"); await k.run();
+    iv = k.invs(A.id).filter((i) => i.period_key);
+    assert.deepEqual(iv.map((i) => [i.status === "void", i.totals.discount]), [[false, 336.75], [false, 974.25], [true, 974.25], [false, 974.25], [false, 0]]);
+    assert.equal((await k.j(`${k.W}/billing/customers/${A.id}`)).body.coupon.status, "ended");
+    // Yearly: 3 of 12 months left, so 20% is scaled to a quarter of the yearly price.
+    k.at("2026-11-03T09:00:00Z");
+    const E = (await k.j(`${k.W}/billing/customers`, { store_name: "Coupon E", plan: "Growth", cycle: "yearly", coupon: "P20-M3" })).body;
+    assert.equal(k.invs(E.id)[0].totals.discount, r2(16837.5 * 0.2 * 3 / 12));
+    assert.equal(E.coupon.status, "ended"); assert.equal(E.coupon.months_used, 3);
+    // Fixed once, then the account credit comes off after the coupon.
+    const C = k.bl.addCustomer(k.w, { store_name: "Coupon C", plan: "Starter", status: "active" }, "test");
+    C.credit_balance = 50;
+    assert.equal((await k.apply(C.id, "fix-100")).status, 201);
+    await k.run();
+    const [c1] = k.invs(C.id);
+    assert.deepEqual(c1.totals, { subtotal: 746.25, discount: 150, taxable: 596.25, vat: 89.44, total: 685.69 });
+    assert.equal(c1.discount_reason, "Coupon FIX-100; Account credit SAR 50.00"); assert.equal(C.credit_balance, 0); assert.equal(c1.coupon.amount, 100);
+    // Forever on Scale: overage lines are not discounted.
+    const B = (await k.j(`${k.W}/billing/customers`, { store_name: "Coupon B", plan: "Scale", coupon: "TEN-FOREVER" })).body;
+    k.bl.setUsage(k.w, k.st.getOps("billing_customers", k.w.id, B.id), "2026-11", 17000);
+    k.at("2026-12-03T09:00:00Z"); await k.run();
+    const b2 = k.invs(B.id)[1];
+    assert.ok(b2.lines.some((l) => l.kind === "overage" && l.net === 75)); assert.equal(b2.totals.subtotal, 4946.25); assert.equal(b2.totals.discount, 487.13);
+    // 100% once: the invoice is issued at 0 (numbered, QR total 0.00) and paid at once; no card link.
+    k.at("2026-11-03T09:00:00Z");
+    const D = (await k.j(`${k.W}/billing/customers`, { store_name: "Coupon D", plan: "Growth", coupon: "FREE-ONCE" })).body;
+    const [d1] = k.invs(D.id);
+    assert.equal(d1.totals.total, 0); assert.equal(d1.status, "paid"); assert.match(d1.number, /^INV-/); assert.equal(decodeTlv(d1.zatca.qr)[4], "0.00"); assert.equal(d1.payment_link, undefined);
+    assert.ok(!k.st.db.finance_expenses.some((x) => /coupon/i.test(`${x.vendor} ${x.note} ${x.source}`)), "a discount is not an expense");
+    // The printable invoice shows the coupon in English and Arabic; the invoice list carries the reason.
+    const html = (await k.j(`${k.W}/billing/invoices/${a1.id}/print`)).body;
+    assert.match(html, /Discount \(Coupon P20-M3\)/); assert.match(html, /الخصم <span dir="auto">\(كوبون P20-M3\)<\/span>/);
+    assert.ok((await k.j(`${k.W}/billing/invoices`)).body.some((i) => i.id === a1.id && i.discount_reason === "Coupon P20-M3"));
+    assert.match((await k.j(`${k.W}/billing/invoices/${a1.id}/xml`)).body, /<cbc:AllowanceChargeReason>Coupon P20-M3<\/cbc:AllowanceChargeReason>/);
+  } finally { k.done(); }
+});
+
+test("coupons: the lead hook keeps a live coupon on the CRM store (first wins), redeemed when the customer is created from the store; attribution order manual > coupon > ref; commission on the discounted amount; a partner never earns on a coupon it doesn't own", async () => {
+  const k = await cpKit();
+  try {
+    const crm = k.app.locals.crm;
+    const A = (await k.j(k.X, { name: "Coupon Partner A", status: "active", agreement: { commission_pct: 10, recurring_months: 12 } })).body;
+    const B = (await k.j(k.X, { name: "Link Partner B", status: "active", agreement: { commission_pct: 10, recurring_months: 12 } })).body;
+    await k.cp({ code: "NAJD-10", partner_id: A.id, value: 20, duration: "months", months: 3 });
+    await k.cp({ code: "COMPANY-5", value: 5 });
+    const pz = (await k.cp({ code: "ZZ-PAUSED" })).body; await k.j(`${k.X}/coupons/${pz.id}`, { status: "paused" }, "PUT");
+    const hook = (b) => fetch(`${k.b2}/hooks/ads/lead/lead-secret-cp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
+    const h1 = await hook({ email: "one@coupon.example", coupon: "najd-١٠", ref: B.codes[0].code, signup: true });
+    assert.equal(h1.coupon, "NAJD-10"); assert.equal(h1.ref, B.codes[0].code);
+    assert.equal((await hook({ email: "one@coupon.example", coupon: "COMPANY-5" })).coupon, "NAJD-10", "first one wins");
+    assert.equal((await hook({ email: "two@coupon.example", coupon: "ZZ-PAUSED", ref: B.codes[0].code })).coupon, null, "only a live coupon is kept");
+    const h3 = await hook({ email: "three@coupon.example", coupon: "COMPANY-5", ref: B.codes[0].code });
+    const h4 = await hook({ email: "four@coupon.example", coupon: "NAJD-10" });
+    assert.equal(crm.get(k.w.id, h1.id).coupon_code, "NAJD-10");
+    // A deal linked to the coupon store inherits the coupon attribution.
+    const deal = k.st.addDeal(k.w.id, { name: "Coupon deal" }); crm.update(k.w.id, h1.id, { deal_id: deal.id });
+    // Customer from the store: the stored coupon is redeemed (Paying now, so the first invoice is discounted).
+    const c1 = (await k.j(`${k.W}/billing/customers/from-crm/${h1.id}`, { status: "active", plan: "Growth" })).body;
+    assert.equal(c1.coupon.code, "NAJD-10"); assert.equal(c1.coupon.source, "signup (lead hook)");
+    const [i1] = k.invs(c1.id); assert.equal(i1.totals.discount, 336.75); assert.equal(i1.totals.total, 1347);
+    // A company coupon from the store: the discount, but no partner; attribution falls to the ref link (B).
+    const c3 = (await k.j(`${k.W}/billing/customers/from-crm/${h3.id}`, { status: "active", plan: "Growth" })).body;
+    assert.equal(c3.coupon.code, "COMPANY-5"); assert.equal(c3.coupon.partner, null);
+    // A typed coupon must be valid; a stored one that no longer qualifies is skipped with the reason.
+    assert.equal((await k.j(`${k.W}/billing/customers/from-crm/${h4.id}`, { coupon: "ZZ-PAUSED" })).status, 422);
+    const n10 = k.st.db.partners_coupons.find((c) => c.code === "NAJD-10"); n10.status = "paused"; k.st.save();
+    const c4 = (await k.j(`${k.W}/billing/customers/from-crm/${h4.id}`, { status: "active", plan: "Growth" })).body;
+    assert.equal(c4.coupon, null); assert.match(c4.coupon_note, /NAJD-10 wasn't applied: This coupon is paused/);
+    n10.status = "active"; k.st.save();
+    const rows = (await k.j(`${k.X}/attribution`)).body.rows, by = Object.fromEntries(rows.map((r) => [`${r.kind}:${r.ref_id}`, r]));
+    assert.equal(by[`store:${h1.id}`].source, "coupon"); assert.equal(by[`store:${h1.id}`].partner, "Coupon Partner A"); assert.equal(by[`store:${h1.id}`].code, "NAJD-10");
+    assert.equal(by[`deal:${deal.id}`].source, "via store"); assert.equal(by[`deal:${deal.id}`].partner, "Coupon Partner A");
+    assert.equal(by[`customer:${c1.id}`].source, "coupon"); assert.equal(by[`customer:${c1.id}`].partner, "Coupon Partner A");
+    assert.equal(by[`store:${h3.id}`].source, "ref"); assert.equal(by[`customer:${c3.id}`].partner, "Link Partner B"); assert.equal(by[`customer:${c3.id}`].source, "via store");
+    // Commission: 10% of what the customer paid before VAT, i.e. after the 20% coupon.
+    await k.j(`${k.W}/billing/invoices/${i1.id}/payments`, {});
+    const la = (await k.j(`${k.X}/${A.id}`)).body.lines;
+    assert.deepEqual(la.map((l) => [l.kind, l.base_sar, l.amount_sar]), [["commission", 1347, 134.7]]);
+    assert.ok(!(await k.j(`${k.X}/${B.id}`)).body.lines.some((l) => l.customer_id === c1.id), "B's link lost to A's coupon");
+    // A person's choice beats the coupon.
+    const m = (await k.j(`${k.X}/attributions`, { kind: "customer", ref_id: c1.id, code_id: B.codes[0].id })).body;
+    assert.equal((await k.j(`${k.X}/${B.id}`)).body.lines.find((l) => l.customer_id === c1.id).amount_sar, 134.7);
+    assert.equal((await k.j(`${k.X}/${A.id}`)).body.lines.length, 0, "A doesn't earn once the customer is attributed to B");
+    await k.j(`${k.X}/attributions/${m.id}`, undefined, "DELETE");
+    assert.equal((await k.j(`${k.X}/${A.id}`)).body.lines.length, 1);
+    // The partner page counts the coupon customers (one redeemed in Billing, one through its store's coupon_code).
+    const st = (await k.j(`${k.X}/${A.id}`)).body.stats; assert.equal(st.customers, 2); assert.equal(st.paying, 2);
+  } finally { k.done(); }
+});
+
+test("coupons public check /hooks/coupon/<code>: terms only (no partner, counts or notes), same shape when invalid, reason codes, Arabic digits, CORS only for the allowlist, rate-limited", async () => {
+  const k = await cpKit();
+  try {
+    const p = (await k.j(k.X, { name: "Very Secret Partner", status: "active" })).body;
+    await k.cp({ code: "NAJD-10", partner_id: p.id, value: 15, duration: "months", months: 2, note: "internal secret note", max_redemptions: 5, cycles: "monthly", plans: ["Growth"] });
+    await k.cp({ code: "RMD-2026", discount_type: "fixed", value: 100, currency: "SAR" });
+    const ps = (await k.cp({ code: "PAUSED-9" })).body; await k.j(`${k.X}/coupons/${ps.id}`, { status: "paused" }, "PUT");
+    await k.cp({ code: "OLD-CODE", valid_from: "2026-01-01", valid_until: "2026-02-01" });
+    await k.cp({ code: "SOON-CODE", valid_from: "2027-01-01" });
+    const full = (await k.cp({ code: "FULL-ONE", max_redemptions: 1 })).body;
+    const c = k.bl.addCustomer(k.w, { store_name: "Full Store", plan: "Growth", status: "trial" }, "test"); await k.apply(c.id, "FULL-ONE");
+    const get = (code, headers = {}) => fetch(`${k.b2}/hooks/coupon/${encodeURIComponent(code)}`, { headers });
+    const r = await get("najd-10", { Origin: "https://dpa.ad" });
+    assert.equal(r.headers.get("access-control-allow-origin"), "https://dpa.ad"); assert.equal(r.headers.get("cache-control"), "no-store");
+    const txt = await r.text(), body = JSON.parse(txt);
+    assert.deepEqual(Object.keys(body).sort(), ["cycles", "discount", "message", "plans", "reason_code", "valid"]);
+    assert.deepEqual(body, { valid: true, reason_code: null, discount: { type: "percent", value: 15, currency: null, duration: "months", months: 2 }, plans: ["Growth"], cycles: ["monthly"], message: { ar: "خصم 15% لمدة 2 شهر", en: "15% off for 2 billing months" } });
+    assert.doesNotMatch(txt, /Secret|secret|redemption|NAJD|partner/i);
+    const f = await (await get("rmd-٢٠٢٦")).json();
+    assert.equal(f.valid, true); assert.deepEqual(f.discount, { type: "fixed", value: 100, currency: "SAR", duration: "once", months: null }); assert.deepEqual(f.plans, ["Starter", "Growth", "Scale", "Enterprise"]); assert.deepEqual(f.cycles, ["monthly", "yearly"]);
+    const shape = async (code) => { const x = await (await get(code)).json(); assert.deepEqual(Object.keys(x).sort(), ["cycles", "discount", "message", "plans", "reason_code", "valid"]); assert.equal(x.valid, false); assert.equal(x.discount, null); assert.ok(x.message.ar && x.message.en); return x.reason_code; };
+    assert.equal(await shape("NOPE-0000"), "unknown_or_inactive");
+    assert.equal(await shape("PAUSED-9"), "unknown_or_inactive", "paused looks like unknown");
+    assert.equal(await shape("x"), "unknown_or_inactive");
+    assert.equal(await shape("OLD-CODE"), "expired");
+    assert.equal(await shape("SOON-CODE"), "not_yet_valid");
+    assert.equal(await shape("FULL-ONE"), "limit_reached");
+    // CORS: https on dpa.ad or a subdomain only.
+    for (const [o, ok] of [["https://www.dpa.ad", true], ["https://evil.example", false], ["http://dpa.ad", false], ["https://dpa.ad.evil.example", false], ["https://notdpa.ad", false]]) {
+      const x = await get("NAJD-10", { Origin: o });
+      assert.equal(x.headers.get("access-control-allow-origin"), ok ? o : null, o); await x.text();
+    }
+    const pre = await fetch(`${k.b2}/hooks/coupon/NAJD-10`, { method: "OPTIONS", headers: { Origin: "https://dpa.ad", "Access-Control-Request-Method": "GET" } });
+    assert.equal(pre.status, 204); assert.equal(pre.headers.get("access-control-allow-origin"), "https://dpa.ad");
+    assert.equal((await k.as("", `/hooks/coupon/NAJD-10`)).status, 200, "before the login wall");
+    // 30 checks per 10 minutes per IP (14 used above).
+    let last = 0; for (let i = 0; i < 20; i++) { const x = await get("NAJD-10"); last = x.status; await x.text(); }
+    assert.equal(last, 429);
+    assert.equal(full.code, "FULL-ONE");
+  } finally { k.done(); }
+});
+
+test("coupons: Command Center needs (partner coupons expiring in 7 days, 90% of the limit), Ask DPA AD list_coupons and create_coupon (confirm card), sample coupons and redemption removed with sample data, workspace delete", async () => {
+  const { TOOLS } = await import("../lib/assistant.js");
+  const lc = TOOLS.find((t) => t.name === "list_coupons"), cc = TOOLS.find((t) => t.name === "create_coupon");
+  assert.equal(lc.module, "partners"); assert.ok(!lc.write);
+  assert.equal(cc.module, "partners"); assert.equal(cc.write, true); assert.equal(cc.risk, "medium"); assert.equal(typeof cc.preview, "function");
+  let script = [];
+  const fakeClient = async (pp) => { const n = script.shift(); return typeof n === "function" ? n(pp) : n; };
+  const use = (id, name, input) => ({ stop_reason: "tool_use", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
+  const say = (text) => ({ stop_reason: "end_turn", model: "m", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "text", text }] });
+  const k = await cpKit({ assistantClient: fakeClient });
+  try {
+    const needs = async (c = k.ck) => (await k.as(c, `${k.W}/command`)).body.needs.filter((n) => n.module === "Partners" && /oupon/.test(n.title));
+    const p = (await k.j(k.X, { name: "Need Agency", status: "active" })).body, ended = (await k.j(k.X, { name: "Ended Agency", status: "ended" })).body;
+    await k.cp({ code: "SOON-END", partner_id: p.id, valid_until: "2026-11-09" });
+    await k.cp({ code: "ENDED-PT", partner_id: ended.id, valid_until: "2026-11-09" });
+    await k.cp({ code: "LATER-END", partner_id: p.id, valid_until: "2026-11-30" });
+    await k.cp({ code: "TWO-MAX", max_redemptions: 2 });
+    let n = await needs();
+    assert.deepEqual(n.map((x) => x.title), ["Partner coupons expiring"]); assert.match(n[0].text, /1 partner coupon expires within 7 days while the partner is still active: SOON-END \(2026-11-09\)/);
+    const c1 = k.bl.addCustomer(k.w, { store_name: "Need A", plan: "Growth", status: "trial" }, "test"), c2 = k.bl.addCustomer(k.w, { store_name: "Need B", plan: "Growth", status: "trial" }, "test");
+    await k.apply(c1.id, "TWO-MAX");
+    assert.ok(!(await needs()).some((x) => x.title === "Coupons near their limit"), "1 of 2 is 50%");
+    await k.apply(c2.id, "TWO-MAX");
+    n = await needs();
+    assert.ok(n.some((x) => x.title === "Coupons near their limit" && /TWO-MAX \(2\/2\)/.test(x.text)));
+    k.at("2026-11-10T09:00:00Z");
+    assert.ok(!(await needs()).some((x) => x.title === "Partner coupons expiring"), "expired now");
+    const cr = await k.user("creative", "cr");
+    assert.equal((await needs(cr.ck)).length, 0, "hidden without the module");
+    // Ask DPA AD: list (read) and create (write, waits for a confirm).
+    script = [use("c1", "list_coupons", {}), (pp) => { const r = JSON.parse(pp.messages.at(-1).content[0].content); assert.equal(r.total, 4); assert.ok(r.coupons.some((x) => x.code === "TWO-MAX" && x.stats.redemptions === 2)); return say("Four coupons."); }];
+    const a1 = (await k.as(k.ck, "/api/assistant", "POST", { message: "Coupons?", ws: k.w.id })).body;
+    assert.match(a1.reply, /Four coupons/);
+    script = [use("c2", "create_coupon", { code: "eid-15", partner_id: p.id, discount_type: "percent", value: 15, duration: "months", months: 2, valid_until: "2026-12-31" })];
+    const a2 = (await k.as(k.ck, "/api/assistant", "POST", { thread_id: a1.thread_id, message: "Make EID-15", ws: k.w.id })).body;
+    assert.equal(a2.pending.summary, `Create the coupon EID-15: 15% off for 2 billing months for partner #${p.id}, valid until 2026-12-31`);
+    assert.ok(!k.st.db.partners_coupons.some((x) => x.code === "EID-15"));
+    script = [say("Created.")];
+    await k.as(k.ck, "/api/assistant/confirm", "POST", { thread_id: a1.thread_id, action_id: a2.pending.id, approve: true });
+    const eid = k.st.db.partners_coupons.find((x) => x.code === "EID-15");
+    assert.equal(eid.partner_id, p.id); assert.match(eid.log[0].text, /via Ask DPA AD/);
+
+    // Sample data: SAMPLE-RAMADAN (company) and a sample agency coupon redeemed by one sample customer.
+    await k.j(`${k.W}/crm/sample`, {});
+    const loaded = (await k.j(`${k.W}/sample-data`, {})).body;
+    assert.equal(loaded.coupons, 2);
+    const ram = k.st.db.partners_coupons.find((x) => x.code === "SAMPLE-RAMADAN");
+    assert.ok(ram.sample); assert.equal(ram.partner_id, null);
+    const sr = k.st.db.partners_redemptions.filter((x) => x.sample);
+    assert.equal(sr.length, 1);
+    const scust = k.st.getOps("billing_customers", k.w.id, sr[0].customer_id); assert.ok(scust.sample);
+    const rows = (await k.j(`${k.X}/attribution`)).body.rows;
+    assert.equal(rows.find((r) => r.kind === "customer" && r.ref_id === scust.id).source, "coupon");
+    // Sample coupons never go on real customers or answer publicly.
+    const real = k.bl.addCustomer(k.w, { store_name: "Real Store", plan: "Growth", status: "trial" }, "test");
+    assert.equal((await k.apply(real.id, "SAMPLE-RAMADAN")).body.reason_code, "sample");
+    assert.equal((await (await fetch(`${k.b2}/hooks/coupon/SAMPLE-RAMADAN`)).json()).reason_code, "unknown_or_inactive");
+    const rm = (await k.j(`${k.W}/sample-data`, undefined, "DELETE")).body;
+    assert.equal(rm.partner_coupons, 2); assert.equal(rm.partner_redemptions, 1);
+    assert.ok(!k.st.db.partners_coupons.some((x) => x.sample)); assert.ok(!k.st.db.partners_redemptions.some((x) => x.sample));
+    assert.ok(k.st.db.partners_coupons.some((x) => x.code === "EID-15"), "real coupons kept");
+    // No personal data on coupons or redemptions (customer ids only), so data requests need nothing new.
+    assert.ok(k.st.db.partners_redemptions.every((r) => !("email" in r) && !("customer_name" in r)));
+    // Deleting a workspace clears its coupons and redemptions.
+    assert.ok(k.st.deleteWorkspace(k.w.id));
+    for (const coll of ["partners_coupons", "partners_redemptions"]) assert.equal(k.st.db[coll].filter((y) => y.workspace_id === k.w.id).length, 0, coll);
+  } finally { k.done(); }
+});

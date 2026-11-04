@@ -131,13 +131,13 @@ export const REASONS = {
 const refuse = (code) => ({ ok: false, reason_code: code, reason: REASONS[code][0], reason_ar: REASONS[code][1] });
 // The public endpoint only ever says one of these (no enumeration beyond them).
 export const PUBLIC_CODE = { unknown: "unknown_or_inactive", paused: "unknown_or_inactive", sample: "unknown_or_inactive", expired: "expired", not_yet_valid: "not_yet_valid", limit_reached: "limit_reached" };
-export function couponLive(store, cp, today) {
+export function couponLive(store, cp, today, { limit = true } = {}) {
   if (!cp) return refuse("unknown");
   const st = couponState(cp, today);
   if (st === "paused") return refuse("paused");
   if (st === "expired") return refuse("expired");
   if (cp.valid_from && today < cp.valid_from) return refuse("not_yet_valid");
-  if (cp.max_redemptions && redemptionsOf(store, cp).length >= cp.max_redemptions) return refuse("limit_reached");
+  if (limit && cp.max_redemptions && redemptionsOf(store, cp).length >= cp.max_redemptions) return refuse("limit_reached");
   return { ok: true };
 }
 // A first-time customer has never been billed: no issued invoice, not marked "already billed", and no other customer
@@ -156,7 +156,7 @@ export function firstTime(store, wsId, c) {
 }
 // Can this coupon be redeemed by this customer (an existing one, or the fields of one about to be created)?
 export function checkRedeem(store, w, c, cp, today) {
-  const live = couponLive(store, cp, today);
+  const live = couponLive(store, cp, today, { limit: false });
   if (!live.ok) return live;
   if (cp.workspace_id !== String(w.id)) return refuse("unknown");
   if (cp.sample && !c.sample) return refuse("sample");
@@ -169,6 +169,7 @@ export function checkRedeem(store, w, c, cp, today) {
     if (mine.some((r) => r.coupon_id === cp.id)) return refuse("already_used");
     if (mine.length) return refuse("has_coupon");
   }
+  if (cp.max_redemptions && redemptionsOf(store, cp).length >= cp.max_redemptions) return refuse("limit_reached");
   if (cp.first_time_only !== false && !firstTime(store, w.id, c)) return refuse("not_first_time");
   return { ok: true };
 }
