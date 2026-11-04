@@ -1,7 +1,7 @@
 /* Page guides: the round "i" button next to every page title and its pop-up (content in guides.js).
    The button lives in index.html; render() in app.js calls gdSync() on every page. "?" opens the guide for the
    current page (when not typing), Esc closes it, focus stays inside and returns to the button.
-   Who can use a module and the AI agents come from GET /api/guide/meta (fetched once, on the first open).
+   Who can use a module and the AI agents come from GET /api/guide/meta (fetched each time the pop-up opens).
    Uses app.js globals at call time (S, $, esc, go, NAV, NAV_ICON, ROUTES, ROUTE_MODULE, ROUTE_ANY, levelFor, canSee).
    Names start with "gd". */
 
@@ -61,9 +61,9 @@ function gdSync() {
 }
 
 /* ------------------------------------------------ pop-up */
+// Small and read-only: fetched on each open (agent levels change in AI Workforce); the last copy shows meanwhile.
 async function gdLoadMeta() {
-  if (GD.meta) return GD.meta;
-  GD.metaP ||= api("/api/guide/meta").then((m) => (GD.meta = m)).catch(() => { GD.metaP = null; return null; });
+  GD.metaP ||= api("/api/guide/meta").then((m) => (GD.meta = m)).catch(() => GD.meta).finally(() => { GD.metaP = null; });
   return GD.metaP;
 }
 
@@ -88,11 +88,16 @@ function gdAccess(route, meta) {
   const mods = gdModules(route), mine = levelFor(route);
   const you = `<p class="gd-you">Your access: <span class="gd-lvl gd-l-${esc(mine)}">${esc(GD_LEVEL[mine] || mine)}</span> <span class="subtle">(${esc(S.me?.role || "")})</span></p>`;
   if (!meta) return you;
-  const names = Object.fromEntries((S.me?.modules || []).map((m) => [m.id, m.name]));
-  const head = `<tr><th scope="col">Role</th>${mods.map((m) => `<th scope="col">${esc(mods.length > 1 ? (names[m] || m).split(" (")[0] : "Default")}</th>`).join("")}</tr>`;
-  const rows = meta.roles.map((r) => `<tr><th scope="row">${esc(r.name)}</th>${mods.map((m) => { const l = meta.defaults[m]?.[r.id] || "none"; return `<td><span class="gd-lvl gd-l-${esc(l)}">${esc(GD_LEVEL[l] || l)}</span></td>`; }).join("")}</tr>`).join("");
+  const lv = (l) => `<span class="gd-lvl gd-l-${esc(l)}">${esc(GD_LEVEL[l] || l)}</span>`;
+  let grid;
+  if (mods.length === 1) grid = `<ul class="gd-rolegrid">${meta.roles.map((r) => `<li${r.id === S.me?.user?.role_id ? ' class="gd-me"' : ""}><span>${esc(r.name)}</span>${lv(meta.defaults[mods[0]]?.[r.id] || "none")}</li>`).join("")}</ul>`;
+  else {
+    const names = Object.fromEntries((S.me?.modules || []).map((m) => [m.id, m.name]));
+    grid = `<div class="gd-tablewrap"><table class="gd-roles"><thead><tr><th scope="col">Role</th>${mods.map((m) => `<th scope="col">${esc((names[m] || m).split(" (")[0])}</th>`).join("")}</tr></thead>
+      <tbody>${meta.roles.map((r) => `<tr><th scope="row">${esc(r.name)}</th>${mods.map((m) => `<td>${lv(meta.defaults[m]?.[r.id] || "none")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  }
   const link = canSee("access") ? ` <button type="button" class="linklike" data-gdgo="access">Open Teams &amp; roles</button>` : "";
-  return `${you}<div class="gd-tablewrap"><table class="gd-roles">${head}${rows}</table></div><p class="subtle s-small">Built-in defaults. An Owner or Admin can change any role.${link}</p>`;
+  return `${you}${grid}<p class="subtle s-small">Built-in defaults. An Owner or Admin can change any role.${link}</p>`;
 }
 
 function gdAgents(route, meta) {
@@ -124,8 +129,8 @@ function gdBody(route, meta) {
       ${g.map ? `<section class="gd-sec"><h3>The whole system</h3>${gdMap(g.map)}</section>` : ""}
       <section class="gd-sec"><h3>How to do it</h3>${tasks}</section>
       <section class="gd-sec"><h3>Rules &amp; safety</h3><ul class="gd-rules">${g.rules.map((r) => `<li>${gdIcon("M10 2.5 4 5v4.5c0 3.6 2.6 6.6 6 7.5 3.4-.9 6-3.9 6-7.5V5z", 15)}<span>${esc(r)}</span></li>`).join("")}</ul></section>
-      ${gdAgents(route, meta)}
-      <section class="gd-sec"><h3>Who can use it</h3>${gdAccess(route, meta)}</section>
+      <div id="gdAgents">${gdAgents(route, meta)}</div>
+      <section class="gd-sec"><h3>Who can use it</h3><div id="gdAccess">${gdAccess(route, meta)}</div></section>
       <section class="gd-sec"><h3>Learn more</h3>
         ${g.docs.length ? `<p class="s-small">In the repository: ${g.docs.map((d) => `<code>${esc(d)}</code>`).join(", ")}</p>` : ""}
         ${related.length ? `<div class="gd-related">${related.map((r) => `<button type="button" class="btn btn-sm" data-gdgo="${esc(r)}">${esc(gdName(r))}</button>`).join("")}</div>` : ""}
@@ -140,9 +145,11 @@ async function gdOpen() {
   d.innerHTML = gdBody(route, GD.meta);
   d.showModal(); GD.open = true;
   d.querySelector("[data-gdclose]").focus();
-  if (!GD.meta) {
-    const meta = await gdLoadMeta();
-    if (meta && d.open && S.route === route) { const top = d.querySelector(".gd-body")?.scrollTop || 0; d.innerHTML = gdBody(route, meta); d.querySelector("[data-gdclose]").focus(); d.querySelector(".gd-body").scrollTop = top; }
+  const had = GD.meta, meta = await gdLoadMeta();
+  if (meta && meta !== had && d.open && S.route === route) { // refresh only the two parts that use it, so focus and open sections stay
+    const ag = d.querySelector("#gdAgents"), ac = d.querySelector("#gdAccess");
+    if (ag) ag.innerHTML = gdAgents(route, meta);
+    if (ac) ac.innerHTML = gdAccess(route, meta);
   }
 }
 function gdClose() { const d = $("#guideDlg"); if (d?.open) d.close(); }

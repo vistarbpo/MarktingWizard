@@ -1485,7 +1485,7 @@ select.iv-multi { height: auto; min-height: 96px; padding: 6px; background-image
 .gd-head { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border); flex: none; }
 .gd-head h2 { font-size: var(--fs-xl); margin-top: 2px; }
 .gd-body { overflow-y: auto; overscroll-behavior: contain; padding: var(--s-4) var(--s-5) var(--s-5); min-height: 0; }
-.gd-sec + .gd-sec { margin-top: var(--s-5); }
+.gd-sec + .gd-sec, #gdAgents:not(:empty), #gdAgents + .gd-sec { margin-top: var(--s-5); }
 .gd-sec h3 { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin-bottom: var(--s-2); }
 .gd-what { font-size: var(--fs-lg); line-height: 1.5; max-width: 65ch; }
 .gd-status { display: flex; flex-direction: column; gap: var(--s-2); margin-bottom: var(--s-4); }
@@ -1534,9 +1534,12 @@ select.iv-multi { height: auto; min-height: 96px; padding: 6px; background-image
 .gd-agents svg { color: var(--ai); }
 .gd-you { font-size: var(--fs-sm); margin-bottom: var(--s-2); }
 .gd-tablewrap { overflow-x: auto; max-width: 100%; }
-.gd-roles { border-collapse: collapse; font-size: var(--fs-sm); width: 100%; margin-bottom: 6px; }
-.gd-roles th, .gd-roles td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-.gd-roles tr:first-child th { color: var(--text-3); font-weight: 500; font-size: var(--fs-xs); }
+.gd-roles { border-collapse: collapse; font-size: var(--fs-sm); margin-bottom: 6px; }
+.gd-roles th, .gd-roles td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.gd-roles tbody th { text-transform: none; letter-spacing: 0; font-size: var(--fs-sm); color: var(--text); font-weight: 400; }
+.gd-rolegrid { list-style: none; margin: 0 0 6px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.gd-rolegrid li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--r-md); font-size: var(--fs-sm); }
+.gd-rolegrid li.gd-me { border-color: var(--accent); }
 .gd-lvl { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 500; background: var(--surface-2); color: var(--text-3); }
 .gd-l-edit { background: var(--good-soft); color: var(--good); }
 .gd-l-view { background: var(--accent-soft); color: var(--accent); }

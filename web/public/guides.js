@@ -144,6 +144,7 @@ const GUIDES = {
     ],
     tasks: [
       { title: "Update the brief", steps: ["Edit any field in Company, Market, Product or Go-to-market.", "Click Save changes (top right)."] },
+      { title: "Find what is missing", steps: ["Open Overview in the Marketing brain.", "Click a question in What the engine still needs: it opens the field to fill."] },
     ],
     rules: [
       "Proof points: real results only (ROAS, CTR, time saved, customers).",
@@ -163,7 +164,10 @@ const GUIDES = {
       { title: "Add a note", steps: ["Click Add knowledge.", "Pick a category, give a title and paste the content.", "Click Save note."] },
       { title: "Find a note", steps: ["Click a category chip to filter.", "Click Show all to read a long note."] },
     ],
-    rules: ["Only add facts you can stand behind: the AI repeats what it reads here."],
+    rules: [
+      "Only add facts you can stand behind: the AI repeats what it reads here.",
+      "Notes are shared with everyone whose role can view Marketing.",
+    ],
     docs: ["docs/SOP.md"],
     related: ["brief", "playbooks", "intel"],
   },
@@ -178,7 +182,10 @@ const GUIDES = {
       { title: "Set up KPIs", steps: ["Click Load SOP KPIs, or Add KPI for your own.", "Set a target for each."] },
       { title: "Log this period", steps: ["Type the values in This period.", "Click Save values.", "Click Analyze: it opens the KPI report playbook."] },
     ],
-    rules: ["Log real values only; leave a KPI empty if you don't have the number."],
+    rules: [
+      "Log real values only; leave a KPI empty if you don't have the number.",
+      "Weekly KPIs use ISO weeks (2026-W44), monthly ones use months (2026-10).",
+    ],
     docs: ["docs/SOP.md"],
     related: ["sop", "playbooks", "okr"],
   },
@@ -212,7 +219,10 @@ const GUIDES = {
       { title: "Reuse an output", steps: ["Pick an output in the list.", "Click Copy Markdown, or Delete it."] },
       { title: "Export everything", steps: ["Click Export all as Markdown (top right)."] },
     ],
-    rules: ["Outputs are drafts: check facts before anything goes to a customer."],
+    rules: [
+      "Outputs are drafts: check facts before anything goes to a customer.",
+      "Deleting an output removes it for the whole team.",
+    ],
     docs: ["docs/SOP.md"],
     related: ["playbooks", "overview"],
   },
