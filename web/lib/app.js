@@ -41,6 +41,8 @@ import { createMeetings, loadSampleMeetings, meetingsNeeds, removeSampleMeetings
 import { mountMeetings } from "./meetingsroutes.js";
 import { createPartners, loadSamplePartners, partnersNeeds, removeSamplePartners } from "./partners.js";
 import { mountPartners, mountPartnersPublic } from "./partnersroutes.js";
+import { couponDiscount, couponNeeds, loadSampleCoupons } from "./coupons.js";
+import { createCouponService, mountCoupons, mountCouponsPublic } from "./couponroutes.js";
 import { createLegal, legalNeeds, loadSampleLegal, removeSampleLegal } from "./legal.js";
 import { mountLegal } from "./legalroutes.js";
 import { createHelp, helpForSupport, helpNeeds, loadSampleHelp, removeSampleHelp } from "./helpcenter.js";
@@ -84,6 +86,9 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const okr = createOkr({ store, crm, provider, workforce, needs: (w) => commandData(w, () => true, null).needs, ...okrOptions });
   const meetings = createMeetings({ store, provider, workforce, ...meetingsOptions }); // Meetings → tasks: the AI Meeting secretary drafts action items from notes
   const partners = createPartners({ store, provider, workforce, ...partnersOptions });
+  // Coupons (Partners & referrals): Billing asks for a coupon discount when it drafts a subscription or proration invoice.
+  billing.hooks.discount = (w, c, inv, kind) => couponDiscount(store, w, c, inv, kind);
+  const coupons = createCouponService({ store, billing, partners });
   const help = createHelp({ store, provider, workforce, ...helpOptions }); // Help center: public /help site; AI Help writer drafts only
   const changelog = createChangelog({ store, provider, workforce, ...changelogOptions }); // Changelog: public /changelog site and feeds; AI Release notes writer drafts only
   const investors = createInvestors({ store, provider, workforce, ...investorsOptions }); // Investor room: metrics pack, data room, share links; AI Investor relations drafts only
@@ -211,6 +216,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountAdsPublic(app, { store, crm, ads });
   mountSuccessPublic(app, { store, success }); // public survey answers at /s/:token
   mountPartnersPublic(app, { store, partners, env }); // referral links /r/:code and the partner portal /p/:token
+  mountCouponsPublic(app, { store, partners }); // GET /hooks/coupon/:code for the dpa.ad signup form (terms only, CORS allowlist, rate-limited)
   mountHelpPublic(app, { store, help, env }); // the public help site /help (published articles only)
   mountChangelogPublic(app, { store, env }); // the public changelog /changelog, RSS and JSON Feed (published entries only)
   mountInvestorsPublic(app, { store, investors, env }); // investor share links /i/<token> (expiry, passcode, allowed items, every view logged)
@@ -246,12 +252,13 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   mountWorkforce(app, { store, workforce });
   mountPeople(app, { store });
   mountCompliance(app, { store, crm, provider, workforce, backups, status, password, env });
-  mountBilling(app, { store, billing, provider, workforce, crm });
+  mountBilling(app, { store, billing, provider, workforce, crm, coupons });
   mountCustomersLite(app, { store, billing, crm });
   mountSuccess(app, { store, success, billing, crm, provider, workforce });
   mountIntel(app, { store, crm, provider, workforce, intel });
   mountOkr(app, { store, crm, provider, workforce, okr, needModule: (label) => NEED_MODULE[label] || null });
   mountMeetings(app, { store, crm, outreach, success, meetings });
+  mountCoupons(app, { store, billing, partners, coupons }); // before mountPartners: /partners/coupons must not be read as a partner id
   mountPartners(app, { store, crm, outreach, partners, env });
   mountLegal(app, { store, crm, legal, env });
   mountHelp(app, { store, help, env });
@@ -1247,7 +1254,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (can("investors")) d.needs = [...investorsNeeds(store, w, { now: investors.now() }), ...d.needs]; // data room viewed today, share links expiring within 3 days, next steps overdue
     if (can("product")) d.needs = [...changelogNeeds(store, w, { now: changelog.now() }), ...d.needs]; // shipped releases with no changelog entry after 3 days, entries in review for 3+ days
     if (can("helpcenter")) d.needs = [...helpNeeds(store, w, { now: help.now() }), ...d.needs]; // articles not reviewed in 180 days, 3+ "not helpful" in 30 days, ticket topics (5+) with no article
-    if (can("partners")) d.needs = [...partnersNeeds(store, crm, w, { now: partners.now() }), ...d.needs]; // statements to approve, approved and unpaid, quiet signed partners
+    if (can("partners")) d.needs = [...couponNeeds(store, w, { now: partners.now() }), ...partnersNeeds(store, crm, w, { now: partners.now() }), ...d.needs]; // + coupons expiring in 7 days (partner active), coupons at 90% of their limit // statements to approve, approved and unpaid, quiet signed partners
     if (can("success")) d.needs = [...successNeeds(success, w, { money: can("billing") }), ...d.needs]; // at-risk customers, renewals without a status, detractors
     billingCommandHook(d, billing, w, can("billing")); // billed MRR and overdue invoices, failed payments, trials ending
     const ok = (label) => !MOD[label] || can(MOD[label]);
@@ -1272,7 +1279,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const counts = loadSampleData(store, w.id);
     counts.success_customers = loadSampleSuccess({ store, billing, success, crm }, w).customers; // sample Billing customers for Customer Success
     counts.meetings = loadSampleMeetings(store, crm, w.id).meetings; // two sample meetings with notes and a rule-based draft
-    counts.partners = loadSamplePartners(store, crm, w.id, partners.now()).partners; // two sample partners with clicks and one draft statement
+    counts.partners = loadSamplePartners(store, crm, w.id, partners.now()).partners;
+    counts.coupons = loadSampleCoupons(store, w.id, partners.now()).coupons; // SAMPLE-RAMADAN (company) and a sample agency coupon redeemed by one sample customer // two sample partners with clicks and one draft statement
     counts.help_articles = loadSampleHelp(store, w.id, help.now()).articles; // three published help articles (AR + EN) and one draft
     counts.changelog_entries = loadSampleChangelog(store, w.id, changelog.now()).entries; // three published changelog entries and one draft for the sample release
     counts.legal_documents = loadSampleLegal(store, w, legal.now()).documents; // an NDA draft and a vendor contract expiring in 20 days

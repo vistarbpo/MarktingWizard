@@ -11,7 +11,7 @@ import { withAgent } from "./agents.js";
 import { PAYING, mrrSar } from "./billing.js";
 import { normEmail, normPhone, riyadhDay } from "./crm.js";
 
-export const COLL = { partners: "partners_partners", codes: "partners_codes", clicks: "partners_clicks", attr: "partners_attributions", statements: "partners_statements", drafts: "partners_drafts" };
+export const COLL = { partners: "partners_partners", codes: "partners_codes", clicks: "partners_clicks", attr: "partners_attributions", statements: "partners_statements", drafts: "partners_drafts", coupons: "partners_coupons", redemptions: "partners_redemptions" };
 export function ensurePartners(store) {
   for (const c of Object.values(COLL)) store.db[c] ||= [];
   if (!store.db.partners_salt || typeof store.db.partners_salt !== "string") store.db.partners_salt = crypto.randomBytes(16).toString("base64url");
@@ -96,7 +96,9 @@ export function suggestCode(name, taken = () => false) {
   for (let i = 0; i < 20; i++) { const c = cleanCode(`${base}-${crypto.randomBytes(2).toString("hex")}`) || `p-${crypto.randomBytes(3).toString("hex")}`; if (!taken(c)) return c; }
   return `p-${crypto.randomBytes(6).toString("hex")}`;
 }
-export const codeTaken = (store, code) => store.db[COLL.codes].some((c) => c.code === code);
+// Unique across the dashboard, coupon codes included (case-insensitive); a partner's own coupon may repeat its referral code.
+export const codeTaken = (store, code, partnerId = null) => store.db[COLL.codes].some((c) => c.code === code)
+  || (store.db[COLL.coupons] || []).some((c) => c.code.toLowerCase() === code && !(partnerId && c.partner_id === partnerId));
 export const findCode = (store, code) => store.db[COLL.codes].find((c) => c.code === cleanCode(code)) || null;
 
 // ---- clicks: no personal data beyond a hashed IP + day (for dedup) and the user agent family
@@ -187,27 +189,34 @@ export function logPush(p, by, text, now = Date.now()) {
 }
 
 // ---- attribution: who brought each CRM store, Sales deal and Billing customer
-// Order: a person's choice (manual) > the lead hook's `ref` field > utm_campaign equal to a code; deals inherit from
-// a store that links to them; customers inherit from their CRM store, then their deal.
+// Order: a person's choice (manual) > a partner's coupon (redeemed by the customer in Billing, or typed at signup and
+// stored on the CRM store as coupon_code by the lead hook) > the lead hook's `ref` field / dpa_ref cookie >
+// utm_campaign equal to a code; deals inherit from a store that links to them; customers inherit from their CRM store,
+// then their deal. Company coupons (no partner) attribute nobody.
 export function attribution(store, crm, wsId) {
   ensurePartners(store);
   const id = String(wsId);
   const codes = new Map(store.listOps(COLL.codes, id).map((c) => [c.code, c]));
   const byId = new Map(store.listOps(COLL.codes, id).map((c) => [c.id, c]));
+  const coupons = new Map(store.listOps(COLL.coupons, id).filter((c) => c.partner_id).map((c) => [c.code, c]));
   const stores = new Map(), deals = new Map(), customers = new Map();
-  const put = (map, key, code, source, at, row = null) => { if (code && !map.has(key)) map.set(key, { code_id: code.id, code: code.code, partner_id: code.partner_id, source, at: at || null, attr_id: row?.id || null }); };
+  const put = (map, key, code, source, at, row = null) => { if (code && !map.has(key)) map.set(key, { code_id: code.coupon_id ? null : code.id, code: code.code, partner_id: code.partner_id, source, at: at || null, attr_id: row?.id || null, ...(code.coupon_id ? { coupon_id: code.coupon_id } : {}) }); };
+  const asCoupon = (cp, partnerId = cp.partner_id) => ({ coupon_id: cp.id, code: cp.code, partner_id: partnerId });
+  const back = (a) => (a.coupon_id ? { coupon_id: a.coupon_id, code: a.code, partner_id: a.partner_id } : byId.get(a.code_id));
   for (const a of store.listOps(COLL.attr, id)) put(a.kind === "store" ? stores : a.kind === "deal" ? deals : customers, a.ref_id, byId.get(a.code_id), "manual", a.at || a.created_at, a);
+  for (const r of store.listOps(COLL.redemptions, id)) if (r.partner_id && r.status !== "removed") put(customers, r.customer_id, { coupon_id: r.coupon_id, code: r.code, partner_id: r.partner_id }, "coupon", r.redeemed_at);
   const contacts = crm ? crm.contacts(id) : [];
   for (const c of contacts) {
     if (stores.has(c.id)) continue;
-    if (c.ref_code && codes.has(c.ref_code)) put(stores, c.id, codes.get(c.ref_code), "ref", c.created_at);
+    if (c.coupon_code && coupons.has(c.coupon_code)) put(stores, c.id, asCoupon(coupons.get(c.coupon_code)), "coupon", c.created_at);
+    else if (c.ref_code && codes.has(c.ref_code)) put(stores, c.id, codes.get(c.ref_code), "ref", c.created_at);
     else if (c.utm?.campaign && codes.has(c.utm.campaign)) put(stores, c.id, codes.get(c.utm.campaign), "utm", c.created_at);
   }
-  for (const c of contacts) if (c.deal_id && stores.has(c.id) && !deals.has(c.deal_id)) put(deals, c.deal_id, byId.get(stores.get(c.id).code_id), "via store", stores.get(c.id).at);
+  for (const c of contacts) if (c.deal_id && stores.has(c.id) && !deals.has(c.deal_id)) put(deals, c.deal_id, back(stores.get(c.id)), "via store", stores.get(c.id).at);
   for (const c of (store.db.billing_customers || []).filter((x) => x.workspace_id === id && !x.archived)) {
     if (customers.has(c.id)) continue;
     const via = (c.crm_contact_id && stores.get(c.crm_contact_id)) || (c.deal_id && deals.get(c.deal_id));
-    if (via) put(customers, c.id, byId.get(via.code_id), via === stores.get(c.crm_contact_id) ? "via store" : "via deal", c.created_at);
+    if (via) put(customers, c.id, back(via), via === stores.get(c.crm_contact_id) ? "via store" : "via deal", c.created_at);
   }
   // A customer referrer never earns from its own account.
   const partnersById = new Map(store.listOps(COLL.partners, id).map((p) => [p.id, p]));
@@ -395,7 +404,7 @@ export function removeSamplePartners(store, wsId) {
     counts[k] = b - store.db[c].length;
   }
   for (const e of (store.db.finance_expenses || []).filter((x) => x.workspace_id === id && x.source === "partners" && x.sample)) store.db.finance_expenses = store.db.finance_expenses.filter((y) => y !== e);
-  return { partners: counts.partners, partner_codes: counts.codes, partner_clicks: counts.clicks, partner_statements: counts.statements };
+  return { partners: counts.partners, partner_codes: counts.codes, partner_clicks: counts.clicks, partner_statements: counts.statements, partner_coupons: counts.coupons, partner_redemptions: counts.redemptions };
 }
 
 // ---- the public portal page /p/<token> (read-only; counts only unless names are allowed)

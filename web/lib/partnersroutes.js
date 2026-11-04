@@ -226,7 +226,7 @@ export function mountPartners(app, { store, crm = null, outreach = null, partner
     const b = req.body || {};
     let code = b.code ? cleanCode(b.code) : suggestCode(p.name, (c) => codeTaken(store, c));
     if (!code) return res.status(422).json({ detail: "Codes are 3–32 characters: lowercase letters, digits and dashes." });
-    if (codeTaken(store, code)) return res.status(409).json({ detail: "That code is taken. Pick another." });
+    if (codeTaken(store, code, p.id)) return res.status(409).json({ detail: "That code is taken. Pick another." });
     const landing = str(b.landing_url, 500);
     if (landing && !hostAllowed(landing, settingsOf(w).allowed_hosts)) return res.status(422).json({ detail: `The landing page must be an https link on ${settingsOf(w).allowed_hosts.join(", ")} (Partners → Settings).` });
     const c = store.addOps(COLL.codes, w.id, { partner_id: p.id, code, landing_url: landing, active: true, created_by: by(req), ...(p.sample ? { sample: true } : {}) }, false);
@@ -337,7 +337,8 @@ export function mountPartners(app, { store, crm = null, outreach = null, partner
     const w = W(req, res); if (!w) return;
     const p = getP(req, res, w); if (!p) return;
     if (store.listOps(COLL.statements, w.id).some((s) => s.partner_id === p.id && ["approved", "paid"].includes(s.status))) return res.status(409).json({ detail: "This partner has approved or paid statements (accounting records): set the status to Ended instead." });
-    for (const c of [COLL.codes, COLL.clicks, COLL.attr, COLL.statements, COLL.drafts]) store.db[c] = store.db[c].filter((x) => !(x.workspace_id === w.id && x.partner_id === p.id));
+    if (store.listOps(COLL.redemptions, w.id).some((r) => r.partner_id === p.id && r.status !== "removed")) return res.status(409).json({ detail: "Customers redeemed this partner's coupons (they keep their discount and attribution): pause the coupons and set the status to Ended instead." });
+    for (const c of [COLL.codes, COLL.clicks, COLL.attr, COLL.statements, COLL.drafts, COLL.coupons, COLL.redemptions]) store.db[c] = store.db[c].filter((x) => !(x.workspace_id === w.id && x.partner_id === p.id));
     store.deleteOps(COLL.partners, w.id, p.id);
     res.json({ ok: true });
   });

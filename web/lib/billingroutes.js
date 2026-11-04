@@ -54,6 +54,8 @@ export function mountBillingPublic(app, { store, billing }) {
 // ---- printable invoice (Arabic + English), with the ZATCA phase 1 QR
 const num = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money = (n, cur) => `${cur} ${num(n)}`;
+// The discount reason in Arabic for the printed invoice ("Coupon RAMADAN-20; Account credit SAR 10.00").
+const arReason = (r) => String(r || "").replace(/\bCoupon\b/g, "كوبون").replace(/\bAccount credit\b/g, "رصيد الحساب");
 const dayBefore = (d) => new Date(Date.parse(d + "T00:00:00Z") - 864e5).toISOString().slice(0, 10);
 export function invoiceHtml(inv, c, w, billing) {
   const s = billing.settings(w), seller = inv.seller || billing.sellerOf(w), buyer = inv.buyer || billing.buyerOf(c);
@@ -110,7 +112,7 @@ th span[lang=ar]{display:block;font-family:Tahoma,Arial,sans-serif}
       ${!vat ? `<p class="muted">Not VAT-registered: no VAT charged · المنشأة غير مسجلة في ضريبة القيمة المضافة</p>` : ""}</div>
     <table class="sum">
       ${row("الإجمالي قبل الخصم", "Subtotal", money(t.subtotal, inv.currency))}
-      ${t.discount ? row("الخصم", `Discount${inv.discount_reason ? ` (${esc(inv.discount_reason)})` : ""}`, "− " + money(t.discount, inv.currency)) : ""}
+      ${t.discount ? row(`الخصم${inv.discount_reason ? ` <span dir="auto">(${esc(arReason(inv.discount_reason))})</span>` : ""}`, `Discount${inv.discount_reason ? ` (${esc(inv.discount_reason)})` : ""}`, "− " + money(t.discount, inv.currency)) : ""}
       ${row("الإجمالي الخاضع للضريبة", "Total excl. VAT", money(t.taxable, inv.currency))}
       ${vat ? row(`ضريبة القيمة المضافة ${Math.round(inv.vat_rate * 100)}%`, `VAT ${Math.round(inv.vat_rate * 100)}%`, money(t.vat, inv.currency)) : ""}
       <tr class="total"><th><span lang="ar">الإجمالي شامل الضريبة</span><span>Total${vat ? " incl. VAT" : ""}</span></th><td>${money(t.total, inv.currency)}</td></tr>
@@ -138,7 +140,7 @@ export function billingCommandHook(d, billing, w, canBilling) {
   return d;
 }
 
-export function mountBilling(app, { store, billing, provider, workforce = null, crm = null }) {
+export function mountBilling(app, { store, billing, provider, workforce = null, crm = null, coupons = null }) {
   const P = "/api/workspaces/:ws/billing";
   const W = (req, res) => { const w = store.getWorkspace(req.params.ws); if (!w) res.status(404).json({ detail: "Workspace not found" }); return w; };
   const by = (req) => req.user?.name || "you";
@@ -204,17 +206,31 @@ export function mountBilling(app, { store, billing, provider, workforce = null, 
     const w = W(req, res); if (!w) return;
     const { o, err } = cleanCustomer(req.body || {}, false);
     if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    // A coupon typed in when the customer is created: checked first (a refusal stops the creation), redeemed before
+    // the first invoice is drafted so it is discounted.
+    const code = str(req.body?.coupon, 40);
+    let cp = null;
+    if (code && coupons) { const r = coupons.check(w, o, code); if (!r.ok) return res.status(422).json({ detail: `Coupon: ${r.reason}`, reason_code: r.reason_code }); cp = r.coupon; }
     const c = billing.addCustomer(w, o, by(req));
+    if (cp) { coupons.apply(w, c, cp, { by: by(req), source: "billing" }); billing.event(c, "coupon", `Coupon ${cp.code}`, by(req)); res.locals.audit = `added customer ${c.store_name.slice(0, 60)} with coupon ${cp.code}`; }
     await runAfter(w);
-    res.status(201).json(billing.enrich(w, c));
+    res.status(201).json({ ...billing.enrich(w, c), coupon: coupons?.summary(w, c) || null });
   });
+  // From a Sales deal or a CRM store: a typed coupon must be valid; otherwise the store's own coupon_code (typed at
+  // signup, stored by the lead hook) is redeemed when it still qualifies, and the reason is returned when it doesn't.
   const fromSource = async (req, res, w, base) => {
+    const stored = base.coupon_code || ""; delete base.coupon_code;
     const { o, err } = cleanCustomer({ ...base, ...(req.body || {}) }, false);
     if (err.length) return res.status(422).json({ detail: err.join("; ") });
+    const typed = str(req.body?.coupon, 40), pseudo = { ...o, sample: !!base.sample };
+    let cp = null, note = "";
+    if (typed && coupons) { const r = coupons.check(w, pseudo, typed); if (!r.ok) return res.status(422).json({ detail: `Coupon: ${r.reason}`, reason_code: r.reason_code }); cp = r.coupon; }
+    else if (stored && coupons) { const r = coupons.check(w, pseudo, stored); if (r.ok) cp = r.coupon; else note = `The store's coupon ${stored} wasn't applied: ${r.reason}`; }
     const c = billing.addCustomer(w, o, by(req));
     if (base.sample) { c.sample = true; store.save(); }
+    if (cp) { coupons.apply(w, c, cp, { by: by(req), source: typed ? "billing" : "signup (lead hook)" }); billing.event(c, "coupon", `Coupon ${cp.code}`, by(req)); res.locals.audit = `added customer ${c.store_name.slice(0, 60)} with coupon ${cp.code}`; }
     await runAfter(w);
-    res.status(201).json(billing.enrich(w, c));
+    res.status(201).json({ ...billing.enrich(w, c), coupon: coupons?.summary(w, c) || null, ...(note ? { coupon_note: note } : {}) });
   };
   app.post(`${P}/customers/from-deal/:dealId`, async (req, res) => {
     const w = W(req, res); if (!w) return;
@@ -223,7 +239,7 @@ export function mountBilling(app, { store, billing, provider, workforce = null, 
     if (linked(w).deals.has(d.id)) return res.status(409).json({ detail: "This deal already has a customer" });
     const ct = crm ? crm.contacts(w.id).find((x) => x.deal_id === d.id) : null;
     await fromSource(req, res, w, { store_name: d.name, platform: d.platform, owner_name: d.contact_name || ct?.owner_name || "", owner_email: normEmail(d.contact_email) || ct?.email || "", owner_phone: d.contact_phone || "",
-      plan: planFor(d.skus).name, domain: ct?.domain || "", crm_contact_id: ct?.id || null, deal_id: d.id, status: d.stage === "trial" ? "trial" : "active", sample: !!d.sample });
+      plan: planFor(d.skus).name, domain: ct?.domain || "", crm_contact_id: ct?.id || null, deal_id: d.id, status: d.stage === "trial" ? "trial" : "active", sample: !!d.sample, coupon_code: ct?.coupon_code || "" });
   });
   app.post(`${P}/customers/from-crm/:contactId`, async (req, res) => {
     const w = W(req, res); if (!w) return;
@@ -231,7 +247,7 @@ export function mountBilling(app, { store, billing, provider, workforce = null, 
     if (!ct) return res.status(404).json({ detail: "Store not found" });
     if (linked(w).contacts.has(ct.id)) return res.status(409).json({ detail: "This store already has a customer" });
     await fromSource(req, res, w, { store_name: ct.store_name, platform: ct.platform, owner_name: ct.owner_name || "", owner_email: ct.email || "", owner_phone: ct.phone ? "+" + ct.phone : "",
-      plan: planFor(ct.products).name, domain: ct.domain || "", crm_contact_id: ct.id, deal_id: ct.deal_id || null, status: ct.stage === "onboarding" ? "trial" : "active", sample: !!ct.sample });
+      plan: planFor(ct.products).name, domain: ct.domain || "", crm_contact_id: ct.id, deal_id: ct.deal_id || null, status: ct.stage === "onboarding" ? "trial" : "active", sample: !!ct.sample, coupon_code: ct.coupon_code || "" });
   });
   app.get(`${P}/customers/:id`, (req, res) => {
     const w = W(req, res); if (!w) return;
@@ -253,7 +269,7 @@ export function mountBilling(app, { store, billing, provider, workforce = null, 
       usage_month: { month, renders: u?.renders || 0, ...overage(c.plan, u?.renders || 0, billing.pricingOf(w)) }, tickets,
       onboarding: contact ? { steps: ONBOARDING_STEPS, done: contact.onboarding || {}, contact_id: contact.id, stage: contact.stage } : null,
       contact: contact ? { id: contact.id, store_name: contact.store_name, stage: contact.stage, email: contact.email, last_reply_at: contact.last_reply_at } : null,
-      deal: deal ? { id: deal.id, name: deal.name, stage: deal.stage } : null, timeline });
+      deal: deal ? { id: deal.id, name: deal.name, stage: deal.stage } : null, timeline, coupon: coupons?.summary(w, c) || null });
   });
   app.put(`${P}/customers/:id`, (req, res) => {
     const w = W(req, res); if (!w) return;

@@ -299,6 +299,9 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
   const setSettings = (w, f) => { w.billing = { ...settings(w), ...f, address: { ...settings(w).address, ...(f.address || {}) } }; store.save(); return settings(w); };
   const vatRate = (w) => (w.finance?.vat_registered ? VAT_RATE : 0);
   const company = (w) => settings(w).legal_name || w.brief.company_name || "DPA AD";
+  // Coupons (Partners & referrals) plug in here: hooks.discount(w, c, inv, kind) returns { amount, reason, meta } for a
+  // subscription or proration invoice, or null. Overage, setup and hand-made invoices are never discounted by a coupon.
+  const hooks = { discount: null };
   const addLog = (w, entry) => {
     const e = store.addOps(L, w.id, { at: new Date().toISOString(), ...entry }, false);
     const all = store.db[L]; if (all.length > 20000) all.splice(0, all.length - 20000);
@@ -363,6 +366,17 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
     c.credit_balance = r2(c.credit_balance - use);
   }
 
+  function applyCoupon(w, c, inv, kind) {
+    if (!hooks.discount || inv.kind !== "invoice") return;
+    let d = null;
+    try { d = hooks.discount(w, c, inv, kind); } catch (e) { log.error?.("[billing] coupon:", e?.message || e); }
+    if (!d || !(d.amount > 0)) return;
+    inv.discount = r2((inv.discount || 0) + d.amount);
+    inv.discount_reason = [d.reason, inv.discount_reason].filter(Boolean).join("; ");
+    inv.coupon = d.meta;
+    recalc(w, inv); store.save();
+  }
+
   async function issue(w, inv, { by = "you" } = {}) {
     if (inv.status !== "draft") throw Object.assign(new Error("Only drafts can be issued"), { status: 409 });
     if (!inv.lines.length) throw Object.assign(new Error("Add at least one line"), { status: 422 });
@@ -370,7 +384,8 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
     inv.vat_rate = inv.kind === "credit_note" ? inv.vat_rate : vatRate(w);
     if (inv.kind === "invoice") applyCredit(c, inv);
     recalc(w, inv);
-    if (inv.kind === "invoice" && !(inv.totals.total > 0)) throw Object.assign(new Error("The invoice total must be more than 0"), { status: 422 });
+    // A 100% coupon may bring an invoice to 0: it is still issued (numbered, in the ZATCA chain) and is paid at once.
+    if (inv.kind === "invoice" && !(inv.totals.total > 0) && !(inv.coupon && inv.totals.total === 0)) throw Object.assign(new Error("The invoice total must be more than 0"), { status: 422 });
     if (inv.vat_rate > 0 && !/^3\d{13}3$/.test(s.vat_number)) throw Object.assign(new Error("Add DPA AD's 15-digit VAT number (starts and ends with 3) in Billing → Settings before issuing tax invoices"), { status: 422 });
     const now = clock(), today = riyadhDay(now);
     const isCredit = inv.kind === "credit_note";
@@ -402,7 +417,8 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
         addLog(w, { kind: "zatca", status: sub.status, invoice_id: inv.id, customer_id: c.id, text: `${inv.number}: ${sub.note}` });
       } catch (e) { inv.zatca.submission = { status: "error", note: String(e.message).slice(0, 200) }; addLog(w, { kind: "zatca", status: "failed", invoice_id: inv.id, text: `${inv.number}: ${e.message}` }); }
     } else setSettings(w, f);
-    if (!isCredit) await paymentLink(w, inv, c);
+    if (!isCredit && amountDue(inv) <= 0.005) { inv.status = "paid"; inv.paid_at = now.toISOString(); }
+    else if (!isCredit) await paymentLink(w, inv, c);
     addLog(w, { kind: "invoice", status: "issued", invoice_id: inv.id, customer_id: c.id, text: `${inv.number} issued: ${inv.currency} ${inv.totals.total.toFixed(2)}${inv.vat_rate ? ` incl. VAT ${inv.totals.vat.toFixed(2)}` : ""}` });
     if (!isCredit) await email(w, c, { subject: `فاتورة ${inv.number} · Invoice ${inv.number}`, text: `مرحباً ${c.owner_name || c.store_name}،\nفاتورتكم ${inv.number} بمبلغ ${inv.currency} ${inv.totals.total.toFixed(2)} تستحق في ${inv.due_date}.${inv.payment_link?.url ? `\nرابط الدفع: ${inv.payment_link.url}` : ""}\n\nHi ${c.owner_name || c.store_name},\nYour invoice ${inv.number} for ${inv.currency} ${inv.totals.total.toFixed(2)} is due on ${inv.due_date}.${inv.payment_link?.url ? `\nPay here: ${inv.payment_link.url}` : ""}\n\n${company(w)}` }, { kind: "invoice_email", invoice_id: inv.id });
     store.save();
@@ -529,6 +545,7 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
     let inv = null;
     if (p.direction === "upgrade") {
       inv = draft(w, c, { lines: [{ kind: "proration", description: `Upgrade ${from} → ${plan}: ${p.remaining_days} of ${p.total_days} days (${p.currency} ${p.charge.toFixed(2)} − unused ${from} ${p.credit.toFixed(2)})`, qty: 1, unit_price: p.net }], period_start: riyadhDay(clock()), period_end: c.period_end, by });
+      applyCoupon(w, c, inv, "proration");
       if (settings(w).auto_issue) await issue(w, inv, { by });
     } else if (p.direction === "downgrade") c.credit_balance = r2((c.credit_balance || 0) - p.net);
     event(c, p.direction === "trial" ? "plan" : p.direction === "same" ? "plan" : p.direction, `${from} → ${plan}${p.direction === "downgrade" ? `; ${c.currency} ${(-p.net).toFixed(2)} account credit` : p.direction === "upgrade" ? `; proration ${c.currency} ${p.net.toFixed(2)}` : ""}`, by);
@@ -586,6 +603,7 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
       if (store.db[I].some((x) => x.workspace_id === w.id && x.period_key === key && x.status !== "void")) return;
       const label = c.cycle === "yearly" ? "yearly" : "monthly";
       const inv = draft(w, c, { lines: [{ kind: "subscription", description: `DPA AD ${c.plan} plan, ${label}: ${start} to ${addDays(end, -1)}`, qty: 1, unit_price: periodPrice(c) }, ...extra], period_key: key, period_start: start, period_end: end, by: "billing run" });
+      applyCoupon(w, c, inv, "subscription");
       out.invoices++;
       if (s.auto_issue) await issue(w, inv, { by: "billing run" });
     };
@@ -719,7 +737,7 @@ export function createBilling({ store, crm = null, senders = null, emailReady = 
     return { customers: cs.length, paying: m.paying, trials: m.trials, mrr_sar: m.mrr_sar, mrr_usd: m.mrr_usd, arr_sar: m.arr_sar, needs: needs(w, now).filter((n) => !n.soft && ["overdue", "failed", "trial"].includes(n.kind)) };
   }
 
-  return { settings, setSettings, customers, getCustomer, addCustomer, updateCustomer, event, invoices, getInvoice, draft, recalc, issue, voidInvoice, creditNote,
+  return { hooks, applyCoupon, settings, setSettings, customers, getCustomer, addCustomer, updateCustomer, event, invoices, getInvoice, draft, recalc, issue, voidInvoice, creditNote,
     recordPayment, failPayment, changePlan, setStatus, setUsage, usageOf, overageLines, runWorkspace, tick, start, stop, webhook, health, enrich, needs, command, ticketsFor,
     listCredits, addLog, pricingOf, vatRate, company, sellerOf, buyerOf, email,
     issueLink: async (w, inv) => { await paymentLink(w, inv, store.getOps(C, w.id, inv.customer_id)); store.save(); } };
