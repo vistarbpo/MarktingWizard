@@ -21,7 +21,7 @@ async function api(path, opts = {}) {
   if (res.status === 401) { location.href = "/login"; throw new Error("Please log in again."); }
   if (!res.ok) {
     let msg = res.statusText;
-    try { const j = await res.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch {}
+    try { const j = await res.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); if (j.enrol_required) location.href = "/login/enrol"; } catch {}
     throw new Error(msg);
   }
   if (res.status === 204) return null;
@@ -698,21 +698,80 @@ window.addEventListener("hashchange", onRoute);
 })();
 
 /* ---------------------------------------------------------------- my account */
-document.addEventListener("click", (e) => {
+// Password change and two-step login (TOTP). Security actions are done here by the person, never by Ask DPA AD.
+const ACCT = { step: "", setup: null, codes: null, info: null };
+document.addEventListener("click", async (e) => {
   if (!e.target.closest('[data-action="account"]')) return;
   const d = $("#dialog"), me = S.me;
-  d.innerHTML = `<form method="dialog" id="acctForm">
+  ACCT.step = ""; ACCT.setup = null; ACCT.codes = null;
+  d.innerHTML = `<form method="dialog" id="acctForm" class="acct-form">
     <div class="card-head" style="padding:20px 24px 0"><div><h2>${esc(me.user.name)}</h2><p class="subtle" style="font-size:13px">${esc(me.role)}${me.user.email ? " · " + esc(me.user.email) : ""}</p></div></div>
     <div class="card-body stack" style="padding:16px 24px">${me.shared_login
-      ? `<p class="muted">You're signed in with the shared team password as Owner. Create your own Owner account in <b>Teams & roles</b>, sign in with it, and give everyone else their own login.</p>`
-      : `<div class="field"><label for="ac-cur">Current password</label><input class="input" id="ac-cur" type="password" autocomplete="current-password"></div>
-         <div class="field"><label for="ac-new">New password (10+ characters)</label><input class="input" id="ac-new" type="password" autocomplete="new-password" minlength="10"></div>`}</div>
-    <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" value="cancel">Close</button>${me.shared_login ? "" : `<button class="btn btn-primary" value="ok">Change password</button>`}</div>
+      ? `<p class="muted">You're signed in with the shared team password as Owner. Create your own Owner account in <b>Teams & roles</b>, sign in with it, and give everyone else their own login. The shared login can't use two-step login.</p>`
+      : `<h3 class="acct-h">Password</h3>
+         <div class="field"><label for="ac-cur">Current password</label><input class="input" id="ac-cur" type="password" autocomplete="current-password"></div>
+         <div class="field"><label for="ac-new">New password (10+ characters)</label><input class="input" id="ac-new" type="password" autocomplete="new-password" minlength="10"><span class="hint">Changing it signs you out on your other devices.</span></div>
+         <div class="row" style="justify-content:flex-end"><button class="btn btn-primary" value="ok">Change password</button></div>
+         <h3 class="acct-h">Two-step login · الدخول بخطوتين</h3><div id="acct2fa" class="stack"><p class="muted">Loading…</p></div>`}</div>
+    <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" value="cancel">Close</button></div>
   </form>`;
   d.showModal();
   d.onclose = async () => {
     if (d.returnValue !== "ok") return;
-    try { await api("/api/me/password", { method: "POST", body: JSON.stringify({ current: $("#ac-cur").value, password: $("#ac-new").value }) }); toast("Password changed"); }
+    try { const r = await api("/api/me/password", { method: "POST", body: JSON.stringify({ current: $("#ac-cur").value, password: $("#ac-new").value }) }); toast(r.sessions_ended ? `Password changed. ${r.sessions_ended} other session${r.sessions_ended > 1 ? "s" : ""} signed out.` : "Password changed"); }
     catch (err) { toast(err.message, true); }
   };
+  if (!me.shared_login) { try { ACCT.info = await api("/api/me/security"); } catch { ACCT.info = null; } acctDraw(); }
+});
+
+function acctDraw() {
+  const box = $("#acct2fa"); if (!box) return;
+  const i = ACCT.info;
+  if (!i) { box.innerHTML = `<p class="muted">Couldn't load. Close and open again.</p>`; return; }
+  const req = i.required ? `<span class="badge warn">Required for your role</span>` : "";
+  if (ACCT.codes) {
+    box.innerHTML = `<p><b>Save these recovery codes now.</b> Each signs you in once if you lose your phone. They won't be shown again.</p>
+      <ol class="acct-codes">${ACCT.codes.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+      <div class="row gap-8"><button class="btn" type="button" data-acct2fa="copy">Copy codes</button><button class="btn btn-primary" type="button" data-acct2fa="done">I've saved them</button></div>`;
+    return;
+  }
+  if (ACCT.step === "setup" && ACCT.setup) {
+    box.innerHTML = `<p class="muted">Scan with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…), then type the 6-digit code it shows.</p>
+      <div class="acct-qr">${ACCT.setup.qr_svg}</div>
+      <p class="subtle" style="font-size:13px">Can't scan? Key: <code class="acct-key">${esc(ACCT.setup.secret.replace(/(.{4})/g, "$1 ").trim())}</code></p>
+      <div class="field"><label for="ac-code">Code from the app</label><input class="input acct-code" id="ac-code" inputmode="numeric" maxlength="7" autocomplete="one-time-code"></div>
+      <div class="row gap-8"><button class="btn" type="button" data-acct2fa="cancel">Cancel</button><button class="btn btn-primary" type="button" data-acct2fa="confirm">Turn on</button></div>`;
+    return;
+  }
+  if (!i.two_step.on) {
+    box.innerHTML = `<p class="row gap-8" style="flex-wrap:wrap"><span class="badge">Off</span>${req}</p>
+      <p class="muted">After your password, sign-in also asks for a code from your phone. Recommended for Owners and Admins.</p>
+      <div><button class="btn btn-primary" type="button" data-acct2fa="start">Set up two-step login</button></div>`;
+    return;
+  }
+  box.innerHTML = `<p class="row gap-8" style="flex-wrap:wrap"><span class="badge good">On</span>${req}<span class="subtle" style="font-size:13px">since ${fmtDate(i.two_step.enrolled_at)} · ${i.two_step.recovery_left} recovery code${i.two_step.recovery_left === 1 ? "" : "s"} left</span></p>
+    <p class="muted" style="font-size:13px">To turn it off or make new recovery codes, confirm with your password and a current code (or a recovery code).${i.required ? " Your role requires it: if you turn it off you set it up again straight away (e.g. on a new phone)." : ""}</p>
+    <div class="grid-2"><div class="field"><label for="ac-pw2">Password</label><input class="input" id="ac-pw2" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="ac-code2">Code or recovery code</label><input class="input" id="ac-code2" autocomplete="one-time-code"></div></div>
+    <div class="row gap-8" style="flex-wrap:wrap"><button class="btn" type="button" data-acct2fa="recovery">New recovery codes</button><button class="btn" type="button" data-acct2fa="disable">Turn off</button></div>`;
+}
+const acctSecond = (v) => (/^\s*\d{3}\s?\d{3}\s*$/.test(v) ? { code: v.replace(/\s/g, "") } : { recovery: v });
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.closest("#acct2fa")) e.preventDefault(); });
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-acct2fa]"); if (!b) return;
+  const act = b.dataset.acct2fa;
+  try {
+    if (act === "start") { ACCT.setup = await api("/api/me/2fa/start", { method: "POST" }); ACCT.step = "setup"; }
+    if (act === "cancel") { ACCT.step = ""; ACCT.setup = null; }
+    if (act === "confirm") { const r = await api("/api/me/2fa/confirm", { method: "POST", body: JSON.stringify({ code: $("#ac-code").value }) }); ACCT.codes = r.recovery_codes; ACCT.step = ""; ACCT.setup = null; toast("Two-step login is on"); }
+    if (act === "copy") { try { await navigator.clipboard.writeText(ACCT.codes.join("\n")); toast("Copied"); } catch { toast("Clipboard blocked: copy them by hand", true); } return; }
+    if (act === "done") ACCT.codes = null;
+    if (act === "disable" || act === "recovery") {
+      const body = { password: $("#ac-pw2").value, ...acctSecond($("#ac-code2").value) };
+      if (act === "disable") { const r = await api("/api/me/2fa/disable", { method: "POST", body: JSON.stringify(body) }); toast("Two-step login is off"); if (r.required) { location.href = "/login/enrol"; return; } }
+      else { const r = await api("/api/me/2fa/recovery", { method: "POST", body: JSON.stringify(body) }); ACCT.codes = r.recovery_codes; }
+    }
+    ACCT.info = await api("/api/me/security"); S.me = await api("/api/me");
+    acctDraw();
+  } catch (err) { toast(err.message, true); }
 });

@@ -13,7 +13,7 @@ async function renderAccess(view) {
   await accLoad();
   const canEdit = levelFor("access") === "edit";
   $("#pageActions").innerHTML = `<div class="s-tabs" role="tablist" aria-label="Teams and roles views">
-    ${[["people", "People"], ["roles", "Roles"], ["teams", "Teams"], ["activity", "Activity"]].map(([k, l]) => `<button role="tab" data-acctab="${k}" aria-selected="${ACC.tab === k}">${l}</button>`).join("")}</div>
+    ${[["people", "People"], ["roles", "Roles"], ["teams", "Teams"], ["security", "Login security"], ["activity", "Activity"]].map(([k, l]) => `<button role="tab" data-acctab="${k}" aria-selected="${ACC.tab === k}">${l}</button>`).join("")}</div>
     ${canEdit ? `<button class="btn btn-primary" data-accact="add-person">Add person</button>` : ""}`;
   view.innerHTML = `<section class="s-kpis" id="accKpis"></section><div id="accBody" style="margin-top:20px"></div>`;
   accRerender();
@@ -32,25 +32,28 @@ function accRerender() {
     tile("Owners", active.filter((u) => u.role_id === "owner").length, S.me.shared_login ? "you're on the team password" : "keep at least one", "people"),
     tile("Roles", d.roles.length, `${d.roles.filter((r) => !r.builtin && !DEFAULT_ROLE_IDS.includes(r.id)).length} custom`, "roles"),
     tile("Teams", d.teams.length, d.teams.length ? d.teams.map((t) => t.name).slice(0, 2).join(", ") : "load the starter teams", "teams"),
+    tile("Two-step login", `${active.filter((u) => u.two_step).length}/${active.length}`, d.security.require === "nobody" ? "not required" : `required: ${d.security.require === "all" ? "everyone" : "Owner, Admin"}`, "security"),
     tile("Changes logged", d.audit.length, d.audit[0] ? `last: ${esc(d.audit[0].user_name)}` : "nothing yet", "activity"),
   ].join("");
   document.querySelectorAll("[data-acctab]").forEach((b) => b.getAttribute("role") === "tab" && b.setAttribute("aria-selected", b.dataset.acctab === ACC.tab));
   const body = $("#accBody");
   const notice = S.me.shared_login ? `<div class="card" style="padding:14px 18px;margin-bottom:16px;border-color:var(--warn)"><b>You're signed in with the shared team password.</b> <span class="muted">Add yourself as an Owner below, sign out, and sign in with your email. Then give every teammate their own login, so access and the activity log are per person.</span></div>` : "";
-  body.innerHTML = notice + ({ people: accPeople, roles: accRoles, teams: accTeams, activity: accActivity }[ACC.tab])();
+  const warn = d.security.shared_login_enabled && d.security.require !== "nobody" ? `<div class="card" style="padding:14px 18px;margin-bottom:16px;border-color:var(--warn)"><b>The shared team password still signs in without a second step.</b> <span class="muted">Two-step login is required, but DASHBOARD_PASSWORD bypasses it. An Owner can switch it off in Login security once a personal Owner has two-step login on.</span></div>` : "";
+  body.innerHTML = notice + warn + ({ people: accPeople, roles: accRoles, teams: accTeams, security: accSecurity, activity: accActivity }[ACC.tab])();
 }
 const DEFAULT_ROLE_IDS = ["owner", "admin", "manager", "member", "finance", "viewer"];
 
 function accPeople() {
   const d = ACC.d, canEdit = levelFor("access") === "edit";
   if (!d.users.length) return `<div class="card empty"><h2>No personal logins yet</h2><p>Everyone shares the team password today. Add each person with their email and a temporary password, and pick a role that limits what they can see and change.</p>${canEdit ? `<button class="btn btn-primary" data-accact="add-person">Add the first person</button>` : ""}</div>`;
-  return `<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Last sign-in</th><th>Status</th><th></th></tr></thead><tbody>
+  return `<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Last sign-in</th><th>Two-step</th><th>Status</th><th></th></tr></thead><tbody>
     ${d.users.map((u) => `<tr${u.active ? "" : ' style="opacity:.55"'}><td><b>${esc(u.name)}</b><div class="subtle">${esc(u.email)}</div></td>
       <td><span class="badge ${u.role_id === "owner" ? "accent" : ""}">${esc(roleName(u.role_id))}</span></td>
       <td>${(u.team_ids || []).map((t) => `<span class="badge">${esc(teamName(t))}</span>`).join(" ") || '<span class="subtle">–</span>'}</td>
       <td class="subtle">${u.last_login_at ? fmtDate(u.last_login_at) : "never"}</td>
+      <td>${u.two_step ? '<span class="badge good">On</span>' : `<span class="badge ${u.two_step_required && u.active ? "warn" : ""}">${u.two_step_required && u.active ? "Off · required" : "Off"}</span>`}${u.sessions ? `<div class="subtle" style="font-size:12px">${u.sessions} session${u.sessions > 1 ? "s" : ""}</div>` : ""}</td>
       <td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge">Deactivated</span>'}</td>
-      <td style="text-align:right">${canEdit ? `<button class="btn btn-sm" data-accact="edit-person" data-id="${u.id}">Edit</button>` : ""}</td></tr>`).join("")}
+      <td>${canEdit ? `<div class="acc-acts"><button class="btn btn-sm" data-accact="edit-person" data-id="${u.id}">Edit</button>${u.active ? `<button class="btn btn-sm btn-ghost" data-accact="reset-link" data-id="${u.id}">Create reset link</button>` : ""}${u.two_step ? `<button class="btn btn-sm btn-ghost" data-accact="reset-2fa" data-id="${u.id}">Reset 2FA</button>` : ""}${u.sessions ? `<button class="btn btn-sm btn-ghost" data-accact="sign-out" data-id="${u.id}">Sign out everywhere</button>` : ""}</div>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>`;
 }
 
@@ -81,6 +84,22 @@ function accTeams() {
         <div><span class="eyebrow">Owns</span><div>${(t.modules || []).map((m) => `<span class="badge accent">${esc(modName(m))}</span>`).join(" ") || '<span class="subtle">–</span>'}</div></div>
       </div></div>`;
   }).join("")}</div>`;
+}
+
+function accSecurity() {
+  const d = ACC.d, s = d.security, canEdit = levelFor("access") === "edit", owner = S.me.user.role_id === "owner";
+  const owners2 = d.users.filter((u) => u.active && u.role_id === "owner" && u.two_step).length;
+  const opts = [["nobody", "Nobody (each person chooses)"], ["admins", "Owner and Admin (recommended)"], ["all", "Everyone with a personal login"]];
+  return `<div class="acc-sec"><div class="card"><div class="card-head"><div><h2>Require two-step login for</h2><p class="subtle" style="font-size:13px">After their password, people in scope type a 6-digit code from an authenticator app. Anyone in scope who hasn't set it up is sent straight to the setup and can't use the dashboard until it's done.</p></div></div>
+    <div class="card-body stack" style="padding:14px 18px"><div class="field"><label for="acc-req">Who must use it</label><select class="input" id="acc-req" ${canEdit ? "" : "disabled"}>${opts.map(([k, l]) => `<option value="${k}" ${s.require === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+    <span class="hint">We recommend Owner and Admin. Each person sets it up in My account (their name, top right).</span></div></div></div>
+  <div class="card"><div class="card-head"><div><h2>Shared team password login</h2><p class="subtle" style="font-size:13px">DASHBOARD_PASSWORD (sign-in with no email) is the Owner and can't use two-step login.</p></div><span class="badge ${s.shared_login_enabled ? "warn" : "good"}">${s.shared_login_enabled ? "Enabled" : "Disabled"}</span></div>
+    <div class="card-body stack" style="padding:14px 18px">${s.shared_login_enabled
+      ? `<p class="muted">${s.shared_sessions ? `${s.shared_sessions} browser${s.shared_sessions > 1 ? "s are" : " is"} signed in with it now. ` : ""}Switching it off signs those out at once. It needs a personal Owner login with two-step login on (${owners2} now), so nobody is locked out.</p>
+         ${owner ? `<div><button class="btn" data-accact="shared-off" ${owners2 ? "" : "disabled"}>Disable the shared team password login</button></div>` : `<p class="subtle">Only an Owner can switch it off.</p>`}`
+      : `<p class="muted">Only personal logins work. The team password still signs the session cookies, so keep it secret and long.</p>${owner ? `<div><button class="btn" data-accact="shared-on">Enable it again</button></div>` : ""}`}</div></div>
+  <div class="card"><div class="card-head"><div><h2>Password reset</h2></div><span class="badge ${s.mail_ready ? "good" : ""}">${s.mail_ready ? "Email ready" : "No email (SMTP not set)"}</span></div>
+    <div class="card-body stack" style="padding:14px 18px"><p class="muted">"Forgot password?" on the sign-in page ${s.mail_ready ? "emails a link that works once for 30 minutes" : "can't send anything until SMTP_* is set in hPanel"}. You can also create a one-time link for a person here (People → Create reset link, valid 24 hours) and share it privately. ${s.sessions} session${s.sessions === 1 ? "" : "s"} are signed in across the dashboard.</p></div></div></div>`;
 }
 
 function accActivity() {
@@ -150,6 +169,25 @@ document.addEventListener("click", async (e) => {
   const id = b.dataset.id, act = b.dataset.accact;
   try {
     if (act === "add-person") return personDialog(null);
+    const who = ACC.d.users.find((u) => u.id === id);
+    if (act === "reset-2fa") { if (!confirm(`Reset two-step login for ${who.name}? They set it up again (at their next sign-in if their role requires it).`)) return; await api(`/api/admin/users/${id}/2fa-reset`, { method: "POST" }); toast("Two-step login reset"); }
+    if (act === "sign-out") { const r = await api(`/api/admin/users/${id}/sign-out`, { method: "POST" }); toast(`Signed out of ${r.ended} session${r.ended === 1 ? "" : "s"}`); }
+    if (act === "reset-link") {
+      if (!confirm(`Create a one-time password reset link for ${who.name}? Any older link stops working.`)) return;
+      const r = await api(`/api/admin/users/${id}/reset-link`, { method: "POST" });
+      const d = $("#dialog");
+      d.innerHTML = `<form method="dialog" class="acct-form"><div style="padding:20px 24px 0"><h2>Reset link for ${esc(who.name)}</h2><p class="subtle" style="font-size:13px">Shown once. Works once, until ${fmtDate(r.expires_at)}. Share it privately (not in a group chat).</p></div>
+        <div class="card-body stack" style="padding:16px 24px"><div class="acc-link" id="accLink">${esc(r.link)}</div></div>
+        <div class="row gap-8" style="justify-content:flex-end;padding:0 24px 24px"><button class="btn" type="button" data-accact="copy-link">Copy</button><button class="btn btn-primary" value="ok">Done</button></div></form>`;
+      d.onclose = null; d.showModal(); ACC.link = r.link;
+    }
+    if (act === "copy-link") { try { await navigator.clipboard.writeText(ACC.link || ""); toast("Copied"); } catch { toast("Clipboard blocked: select and copy by hand", true); } return; }
+    if (act === "shared-off" || act === "shared-on") {
+      if (act === "shared-off" && !confirm("Disable the shared team password login? Everyone signed in with it is signed out now.")) return;
+      await api("/api/admin/security", { method: "PUT", body: JSON.stringify({ shared_login_disabled: act === "shared-off" }) });
+      if (act === "shared-off" && S.me.shared_login) { location.href = "/login?e=shared_off"; return; }
+      toast(act === "shared-off" ? "Shared login disabled" : "Shared login enabled");
+    }
     if (act === "edit-person") return personDialog(ACC.d.users.find((u) => u.id === id));
     if (act === "add-team") return teamDialog(null);
     if (act === "edit-team") return teamDialog(ACC.d.teams.find((t) => t.id === id));
@@ -170,6 +208,11 @@ document.addEventListener("click", async (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  if (e.target.id === "acc-req" && S.route === "access") {
+    try { await api("/api/admin/security", { method: "PUT", body: JSON.stringify({ require: e.target.value }) }); toast("Saved"); await accLoad(); accRerender(); S.me = await api("/api/me"); if (S.me.enrol_required) location.href = "/login/enrol"; }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
   const s = e.target.closest(".acc-lvl");
   if (!s) return;
   try {

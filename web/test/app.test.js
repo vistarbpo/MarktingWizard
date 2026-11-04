@@ -7623,3 +7623,337 @@ test("coupons: Command Center needs (partner coupons expiring in 7 days, 90% of 
     for (const coll of ["partners_coupons", "partners_redemptions"]) assert.equal(k.st.db[coll].filter((y) => y.workspace_id === k.w.id).length, 0, coll);
   } finally { k.done(); }
 });
+
+// ---- Login security: TOTP two-step login, password reset links, the policy (auth.js, authroutes.js)
+async function authKit({ mail = true, env = {} } = {}) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "mwiz-auth-"));
+  const st = new Store(d), sent = [];
+  let T = Date.parse("2026-11-04T09:00:00Z");
+  const clock = { get: () => T, set: (v) => { T = v; }, add: (ms) => { T += ms; } };
+  const app = createApp({ store: st, provider, password: "pw-auth-team", env: { TOKEN_KEY: "a".repeat(64), PUBLIC_URL: "https://wizard.test", ...env },
+    authOptions: { clock: () => T, ...(mail ? { senders: { email: async (m) => { sent.push(m); return { provider_id: "m" + sent.length }; } } } : {}) } });
+  const srv = app.listen(0); await new Promise((r) => srv.once("listening", r));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const cookies = (r) => r.headers.getSetCookie().map((c) => c.split(";")[0]).filter((c) => !/=$/.test(c));
+  const form = (p, body, { cookie = "", ip = "10.0.0.1" } = {}) => fetch(b + p, { method: "POST", redirect: "manual", headers: { cookie, "x-forwarded-for": ip }, body: new URLSearchParams(body) });
+  const get = (p, { cookie = "", ip = "10.0.0.1" } = {}) => fetch(b + p, { redirect: "manual", headers: { cookie, "x-forwarded-for": ip } });
+  const j = (cookie, p, body, { method, headers = {} } = {}) => fetch(b + p, { method: method || (body ? "POST" : "GET"), redirect: "manual", headers: { "Content-Type": "application/json", cookie, ...headers }, body: body && JSON.stringify(body) })
+    .then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
+  const shared = cookies(await form("/login", { password: "pw-auth-team" }))[0];
+  const addUser = async (name, email, role_id, pw = "personal-pass-1") => (await j(shared, "/api/admin/users", { name, email, password: pw, role_id }));
+  const done = () => { srv.close(); app.locals.crm.flush(); fs.rmSync(d, { recursive: true, force: true }); };
+  return { d, st, app, b, sent, clock, cookies, form, get, j, shared, addUser, done, auth: app.locals.auth };
+}
+
+test("login security: TOTP matches the RFC 6238 SHA-1 vectors, base32 round-trips, ±1 step window and replay guard", async () => {
+  const { hotp, totp, verifyTotp, base32Encode, base32Decode, timeStep, otpauthUri, newRecoveryCodes, normRecovery, twoStepRequired, passwordProblem } = await import("../lib/auth.js");
+  const key = Buffer.from("12345678901234567890");
+  // RFC 6238 appendix B (SHA-1, 8 digits) and the same values truncated to 6 digits.
+  for (const [t, want] of [[59, "94287082"], [1111111109, "07081804"], [1111111111, "14050471"], [1234567890, "89005924"], [2000000000, "69279037"], [20000000000, "65353130"]]) {
+    assert.equal(totp(key, t * 1000, { digits: 8 }), want, String(t));
+    assert.equal(totp(key, t * 1000), want.slice(-6), String(t));
+  }
+  assert.equal(hotp(key, 0), "755224"); // RFC 4226 appendix D
+  const b32 = base32Encode(key);
+  assert.equal(b32, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+  assert.deepEqual(base32Decode(b32.toLowerCase()), key);
+  const t = 1111111111 * 1000, now = timeStep(t);
+  assert.equal(verifyTotp(b32, totp(key, t), t), now);
+  assert.equal(verifyTotp(b32, totp(key, t - 30e3), t), now - 1); // one step behind is fine
+  assert.equal(verifyTotp(b32, totp(key, t + 30e3), t), now + 1);
+  assert.equal(verifyTotp(b32, totp(key, t - 60e3), t), null); // two steps is too far
+  assert.equal(verifyTotp(b32, totp(key, t), t, now), null); // replay: already used
+  assert.equal(verifyTotp(b32, "12345", t), null); assert.equal(verifyTotp(b32, "abcdef", t), null);
+  assert.match(otpauthUri("a@dpa.ad", b32), /^otpauth:\/\/totp\/DPA%20AD:a%40dpa\.ad\?secret=GEZDG.*&issuer=DPA%20AD/);
+  const rc = newRecoveryCodes();
+  assert.equal(rc.codes.length, 10); assert.equal(new Set(rc.codes).size, 10);
+  assert.match(rc.codes[0], /^[a-z2-7]{5}-[a-z2-7]{5}$/);
+  assert.ok(rc.stored.every((s) => s.hash && s.salt && !JSON.stringify(s).includes(normRecovery(rc.codes[0]))));
+  assert.equal(normRecovery(" ABCDE-fghij "), "abcdefghij");
+  assert.equal(twoStepRequired({ require: "admins" }, { id: "1", role_id: "admin" }), true);
+  assert.equal(twoStepRequired({ require: "admins" }, { id: "1", role_id: "member" }), false);
+  assert.equal(twoStepRequired({ require: "all" }, { id: "owner", role_id: "owner" }), false); // the shared login can't
+  assert.match(passwordProblem("short"), /10 characters/); assert.equal(passwordProblem("long-enough-pw"), "");
+});
+
+test("login security: enrolment needs a valid code, second step (valid, wrong, expired, replay, recovery once), lockout, disable, admin reset", async () => {
+  const k = await authKit();
+  const { totp } = await import("../lib/auth.js");
+  try {
+    const own = await k.addUser("Founder", "founder@dpa.ad", "owner");
+    const adm = await k.addUser("Admin Person", "admin@dpa.ad", "admin");
+    const signIn = async (email, password = "personal-pass-1", ip = "10.0.0.2") => k.form("/login", { email, password }, { ip });
+    let r = await signIn("founder@dpa.ad");
+    assert.equal(r.headers.get("location"), "/"); // no two-step yet
+    const oc = k.cookies(r).find((c) => c.startsWith("mwiz="));
+    // Enrolment: a wrong code is refused; it's on only after a valid one.
+    const st = await k.j(oc, "/api/me/2fa/start", {});
+    assert.match(st.uri, /^otpauth:\/\/totp\/DPA%20AD:founder%40dpa\.ad\?secret=[A-Z2-7]+&issuer=DPA%20AD/);
+    assert.match(st.qr_svg, /^<svg[^>]+viewBox/);
+    assert.equal((await k.j(oc, "/api/me/2fa/confirm", { code: "000000" })).status, 422);
+    assert.equal((await k.j(oc, "/api/me")).two_step.on, false);
+    const conf = await k.j(oc, "/api/me/2fa/confirm", { code: totp(st.secret, k.clock.get()) });
+    assert.equal(conf.status, 200); assert.equal(conf.recovery_codes.length, 10);
+    assert.equal((await k.j(oc, "/api/me")).two_step.on, true);
+    assert.equal((await k.j(oc, "/api/me/2fa/start", {})).status, 409);
+    // The secret is sealed at rest; recovery codes are hashed.
+    const raw = fs.readFileSync(path.join(k.d, "db.json"), "utf8");
+    assert.ok(!raw.includes(st.secret)); assert.ok(!raw.includes(conf.recovery_codes[0].replace("-", ""))); assert.ok(!raw.includes(conf.recovery_codes[0]));
+    assert.match(k.st.db.auth_mfa[0].secret, /^v1\./);
+    assert.ok(!(await k.j(k.shared, "/api/admin")).users.some((u) => "secret" in u || "recovery" in u));
+    assert.ok((await k.j(k.shared, "/api/admin")).users.find((u) => u.id === own.id).two_step);
+    // Login now stops at the second step: no session cookie until the code.
+    k.clock.add(60e3);
+    r = await signIn("founder@dpa.ad");
+    assert.equal(r.headers.get("location"), "/login/code");
+    let cs = k.cookies(r); assert.ok(cs.every((c) => !c.startsWith("mwiz=")));
+    let pend = cs.find((c) => c.startsWith("mwiz_pending="));
+    assert.equal((await k.get("/login/code", { cookie: pend })).status, 200);
+    assert.match(await (await k.get("/login/code", { cookie: pend })).text(), /6-digit code/);
+    assert.equal((await k.get("/login/code")).status, 302);
+    r = await k.form("/login/code", { code: "123456" }, { cookie: pend, ip: "10.0.0.2" });
+    assert.match(r.headers.get("location"), /\/login\/code\?e=bad/);
+    const code = totp(st.secret, k.clock.get());
+    r = await k.form("/login/code", { code }, { cookie: pend, ip: "10.0.0.2" });
+    assert.equal(r.headers.get("location"), "/");
+    const oc2 = k.cookies(r).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(oc2, "/api/me")).user.id, own.id);
+    assert.equal(k.st.db.auth_sessions.find((s) => s.user_id === own.id && s.how === "two-step") ? true : false, true);
+    // Replay: the same code (same window) can't be used again.
+    r = await signIn("founder@dpa.ad"); pend = k.cookies(r).find((c) => c.startsWith("mwiz_pending="));
+    r = await k.form("/login/code", { code }, { cookie: pend, ip: "10.0.0.2" });
+    assert.match(r.headers.get("location"), /e=bad/);
+    // Expired pending step (5 minutes).
+    k.clock.add(5 * 60e3 + 1000);
+    r = await k.form("/login/code", { code: totp(st.secret, k.clock.get()) }, { cookie: pend, ip: "10.0.0.2" });
+    assert.equal(r.headers.get("location"), "/login?e=expired");
+    // Recovery code: works once.
+    const rec = conf.recovery_codes[3];
+    r = await signIn("founder@dpa.ad"); pend = k.cookies(r).find((c) => c.startsWith("mwiz_pending="));
+    r = await k.form("/login/code", { mode: "recovery", recovery: rec.toUpperCase() }, { cookie: pend, ip: "10.0.0.2" });
+    assert.equal(r.headers.get("location"), "/");
+    assert.equal((await k.j(oc2, "/api/me/security")).two_step.recovery_left, 9);
+    r = await signIn("founder@dpa.ad"); pend = k.cookies(r).find((c) => c.startsWith("mwiz_pending="));
+    r = await k.form("/login/code", { mode: "recovery", recovery: rec }, { cookie: pend, ip: "10.0.0.2" });
+    assert.match(r.headers.get("location"), /e=badrec/);
+    assert.ok(k.st.db.audit.some((a) => /recovery code \(9 left\)/.test(a.summary)));
+    // 5 wrong codes drop the pending login and count toward the IP lockout (10 per 15 minutes).
+    r = await signIn("founder@dpa.ad", "personal-pass-1", "10.0.0.9"); pend = k.cookies(r).find((c) => c.startsWith("mwiz_pending="));
+    for (let i = 0; i < 4; i++) assert.match((await k.form("/login/code", { code: "000001" }, { cookie: pend, ip: "10.0.0.9" })).headers.get("location"), /e=bad/);
+    assert.equal((await k.form("/login/code", { code: "000001" }, { cookie: pend, ip: "10.0.0.9" })).headers.get("location"), "/login?e=code_dropped");
+    assert.equal((await k.form("/login/code", { code: totp(st.secret, k.clock.get()) }, { cookie: pend, ip: "10.0.0.9" })).headers.get("location"), "/login");
+    assert.equal(k.app.locals.loginAttempts.get("10.0.0.9").n, 5);
+    for (let i = 0; i < 5; i++) await signIn("founder@dpa.ad", "wrong-password-x", "10.0.0.9");
+    assert.equal((await signIn("founder@dpa.ad", "personal-pass-1", "10.0.0.9")).headers.get("location"), "/login?e=locked");
+    assert.ok(k.st.db.audit.some((a) => /stopped after 5 wrong two-step codes/.test(a.summary)));
+    // Disable needs the password and a current code.
+    k.clock.add(60e3);
+    assert.equal((await k.j(oc2, "/api/me/2fa/disable", { password: "wrong", code: totp(st.secret, k.clock.get()) })).status, 422);
+    assert.equal((await k.j(oc2, "/api/me/2fa/disable", { password: "personal-pass-1", code: "000000" })).status, 422);
+    // New recovery codes need the same; the old ones stop working.
+    const nr = await k.j(oc2, "/api/me/2fa/recovery", { password: "personal-pass-1", code: totp(st.secret, k.clock.get()) });
+    assert.equal(nr.recovery_codes.length, 10);
+    k.clock.add(30e3);
+    assert.equal((await k.j(oc2, "/api/me/2fa/disable", { password: "personal-pass-1", recovery: conf.recovery_codes[0] })).status, 422);
+    assert.equal((await k.j(oc2, "/api/me/2fa/disable", { password: "personal-pass-1", code: totp(st.secret, k.clock.get()) })).status, 200);
+    assert.equal((await k.j(oc2, "/api/me")).two_step.on, false);
+    assert.equal((await signIn("founder@dpa.ad")).headers.get("location"), "/");
+    // Admin reset: an Admin can't reset an Owner's; an Owner can reset anyone's. Audit-logged.
+    const ac = k.cookies(await signIn("admin@dpa.ad")).find((c) => c.startsWith("mwiz="));
+    const st2 = await k.j(ac, "/api/me/2fa/start", {});
+    await k.j(ac, "/api/me/2fa/confirm", { code: totp(st2.secret, k.clock.get()) });
+    const st3 = await k.j(oc2, "/api/me/2fa/start", {});
+    await k.j(oc2, "/api/me/2fa/confirm", { code: totp(st3.secret, k.clock.get()) });
+    assert.equal((await k.j(ac, `/api/admin/users/${own.id}/2fa-reset`, {})).status, 403);
+    assert.equal((await k.j(oc2, `/api/admin/users/${adm.id}/2fa-reset`, {})).status, 200);
+    assert.equal((await k.j(oc2, `/api/admin/users/${adm.id}/2fa-reset`, {})).status, 409);
+    assert.ok(k.st.db.audit.some((a) => /reset two-step login for Admin Person/.test(a.summary) && a.user_name === "Founder"));
+    assert.equal((await signIn("admin@dpa.ad")).headers.get("location"), "/");
+    // The shared team password can't enrol.
+    assert.equal((await k.j(k.shared, "/api/me/2fa/start", {})).status, 422);
+  } finally { k.done(); }
+});
+
+test("login security: policy forces enrolment, the shared login can be disabled only with a 2FA Owner, Ask DPA AD can't call security endpoints", async () => {
+  const k = await authKit();
+  const { totp } = await import("../lib/auth.js");
+  const { TOOLS } = await import("../lib/assistant.js");
+  try {
+    const own = await k.addUser("Founder", "founder@dpa.ad", "owner");
+    await k.addUser("Member", "member@dpa.ad", "member");
+    const mc = k.cookies(await k.form("/login", { email: "member@dpa.ad", password: "personal-pass-1" })).find((c) => c.startsWith("mwiz="));
+    const oc = k.cookies(await k.form("/login", { email: "founder@dpa.ad", password: "personal-pass-1" })).find((c) => c.startsWith("mwiz="));
+    const [w] = await fetch(k.b + "/api/workspaces", { headers: { cookie: k.shared } }).then((r) => r.json());
+    // Disabling the shared login is refused while no personal Owner has two-step login.
+    assert.equal((await k.j(oc, "/api/admin/security", { shared_login_disabled: true }, { method: "PUT" })).status, 422);
+    assert.equal((await k.j(oc, "/api/admin/security", { require: "everyone" }, { method: "PUT" })).status, 422);
+    const pol = await k.j(oc, "/api/admin/security", { require: "admins" }, { method: "PUT" });
+    assert.equal(pol.require, "admins");
+    // The Owner's existing session is held to the enrolment; the member is not in scope.
+    const blocked = await k.j(oc, `/api/workspaces/${w.id}/deals`);
+    assert.equal(blocked.status, 403); assert.equal(blocked.enrol_required, true);
+    assert.equal((await k.get("/", { cookie: oc })).headers.get("location"), "/login/enrol");
+    assert.equal((await k.j(oc, "/api/me")).enrol_required, true);
+    assert.equal((await k.j(mc, `/api/workspaces/${w.id}/deals`)).status, 200);
+    // A fresh password login goes straight to enrolment, without a session.
+    let r = await k.form("/login", { email: "founder@dpa.ad", password: "personal-pass-1" });
+    assert.equal(r.headers.get("location"), "/login/enrol");
+    assert.ok(k.cookies(r).every((c) => !c.startsWith("mwiz=")));
+    const pend = k.cookies(r).find((c) => c.startsWith("mwiz_pending="));
+    const page = await (await k.get("/login/enrol", { cookie: pend })).text();
+    assert.match(page, /<svg/); assert.match(page, /Content|code/);
+    const secret = /<span class="mono">([A-Z2-7 ]+)<\/span>/.exec(page)[1].replace(/ /g, "");
+    r = await k.form("/login/enrol", { code: "000000" }, { cookie: pend });
+    assert.equal(r.status, 422);
+    r = await k.form("/login/enrol", { code: totp(secret, k.clock.get()) }, { cookie: pend });
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    assert.equal((html.match(/<li>[a-z2-7]{5}-[a-z2-7]{5}<\/li>/g) || []).length, 10);
+    const oc2 = k.cookies(r).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(oc2, `/api/workspaces/${w.id}/deals`)).status, 200);
+    assert.equal((await k.j(oc, `/api/workspaces/${w.id}/deals`)).status, 200); // enrolled: the old session works again
+    // Ask DPA AD can't reach the security endpoints, and none of its tools point there.
+    const via = { headers: { "x-mwiz-via": "assistant" } };
+    assert.equal((await k.j(oc2, "/api/me/2fa/disable", { password: "personal-pass-1" }, via)).status, 403);
+    assert.equal((await k.j(oc2, "/api/me/password", { current: "x", password: "y" }, via)).status, 403);
+    assert.equal((await k.j(oc2, `/api/admin/users/${own.id}/reset-link`, {}, via)).status, 403);
+    assert.equal((await k.j(oc2, "/api/admin/security", { require: "nobody" }, { method: "PUT", ...via })).status, 403);
+    assert.ok(!JSON.stringify(TOOLS).match(/2fa|reset-link|\/api\/me\/password|admin\/security|sign-out/));
+    // Only an Owner disables the shared login; then it can't sign in and its sessions end.
+    await k.addUser("Admin", "admin@dpa.ad", "admin");
+    assert.equal((await k.j(k.shared, "/api/admin/security", { shared_login_disabled: true }, { method: "PUT" })).status, 200);
+    assert.equal((await k.j(k.shared, "/api/me")).status, 401);
+    r = await k.form("/login", { password: "pw-auth-team" });
+    assert.equal(r.headers.get("location"), "/login?e=shared_off");
+    assert.ok(k.st.db.audit.some((a) => /disabled the shared team password login/.test(a.summary)));
+    const chk = (await k.j(oc2, "/api/compliance")).checks;
+    assert.equal(chk.find((c) => c.id === "shared_login").state, "pass");
+    assert.equal(chk.find((c) => c.id === "two_step").state, "warn"); // the Admin hasn't enrolled
+    // The Admin is forced into enrolment at sign-in.
+    assert.equal((await k.form("/login", { email: "admin@dpa.ad", password: "personal-pass-1" })).headers.get("location"), "/login/enrol");
+    assert.equal((await k.j(oc2, "/api/admin/security", { shared_login_disabled: false }, { method: "PUT" })).shared_login_enabled, true);
+  } finally { k.done(); }
+});
+
+test("login security: password reset is neutral, hashed, single use, expires, newest wins, ends sessions, rate-limited and audited without the token", async () => {
+  const k = await authKit();
+  try {
+    const u = await k.addUser("Reem", "reem@dpa.ad", "member", "old-password-1");
+    const rc = k.cookies(await k.form("/login", { email: "reem@dpa.ad", password: "old-password-1" })).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(rc, "/api/me")).user.id, u.id);
+    assert.match(await (await k.get("/forgot")).text(), /DASHBOARD_PASSWORD/);
+    // The same answer for a known and an unknown email.
+    const known = await k.form("/forgot", { email: "Reem@dpa.ad" }, { ip: "10.1.0.1" });
+    const unknown = await k.form("/forgot", { email: "nobody@dpa.ad" }, { ip: "10.1.0.1" });
+    assert.equal(known.status, 200); assert.equal(unknown.status, 200);
+    const strip = (t) => t.replace(/nonce-[^']+'|nonce="[^"]+"/g, "");
+    assert.equal(strip(await known.text()), strip(await unknown.text()));
+    assert.match(known.headers.get("content-security-policy"), /default-src 'none'/);
+    await k.auth.flush();
+    assert.equal(k.sent.length, 1);
+    const m = k.sent[0];
+    assert.equal(m.to, "reem@dpa.ad"); assert.match(m.subject, /Reset/); assert.match(m.text, /[؀-ۿ]/); assert.ok(!m.headers["List-Unsubscribe"]);
+    const link = /https:\/\/wizard\.test\/reset\/([A-Za-z0-9_-]{43})/.exec(m.text);
+    assert.ok(link); const token = link[1];
+    // Stored as a hash only; never in the audit log.
+    const raw = fs.readFileSync(path.join(k.d, "db.json"), "utf8");
+    assert.ok(!raw.includes(token));
+    assert.equal(k.st.db.auth_resets[0].hash, (await import("node:crypto")).createHash("sha256").update(token).digest("hex"));
+    assert.ok(k.st.db.audit.some((a) => /link emailed/.test(a.summary))); assert.ok(k.st.db.audit.some((a) => /no login \(n•••@dpa\.ad\)/.test(a.summary)));
+    // The page: validation, then success ends every session of that person.
+    assert.equal((await k.get(`/reset/${token}`)).status, 200);
+    assert.equal((await k.get(`/reset/${"x".repeat(43)}`)).status, 410);
+    assert.equal((await k.form(`/reset/${token}`, { password: "short", confirm: "short" })).status, 422);
+    assert.equal((await k.form(`/reset/${token}`, { password: "new-password-12", confirm: "new-password-13" })).status, 422);
+    const ok = await k.form(`/reset/${token}`, { password: "new-password-12", confirm: "new-password-12" });
+    assert.equal(ok.status, 200); assert.match(await ok.text(), /Password changed/);
+    assert.equal((await k.j(rc, "/api/me")).status, 401); // signed out everywhere
+    assert.equal((await k.form("/login", { email: "reem@dpa.ad", password: "old-password-1" })).headers.get("location"), "/login?e=bad");
+    assert.equal((await k.form("/login", { email: "reem@dpa.ad", password: "new-password-12" })).headers.get("location"), "/");
+    // Single use.
+    assert.equal((await k.get(`/reset/${token}`)).status, 410);
+    assert.equal((await k.form(`/reset/${token}`, { password: "another-pass-1", confirm: "another-pass-1" })).status, 410);
+    assert.ok(k.st.db.audit.some((a) => /password reset with a link emailed to them; 1 session ended/.test(a.summary)));
+    assert.ok(k.st.db.audit.every((a) => !JSON.stringify(a).includes(token)));
+    // A newer link invalidates the older one; links expire after 30 minutes.
+    await k.form("/forgot", { email: "reem@dpa.ad" }, { ip: "10.1.0.2" }); await k.auth.flush();
+    await k.form("/forgot", { email: "reem@dpa.ad" }, { ip: "10.1.0.2" }); await k.auth.flush();
+    const [t1, t2] = k.sent.slice(-2).map((x) => /reset\/([A-Za-z0-9_-]{43})/.exec(x.text)[1]);
+    assert.equal((await k.get(`/reset/${t1}`)).status, 410);
+    assert.equal((await k.get(`/reset/${t2}`)).status, 200);
+    k.clock.add(31 * 60e3);
+    assert.equal((await k.get(`/reset/${t2}`)).status, 410);
+    // Rate limits: 5 per email per hour (whether or not it exists), 20 per IP per hour.
+    for (let i = 0; i < 5; i++) assert.equal((await k.form("/forgot", { email: "ghost@dpa.ad" }, { ip: "10.1.1." + i })).status, 200);
+    assert.equal((await k.form("/forgot", { email: "ghost@dpa.ad" }, { ip: "10.1.1.9" })).status, 429);
+    for (let i = 0; i < 20; i++) assert.equal((await k.form("/forgot", { email: `p${i}@dpa.ad` }, { ip: "10.1.2.1" })).status, 200);
+    assert.equal((await k.form("/forgot", { email: "p99@dpa.ad" }, { ip: "10.1.2.1" })).status, 429);
+    k.clock.add(61 * 60e3);
+    assert.equal((await k.form("/forgot", { email: "ghost@dpa.ad" }, { ip: "10.1.1.9" })).status, 200);
+    // The reset page is rate-limited too (10 per IP in 15 minutes).
+    for (let i = 0; i < 10; i++) await k.form(`/reset/${"y".repeat(43)}`, { password: "x" }, { ip: "10.1.3.1" });
+    assert.equal((await k.form(`/reset/${"y".repeat(43)}`, { password: "x" }, { ip: "10.1.3.1" })).status, 429);
+    // A password change in My account ends the other sessions and stops reset links.
+    const c1 = k.cookies(await k.form("/login", { email: "reem@dpa.ad", password: "new-password-12" })).find((c) => c.startsWith("mwiz="));
+    const c2 = k.cookies(await k.form("/login", { email: "reem@dpa.ad", password: "new-password-12" })).find((c) => c.startsWith("mwiz="));
+    await k.form("/forgot", { email: "reem@dpa.ad" }, { ip: "10.1.4.1" }); await k.auth.flush();
+    const t3 = /reset\/([A-Za-z0-9_-]{43})/.exec(k.sent.at(-1).text)[1];
+    const ch = await k.j(c1, "/api/me/password", { current: "new-password-12", password: "third-password-1" });
+    assert.ok(ch.sessions_ended >= 1);
+    assert.equal((await k.j(c1, "/api/me")).status, 200); assert.equal((await k.j(c2, "/api/me")).status, 401);
+    assert.equal((await k.get(`/reset/${t3}`)).status, 410);
+    // Logout ends the session server-side.
+    await fetch(k.b + "/logout", { method: "POST", redirect: "manual", headers: { cookie: c1 } });
+    assert.equal((await k.j(c1, "/api/me")).status, 401);
+  } finally { k.done(); }
+});
+
+test("login security: without SMTP no email is sent, an admin's one-time reset link works once, security checks and the data register", async () => {
+  const k = await authKit({ mail: false });
+  const { securityChecks } = await import("../lib/compliance.js");
+  try {
+    const u = await k.addUser("Sami", "sami@dpa.ad", "member", "sami-password-1");
+    await k.addUser("Lead", "lead@dpa.ad", "manager");
+    const own = await k.addUser("Founder", "founder@dpa.ad", "owner");
+    assert.equal((await k.form("/forgot", { email: "sami@dpa.ad" })).status, 200);
+    await k.auth.flush();
+    assert.equal(k.st.db.auth_resets.length, 0);
+    assert.ok(k.st.db.audit.some((a) => /no email sent \(SMTP is not set up\)/.test(a.summary)));
+    // Admin link: only Teams & roles Edit; Owner targets need an Owner; shown once, works once.
+    const lc = k.cookies(await k.form("/login", { email: "lead@dpa.ad", password: "personal-pass-1" })).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(lc, `/api/admin/users/${u.id}/reset-link`, {})).status, 403);
+    const ac = k.cookies(await k.form("/login", { email: (await k.addUser("Adm", "adm@dpa.ad", "admin")).email, password: "personal-pass-1" })).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(ac, `/api/admin/users/${own.id}/reset-link`, {})).status, 403);
+    const sc = k.cookies(await k.form("/login", { email: "sami@dpa.ad", password: "sami-password-1" })).find((c) => c.startsWith("mwiz="));
+    const lk = await k.j(ac, `/api/admin/users/${u.id}/reset-link`, {});
+    assert.equal(lk.status, 200); assert.match(lk.link, /^https:\/\/wizard\.test\/reset\/[A-Za-z0-9_-]{43}$/);
+    assert.equal(Date.parse(lk.expires_at) - k.clock.get(), 24 * 3600e3);
+    const token = lk.link.split("/").pop();
+    assert.ok(k.st.db.audit.some((a) => /one-time password reset link for Sami/.test(a.summary)));
+    assert.ok(k.st.db.audit.every((a) => !JSON.stringify(a).includes(token)));
+    assert.equal((await k.form(`/reset/${token}`, { password: "sami-new-pass-1", confirm: "sami-new-pass-1" })).status, 200);
+    assert.equal((await k.j(sc, "/api/me")).status, 401);
+    assert.equal((await k.form(`/reset/${token}`, { password: "sami-new-pass-2", confirm: "sami-new-pass-2" })).status, 410);
+    assert.ok(k.st.db.audit.some((a) => /link created by Adm/.test(a.summary)));
+    // Admin "sign out everywhere".
+    const sc2 = k.cookies(await k.form("/login", { email: "sami@dpa.ad", password: "sami-new-pass-1" })).find((c) => c.startsWith("mwiz="));
+    assert.equal((await k.j(ac, `/api/admin/users/${u.id}/sign-out`, {})).ended, 1);
+    assert.equal((await k.j(sc2, "/api/me")).status, 401);
+    // Security checks.
+    const rows = securityChecks({ env: {}, password: "pw-auth-team", store: k.st, crm: null, backupStatus: null, auth: k.auth });
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    assert.equal(by.two_step.state, "fail"); assert.match(by.two_step.detail, /0 of 2/);
+    assert.equal(by.shared_login.state, "warn");
+    assert.equal(by.reset_email.state, "info"); assert.match(by.reset_email.detail, /not set up/);
+    assert.equal(by.sessions.state, "info"); assert.match(by.sessions.detail, /\d+ active sessions? for \d+ login/);
+    const comp = await k.j(k.shared, "/api/compliance");
+    assert.ok(comp.checks.some((c) => c.id === "two_step"));
+    assert.ok(comp.register.some((r) => r.key === "login_security" && /credentials/.test(r.data)));
+    const adm = await k.j(k.shared, "/api/admin");
+    assert.equal(adm.security.mail_ready, false); assert.equal(adm.security.require, "nobody");
+    assert.ok(adm.users.every((x) => "two_step" in x && "sessions" in x && !("hash" in x)));
+    // Old cookies without a session id are no longer accepted.
+    const legacy = k.auth.sign(`owner~${k.clock.get() + 864e5}`);
+    assert.equal((await k.j(`mwiz=${legacy}`, "/api/me")).status, 401);
+  } finally { k.done(); }
+});

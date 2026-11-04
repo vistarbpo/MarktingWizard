@@ -44,6 +44,7 @@ function cmpOverview() {
       ${tile("Open breaches", breaches.length, "with checklist items left", breaches.length ? "warn" : "", "incidents")}
       ${tile("Status page", esc(d.status.components.some((c) => c.state !== "operational") ? "Not all green" : "All green"), "set by hand + self-check", "", "status")}
     </section>
+    ${checks.some((c) => c.id === "shared_login" && c.state === "warn") ? `<div class="card card-pad" style="margin-top:16px;border-color:var(--warn)"><b>The shared team password login is enabled.</b> <span class="muted s-small">Anyone with DASHBOARD_PASSWORD signs in as Owner without two-step login. Once a personal Owner has two-step login on, an Owner can disable it in Teams &amp; roles → Login security.</span></div>` : ""}
     ${d.needs.length ? `<div class="card card-pad" style="margin-top:16px;border-color:var(--warn)"><span class="eyebrow">Needs you</span><ul class="cc-list" style="margin-top:8px">${d.needs.map((n) => `<li><span class="cc-mod" style="background:var(--warn)"></span><span class="s-small">${esc(n.text)}</span></li>`).join("")}</ul></div>` : ""}
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div><h2>Security checks</h2><p class="subtle s-small">Computed live from the server's settings. Fixes are done in hPanel (environment variables) or in Teams &amp; roles.</p></div></div>

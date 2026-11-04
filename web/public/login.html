@@ -14,6 +14,9 @@
   .login { width: 100%; max-width: 380px; }
   .login .brand { padding: 0; margin-bottom: var(--s-5); }
   .err { color: var(--bad); font-size: var(--fs-sm); font-weight: 500; }
+  .login-links { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-sm); }
+  .login-links a { color: var(--accent); }
+  .login-note { font-size: var(--fs-xs); margin: 0; }
 </style>
 </head>
 <body>
@@ -29,12 +32,18 @@
       <input class="input" id="email" name="email" type="email" autocomplete="username" placeholder="you@dpa.ad" autofocus></div>
     <div class="field"><label for="password">Password</label>
       <input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn btn-primary" type="submit" style="height:40px">Sign in</button>
+    <button class="btn btn-primary" type="submit" style="height:40px">Sign in · دخول</button>
+    <div class="login-links"><a href="/forgot">Forgot password? · نسيت كلمة المرور؟</a></div>
+    <p class="subtle login-note">If two-step sign-in is on for you, the app asks for a code next. · إذا فعّلت الدخول بخطوتين، نطلب الرمز بعدها.</p>
   </form>
 </main>
 <script>
 const e = new URLSearchParams(location.search).get("e");
-const m = { bad: "That email or password is wrong. Try again.", locked: "Too many attempts. Wait 15 minutes and try again.", unset: "No password is set yet. Add DASHBOARD_PASSWORD in hPanel's environment variables." }[e];
+const m = { bad: "That email or password is wrong. Try again.", locked: "Too many attempts. Wait 15 minutes and try again.", unset: "No password is set yet. Add DASHBOARD_PASSWORD in hPanel's environment variables.",
+  expired: "The sign-in step expired. Sign in again. · انتهت المهلة، ادخل من جديد.",
+  code_dropped: "Too many wrong codes: sign in again with your password. · رموز خاطئة كثيرة، ادخل من جديد.",
+  code_locked: "Too many wrong two-step codes for this login. Wait 15 minutes or ask an Owner or Admin. · انتظر 15 دقيقة.",
+  shared_off: "The shared team password login is switched off. Sign in with your email and password. · الدخول بكلمة مرور الفريق موقّف." }[e];
 if (m) { const el = document.getElementById("err"); el.textContent = m; el.hidden = false; }
 </script>
 </body>
