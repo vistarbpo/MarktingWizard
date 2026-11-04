@@ -168,6 +168,7 @@ function render() {
     || `<option value="">No workspaces</option>`;
   $("#pageActions").innerHTML = "";
   if (!S.ws) {
+    gdSync();
     $("#crumb").textContent = "";
     $("#pageTitle").textContent = "Welcome";
     $("#view").innerHTML = `<div class="card empty">
@@ -179,6 +180,7 @@ function render() {
   const r = ROUTES[S.route];
   $("#crumb").textContent = `${S.ws.brief.company_name} · ${r.crumb}${levelFor(S.route) === "view" ? " · view only" : ""}`;
   $("#pageTitle").textContent = r.title;
+  gdSync(); // the "i" guide button (guide-ui.js)
   if (!canSee(S.route)) {
     $("#view").innerHTML = `<div class="card empty"><h2>No access</h2><p>Your role (${esc(S.me.role)}) can't open ${esc(r.title)}. Ask an Owner or Admin to change your role in Teams & roles.</p></div>`;
     return;

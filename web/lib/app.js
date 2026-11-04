@@ -8,7 +8,7 @@ import { DEFAULT_KPIS, GAP_TOTAL, LAUNCH_KIT, NOTE_CATEGORIES, PLAYBOOKS, dataGa
 import { LLMError, SYSTEM, buildPrompt } from "./engine.js";
 import { SOP, periodFor } from "./sop.js";
 import { commandSnapshot } from "./command.js";
-import { LEVELS, MODULES, MODULE_IDS, STARTER_TEAMS, checkPassword, describe, hashPassword, levelOk, moduleFor } from "./access.js";
+import { DEFAULT_ROLES, LEVELS, MODULES, MODULE_IDS, STARTER_TEAMS, checkPassword, describe, hashPassword, levelOk, moduleFor } from "./access.js";
 import { CHANNELS as AD_CHANNELS, CREATIVE_TYPES, caseStudyPrompt, classifyAd, parseAdsCsv, roasSummary } from "./roas.js";
 import { CrmStore } from "./crmstore.js";
 import { COST_FIELDS, DEFAULT_PRICING, PLAN_FIELDS, cleanPricing, pricingModel } from "./pricing.js";
@@ -16,7 +16,7 @@ import { createOutreach } from "./outreach.js";
 import { mountCrm, mountCrmPublic } from "./crmroutes.js";
 import { mountCreative } from "./creativeroutes.js";
 import { mountPeople, peopleNeeds } from "./peopleroutes.js";
-import { Workforce, agentFor, withAgent } from "./agents.js";
+import { AGENTS, LEVELS as AGENT_LEVELS, Workforce, agentFor, withAgent } from "./agents.js";
 import { mountWorkforce, workforceSummary } from "./agentroutes.js";
 import { claudeAssistantClient, createAssistant } from "./assistant.js";
 import { createProducts } from "./products.js";
@@ -283,6 +283,18 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     const b = req.body || {};
     try { const r = await assistant.confirm(req, { thread_id: b.thread_id, action_id: b.action_id, approve: !!b.approve }); r.error ? res.status(409).json({ detail: r.error }) : res.json(r); }
     catch (e) { res.status(502).json({ detail: e?.message || "The assistant failed. Try again." }); }
+  });
+
+  // ---- page guides (the "i" pop-up): built-in role defaults per module and the AI agents per page.
+  // Any signed-in person; no secrets. Agent levels only for roles that can view AI Workforce.
+  app.get("/api/guide/meta", (req, res) => {
+    const wf = levelOk(req.perms.workforce, "view");
+    res.json({
+      roles: DEFAULT_ROLES.map((r) => ({ id: r.id, name: r.name })),
+      defaults: Object.fromEntries(MODULE_IDS.map((m) => [m, Object.fromEntries(DEFAULT_ROLES.map((r) => [r.id, r.perms[m] || "none"]))])),
+      agents: AGENTS.map((a) => ({ id: a.id, name: a.name, route: a.route, max: a.max, ...(wf ? { level: workforce.level(a.id) } : {}) })),
+      levels: wf ? AGENT_LEVELS.map((l) => ({ id: l.id, name: l.name })) : null,
+    });
   });
 
   // ---- me
