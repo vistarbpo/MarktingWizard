@@ -32,7 +32,7 @@ downgrade credit should instead wait until the period ends (no credit), which is
 | Standard rate **15%**. | VAT Implementing Regulations; rate in force since 1 July 2020 (Royal Decree A/638) |
 | VAT is charged only when Finance → "VAT registered" is on. | ZATCA: only registered persons charge VAT |
 | Mandatory registration above SAR 375,000 taxable supplies in 12 months; voluntary above SAR 187,500. | VAT Law Art. 50–51 / Implementing Regulations Art. 3 (already in `finance.js`) |
-| VAT is worked out on the taxable total after document discounts (line VAT is shown per line too). Amounts round half-up to 2 decimals. | ZATCA XML implementation standard, rounding rules (BR-KSA-…); *confirm rounding approach* |
+| VAT is worked out on the taxable total after document discounts (coupons, account credit). Line VAT is shown per line only when the invoice has no document discount (otherwise lines show their net and the summary carries the discount and VAT, so the printed numbers always add up). Amounts round half-up to 2 decimals. | ZATCA XML implementation standard, rounding rules (BR-KSA-…); *confirm rounding approach* |
 | Output VAT for the Finance VAT return comes from **issued** invoices (tax point = issue date), minus credit notes. | VAT Implementing Regulations Art. 23 (tax point: earlier of supply, invoice or payment) |
 | Invoices in USD show VAT and the total in SAR too (`TaxCurrencyCode` SAR). | Implementing Regulations Art. 53(8); ZATCA XML standard (BR-KSA-68) |
 | A VAT number is 15 digits starting and ending with 3. | ZATCA XML standard (BR-KSA-39/40) |
@@ -60,6 +60,34 @@ downgrade credit should instead wait until the period ends (no credit), which is
 * Not VAT-registered: invoices are plain invoices without VAT, QR or ZATCA data.
 * **Record keeping**: keep invoices for at least 6 years (VAT Law Art. 66; longer for some records). Data lives in
   `db.json`; **there are no backups yet** (see CLAUDE.md open items).
+
+### 3a. Coupon discounts
+
+Coupons are made in Partners & referrals → Coupons (rules in `docs/partners.md`, section 9). On an invoice:
+
+* A redeemed coupon becomes the invoice's **document discount** (`discount`, `discount_reason: "Coupon <CODE>"`,
+  `coupon: { redemption_id, code, kind, months_used, amount }`). `invoiceTotals()` is unchanged: the discount comes
+  off the subtotal, VAT is 15% of the taxable amount after it, and the ZATCA QR (total and VAT), the UBL XML
+  (`AllowanceCharge` with the reason, `AllowanceTotalAmount`) and the printed invoice all use those same totals.
+* **What is discounted**: subscription lines drafted by the billing run (first invoice, renewals, trial conversion).
+  **Proration (upgrade) invoices**: a *percent* coupon discounts the proration line while it still has months left,
+  without using a month; fixed coupons and "once" coupons don't. **Never discounted**: overage lines (on the renewal
+  invoice or the yearly overage invoice), setup and hand-made one-off invoices.
+* **Percent**: of the subscription lines. **Fixed**: per invoice for "once", per billing month for "N months" and
+  "forever"; only when the coupon currency equals the invoice currency (refused at redemption otherwise: no exchange
+  rate is applied on a tax invoice, even though SAR is pegged at 3.75 per USD). Never more than the subscription lines.
+* **N billing months** count from the first discounted invoice: a monthly invoice uses 1, a yearly invoice 12; when
+  fewer months are left a percent discount is scaled (3 of 12 months → a quarter of the percent on the yearly price)
+  and a fixed amount is given per month left. Months are counted from the discounted invoices that aren't void, so
+  **voiding a discounted invoice gives its month back** (a credit note on a still-issued invoice doesn't).
+* **Account credit** (from downgrades) still comes off after the coupon, in the same document discount
+  ("Coupon X; Account credit SAR 50.00").
+* A **100% coupon** can bring an invoice to 0: it is still issued (numbered, in the ZATCA chain, QR total 0.00), is
+  marked paid at once, and gets no card link. *[CONFIRM] with the accountant that zero-value tax invoices are fine.*
+* **Finance**: a discount is not an expense. Revenue is already net, because Finance income comes from payments on
+  the discounted invoices and output VAT from their VAT. Nothing is posted for a coupon.
+* Removing a coupon before its first discounted invoice is issued takes the discount off drafts; after it, issued
+  invoices are never changed and only future invoices lose the discount.
 
 ## 4. ZATCA phase 1 (generation): the QR code
 
@@ -146,3 +174,5 @@ logged recurring income or the Sales estimate.
 6. Retention period and backup duty for invoice data (`db.json` has no backups yet).
 7. Billing emails without an unsubscribe link under the PDPL.
 8. The phase 2 wave date for DPA AD and the onboarding timeline.
+9. Coupons: zero-value invoices from 100% coupons; whether coupon discounts should show per line (line-level
+   allowance) instead of as a document discount; discounting proration invoices with percent coupons.

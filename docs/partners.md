@@ -28,10 +28,11 @@ Each partner gets a code and a link `https://<PUBLIC_URL>/r/<code>` on creation;
 A CRM store, Sales deal or Billing customer is attributed to a code by, in this order:
 
 1. a person's choice (Attribution tab);
-2. the Paid Ads lead hook (`/hooks/ads/lead/<secret>`): a `ref` field, or the `dpa_ref` cookie when the form posts from the browser, stored on the CRM store as `ref_code` (first touch wins);
-3. `utm_campaign` on the CRM store equal to a code.
+2. a partner's **coupon** (section 9): a Billing customer that redeemed it, or a CRM store whose `coupon_code` (typed at signup, kept by the lead hook) belongs to a partner. Company coupons attribute nobody, so the next rule decides;
+3. the Paid Ads lead hook (`/hooks/ads/lead/<secret>`): a `ref` field, or the `dpa_ref` cookie when the form posts from the browser, stored on the CRM store as `ref_code` (first touch wins);
+4. `utm_campaign` on the CRM store equal to a code.
 
-Deals inherit from a store that links to them; Billing customers inherit from their CRM store, then from their deal. A customer referrer never earns from its own account.
+Deals inherit from a store that links to them; Billing customers inherit from their CRM store, then from their deal (after their own manual or coupon attribution). A customer referrer never earns from its own account. Rows show the source (`manual`, `coupon`, `ref`, `utm`, `via store`, `via deal`) and the code (the referral code, or the coupon code).
 
 Per partner: clicks, leads (attributed stores plus deals not already counted through a store), trials, paying customers, and MRR referred (only for roles with Billing view).
 
@@ -75,10 +76,45 @@ Money is shown with Billing or Finance view; MRR referred only with Billing view
 - Data register entry `partner_contacts`; data requests find partners by contact email or phone, export them with their drafts, and delete clears the contact fields and redacts notes and drafts. Partners, codes and statements stay (accounting records).
 - Sample data: two "Sample ·" partners with clicks and one draft statement (a sample line, not a real payment); removed with Remove sample data.
 
-## 9. For the founder to confirm
+## 9. Coupons
+
+Partners → **Coupons** (and a Coupons section on each partner page). Code: `web/lib/coupons.js`, `web/lib/couponroutes.js`; collections `partners_coupons`, `partners_redemptions`.
+
+A coupon is a code a partner gives to stores (or a company promo code with no partner, e.g. Ramadan). It (1) gives the customer a discount on its subscription invoices and (2) attributes the customer to the partner.
+
+**The coupon**: code (A–Z, 0–9 and `-`, 4–20 characters; typed in any case, Arabic-Indic digits accepted; unique across the dashboard, referral codes included, except that a partner's coupon may repeat its own referral code: that is the default suggestion "Suggest a code from the partner's link"), partner (optional), discount `percent` (1–100) or `fixed` (amount + SAR or USD), duration `once` (first invoice) / `months` (N billing months, 1–36, from the first discounted invoice) / `forever`, plans (all, or a list from `PLANS`), cycles (monthly, yearly or both), first-time customers only (default yes), max redemptions in total (optional), valid from / until (Riyadh days, inclusive), status active or paused (**expired** is worked out from valid until), an internal note, and a change log. Customers keep the terms they redeemed (a snapshot): later edits apply to new redemptions only. A redeemed coupon can't be renamed, moved to another partner or deleted (pause it); a partner whose coupon was redeemed can't be deleted (set it to Ended).
+
+**Redemption** (one per customer, no stacking):
+
+- In Billing: when a customer is created (field "Coupon code"; a refusal stops the creation) or later from the customer drawer ("Apply coupon", with a preview of the next invoice: base, discount, VAT, total).
+- From the signup form: the Paid Ads lead hook takes a `coupon` field and keeps it on the CRM store as `coupon_code` if the coupon is live then (first one wins). When a Billing customer is created from that store (or its deal), the coupon is redeemed if it still qualifies; otherwise the customer is created and the reason is shown.
+- Refused, with the reason in English and Arabic: unknown, paused, expired, not yet valid, plan or cycle not covered, fixed amount in another currency, limit reached, already used by this customer, not a first-time customer, customer already has a coupon, sample coupon on a real customer.
+- **First-time** = never billed: no issued invoice, not added as "already billed", and no other customer record with the same domain that was billed or used a coupon.
+- **Remove** (Billing Edit): before the first discounted invoice is issued, the redemption is removed as if it never happened (drafts lose the discount; it doesn't count to the limit). After it, issued invoices keep their discount and only future invoices change ("stopped"; it still counts as used).
+- Paused or expired coupons stop new redemptions only; customers who already redeemed keep their discount for its duration.
+
+**On invoices**: the coupon is the invoice's document discount "Coupon <CODE>", VAT on the amount after it; overage is never discounted; percent coupons also discount proration (upgrade) invoices; voiding a discounted invoice gives its month back; account credit still applies after the coupon. All the rules are in `docs/billing-zatca.md` section 3a.
+
+**Attribution and commission**: a redemption with a partner attributes the customer to that partner (source `coupon`, after a person's choice and before `ref`, the cookie and `utm_campaign`, section 3). Commission is computed from what the customer actually paid before VAT (Billing payments), so a 20% coupon lowers the commission base by 20%. A partner never earns on a coupon it doesn't own; company coupons earn nobody.
+
+**Public check** for the dpa.ad signup form: `GET /hooks/coupon/<code>` (before the login wall). Answers only `{ valid, reason_code, discount: { type, value, currency, duration, months }, plans, cycles, message: { ar, en } }`, never the partner, the number of redemptions or notes. Invalid codes get the same shape with `valid: false`, `discount: null` and one of `unknown_or_inactive` (unknown, paused or sample), `expired`, `not_yet_valid`, `limit_reached`. CORS only for https origins on the partners allowlist (Settings; default `dpa.ad` and subdomains); 30 checks per 10 minutes per IP; `no-store`. It can't check plan, cycle or first-time rules (the store isn't known yet): Billing checks them at redemption.
+
+**Reports** per coupon: redemptions, active customers, total discount given (issued invoices, before VAT, SAR), and MRR at list price vs paid while coupons run. Money only with Billing or Finance view.
+
+**Permissions**: coupons need Partners View to see and Partners Edit to create or edit; applying or removing on a customer needs Billing Edit (Owner, Admin, Finance by default); a coupon above **50%** or **forever** needs the **Owner** (checked on the server; a default to confirm). Every create, edit, apply and remove is in the activity log.
+
+**Command Center** (with the Partners module): partner coupons expiring within 7 days while the partner is signed or active; coupons at 90% or more of their max redemptions.
+
+**Ask DPA AD**: `list_coupons` (read) and `create_coupon` (write, risk medium, confirm card; the Owner rule applies).
+
+**Data**: coupons hold no personal data; redemptions hold a customer id only (no names, emails or phones), so data requests need nothing new. Sample data adds `SAMPLE-RAMADAN` (company coupon, 20% for 3 months) and `SAMPLE-AGENCY10` on the sample agency, redeemed by one sample Billing customer; sample coupons never go on real customers or answer the public check; all removed with Remove sample data. Deleting a workspace clears its `partners_*` rows, coupons included.
+
+## 10. For the founder to confirm
 
 - Commission terms per partner type (default none; e.g. % and months, or a bounty) and whether bounties are clawed back on refunds (not done today).
 - VAT on commissions paid to Saudi partners and withholding tax for non-resident partners (`[CONFIRM]` with the accountant).
 - Whether negative months (refunds larger than commission) carry forward (today such a statement can't be approved).
 - The referral cookie notice on dpa.ad (PDPL) and the click retention period.
 - The signup form on dpa.ad sends the code as `ref` (it can read `utm_campaign` from the landing URL) to the lead hook.
+- Coupons (defaults chosen, to confirm): percent coupons also discount proration (upgrade) invoices, fixed ones don't; overage is never discounted; no exchange rate for fixed coupons (one coupon per currency); above 50% or forever is Owner-only; "first-time" = never billed and no billed or coupon-using record with the same domain; paused/expired coupons keep running for customers who already redeemed; a manual attribution beats a coupon; 100% coupons issue zero-value invoices (ask the accountant).
+- The signup form on dpa.ad calls `/hooks/coupon/<code>` to show the discount, and sends the code as `coupon` to the lead hook.
