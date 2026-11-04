@@ -327,7 +327,7 @@ const GUIDES = {
     what: "Market intel collects what competitors and the market are doing, shows why deals are won or lost, sizes the market, and drafts a weekly brief.",
     flow: [
       { actor: "person", label: "Add signals and competitors", who: "You" },
-      { actor: "system", label: "Imports signals, watches pages weekly", who: "Automatic" },
+      { actor: "system", label: "Watches switched-on pages weekly", who: "Automatic" },
       { actor: "person", label: "Review each page change", who: "You" },
       { actor: "ai", label: "Drafts the weekly brief with sources", who: "AI Market analyst" },
       { actor: "person", label: "Approve the brief", who: "You" },
@@ -560,7 +560,7 @@ const GUIDES = {
       { actor: "person", label: "Type a goal", who: "You" },
       { actor: "ai", label: "Plans it into tasks", who: "AI Operations planner" },
       { actor: "person", label: "Keep the tasks you want", who: "You" },
-      { actor: "system", label: "Deadlines and renewals show on Home", who: "Automatic" },
+      { actor: "system", label: "Deadlines due within 14 days show on Home", who: "Automatic" },
     ],
     tasks: [
       { title: "Plan work", steps: ["Tasks tab → type a goal in AI planner, click AI: plan it.", "Tick the tasks, click Add selected tasks."] },
@@ -602,7 +602,7 @@ const GUIDES = {
       { actor: "person", label: "Design the org: AI or person per role", who: "Owner" },
       { actor: "ai", label: "Writes the job post, screens candidates", who: "AI Recruiter" },
       { actor: "person", label: "Interview and decide", who: "Hiring manager" },
-      { actor: "person", label: "Sign the offer", who: "Owner" },
+      { actor: "person", label: "Sign the offer", who: "A person" },
     ],
     tasks: [
       { title: "Set up the org", steps: ["Click Org chart (top right) → Load suggested AI-first org, or Add role.", "For each human seat, fill in Why this must be a person."] },
@@ -621,7 +621,7 @@ const GUIDES = {
       { actor: "person", label: "Punch in and out (My day)", who: "Each employee" },
       { actor: "system", label: "Daily status and leave balances", who: "Automatic" },
       { actor: "person", label: "Approve leave and corrections", who: "Manager" },
-      { actor: "system", label: "Payroll draft for the month", who: "Automatic" },
+      { actor: "system", label: "Works out each payroll line", who: "Automatic" },
       { actor: "person", label: "Approve, lock, pay, post to Finance", who: "Payroll editor" },
     ],
     tasks: [
