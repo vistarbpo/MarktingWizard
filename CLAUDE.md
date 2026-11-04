@@ -50,6 +50,8 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   | `catalog.js` | Brief fields, playbooks, KPIs |
   | `engine.js` | Claude provider |
   | `access.js` | Roles, modules, password hashing, `moduleFor()` |
+  | `auth.js` | Login security: sessions (`auth_sessions`, hashed ids), TOTP (RFC 6238, `verifyTotp`, ±1 step, replay guard), recovery codes, reset tokens (`auth_resets`, SHA-256, 30 min / admin 24 h), the policy (`auth_policy`), `createAuth()` (`app.locals.auth`; tests pass `authOptions: { clock, senders }`) |
+  | `authroutes.js` | `mountAuthPublic` (`/login`, `/logout`, `/login/code`, `/login/enrol`, `/forgot`, `/reset/:token`; self-contained pages) and `mountAuth` (`/api/me/security`, `/api/me/2fa/*`, `/api/admin/security`, `/api/admin/users/:id/2fa-reset|reset-link|sign-out`; refused via Ask DPA AD). Docs: `docs/security-compliance.md` section 9 |
   | `platforms.js` | Ecommerce platform list and detection |
 
 - **Store CRM:**
@@ -175,12 +177,13 @@ Node 22 + Express, plain JS ES modules, no build step, no frontend framework.
   2. Make sure the scheduler keeps running on Hostinger (external ping or cron to `/healthz`).
   3. Live end-to-end test of SMTP, IMAP replies, bounces and the WhatsApp webhook once credentials exist.
   4. Error alerts (e.g. Sentry).
-  5. Password-reset email and two-step login.
+  5. ~~Password-reset email and two-step login~~ (done: "Forgot password?", My account → Two-step login, Teams & roles → Login security).
   6. Move to MySQL if the CRM grows past a few hundred thousand messages.
   7. Live end-to-end test of each platform's publishing once the developer apps exist (every API call is only tested with mocks so far).
   8. Billing: ZATCA phase 2 signing (XAdES, CSID key) and validation with the ZATCA SDK; a live Moyasar test payment; the real Salla/Zid payout CSV columns.
 - **The owner's own to-dos:**
   - create a personal Owner login and rotate `DASHBOARD_PASSWORD`
+  - set `TOKEN_KEY` first, then enrol two-step login (My account) on every Owner/Admin login, set Teams & roles → Login security → "Require two-step login for" to Owner and Admin, and disable the shared team password login
   - set up the cold-email domain, mailbox, SPF/DKIM/DMARC and warm-up
   - set up WhatsApp Business (Cloud API) and get the templates approved
   - confirm every payroll rate, the state PT slabs and the leave policy with the CA (`docs/hr-india.md`), add the state and festival holidays, then add the India employees and link their logins

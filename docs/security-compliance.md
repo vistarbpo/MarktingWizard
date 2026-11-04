@@ -205,6 +205,10 @@ Sources to read, using the official versions:
 | Store CRM sending mode | Information only: shows which workspaces are Live. |
 | PUBLIC_URL uses HTTPS | `PUBLIC_URL` starts with `https://`. |
 | Meta webhook secrets are set | `META_APP_SECRET` is set whenever `META_APP_ID` is, and `WA_APP_SECRET` whenever `WA_TOKEN` is. |
+| Owners/Admins use two-step login | Every active personal Owner and Admin has two-step login on (some = warning, none or only the shared password = fail). |
+| Shared team password login is off | The Owner disabled the `DASHBOARD_PASSWORD` login (Teams & roles → Login security). Enabled = warning; the Security & compliance overview also shows a banner. |
+| Password reset email works | Information only: whether SMTP is set, so "Forgot password?" can email a link. |
+| Signed-in sessions | Information only: active sessions, how many logins, how many on the shared password. |
 
 ## 6. Data requests: how Find, Export and Delete work
 
@@ -267,3 +271,23 @@ Tell the person about the first point, and decide the others:
 8. Whether a data protection officer, registration on the National Data Governance Platform, or a published privacy notice is required for DPA AD.
 9. Whether keeping deleted data in backups until they rotate out is acceptable, and what to tell people about it.
 10. The legal entity name and CR number to put in the policies, and who owns each policy.
+
+## 9. Login security (password reset, two-step login, sessions)
+
+Code: `web/lib/auth.js` (TOTP, sessions, tokens, policy) and `web/lib/authroutes.js` (pages and routes). Tests: "login security" in `web/test/app.test.js`.
+
+**Sessions.** Each sign-in creates a session row (`auth_sessions` in `db.json`): only a SHA-256 of the random session id in the cookie is stored, plus the person, times and browser family. Sessions last 30 days. Logging out ends that session on the server. A password change in My account ends the person's other sessions; a reset, an Admin setting a new password, or deactivation ends all of them; Teams & roles → Sign out everywhere does the same on demand. Cookies from before this change (no session id) are refused: everyone signs in once more after the deploy.
+
+**Password reset (personal logins only).** "Forgot password?" on the sign-in page (`/forgot`) always answers the same neutral message, whether the email has a login or not; the work happens after the answer, so timing is the same. The token is 32 random bytes, stored only as a SHA-256 hash, valid 30 minutes, single use; a newer link or any password change stops older links. The email (Arabic + English) goes through the Store CRM's SMTP sender (`SMTP_*`, `MAIL_FROM`) with the link `PUBLIC_URL/reset/<token>`. It is a transactional email sent only because the person asked, so it has no unsubscribe link. Without SMTP no email is sent and the request is only logged; an Owner/Admin can create a one-time link in Teams & roles → People → Create reset link (shown once, valid 24 hours, Owner links only by an Owner). The reset page (`/reset/<token>`) is self-contained (no scripts, nonce'd style, no-store, no referrer) and uses the existing rule: at least 10 characters, typed twice. Limits: 5 requests per email per hour, 20 per IP per hour, 10 reset-page posts per IP per 15 minutes. Every request, use and admin link is in the activity log; tokens never are. The shared team password can't be reset this way: it is `DASHBOARD_PASSWORD` in hPanel.
+
+**Two-step login (TOTP, RFC 6238).** Per personal login, from My account (click your name): scan the QR (`otpauth://totp/DPA%20AD:<email>?secret=…&issuer=DPA%20AD`) or type the key, confirm with a 6-digit code, then save 10 recovery codes (shown once, stored as scrypt hashes). Sign-in: after a correct password, a second page asks for the code or a recovery code; the session is created only then. The step expires after 5 minutes; codes are accepted ±1 time step (30 s) and never twice (replay guard); 5 wrong codes drop that sign-in, every wrong code counts toward the existing lockout (10 failures per IP in 15 minutes), and 10 wrong codes for one login in 15 minutes pause the code step for that login. Turning it off or making new recovery codes needs the password and a current code (or a recovery code). An Owner/Admin can reset a person's two-step login in Teams & roles (Owner logins only by an Owner); it is in the activity log.
+
+**Secrets at rest.** TOTP secrets are sealed with AES-256-GCM using the token key (`seal()` in `social.js`, from `TOKEN_KEY`, else derived from `DASHBOARD_PASSWORD`). **Rotating `TOKEN_KEY` (or the password without a `TOKEN_KEY`) makes every TOTP secret unreadable**: recovery codes still work, and an Owner/Admin resets two-step login so each person enrols again. Set `TOKEN_KEY` before enrolling.
+
+**Policy.** Teams & roles → Login security → "Require two-step login for": nobody (default), Owner and Admin (**recommended**), or everyone with a personal login. A person in scope who hasn't enrolled is sent straight to the setup page after the password, and an already signed-in person can't use the app (pages redirect, API answers 403) until it is done. The shared team password can't use two-step login, so an Owner can **disable the shared team password login**; this is refused unless an active personal Owner login has two-step login on, and it signs out every shared-password session at once. While the shared login is enabled, Security & compliance shows a warning.
+
+**Ask DPA AD** has no security tools, and requests it makes (`x-mwiz-via: assistant`) are refused on `/api/me/password`, `/api/me/2fa/*`, `/api/admin/security` and the per-person reset/sign-out actions.
+
+**Data register.** Row "Login security": session rows, sealed TOTP secrets, recovery-code hashes and reset-token hashes are credentials of the account, not extra personal data; retention: sessions 30 days, reset history 7 days, two-step data until turned off or the account is removed.
+
+**To confirm:** the 24-hour validity of admin-created links, the 10-character minimum (the dashboard's existing rule; 12+ is a common recommendation), the policy choice (Owner and Admin recommended) and whether to disable the shared login once a personal Owner has two-step login.
