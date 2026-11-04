@@ -21,7 +21,10 @@ import { mountWorkforce, workforceSummary } from "./agentroutes.js";
 import { claudeAssistantClient, createAssistant } from "./assistant.js";
 import { createProducts } from "./products.js";
 import { createPublisher } from "./publisher.js";
-import { socialConfig } from "./social.js";
+import { socialConfig, tokenKey } from "./social.js";
+import { createAuth, passwordProblem, twoStepRequired } from "./auth.js";
+import { mountAuth, mountAuthPublic } from "./authroutes.js";
+import { makeSenders } from "./outreach.js";
 import { mountStudio, mountStudioPublic } from "./studioroutes.js";
 import { billingForFinance } from "./billing.js";
 import { billingCommandHook, createBillingService, mountBilling, mountBillingPublic, mountCustomersLite } from "./billingroutes.js";
@@ -66,7 +69,7 @@ const require = createRequire(import.meta.url);
 // Command Center need labels → the module a person needs View on to see them.
 const NEED_MODULE = { Finance: "finance", Hiring: "team", Marketing: "marketing", Operations: "ops", Outreach: "crm", Product: "product", Sales: "sales", "Store CRM": "crm", Support: "support", Creative: "creative", People: "team", Payroll: "payroll", Compliance: "compliance", Billing: "billing", "Paid Ads": "ads", Success: "success", "Market intel": "intel", "Goals & review": "okr", Meetings: "meetings", Partners: "partners", Legal: "legal", "Help center": "helpcenter", Changelog: "product", Investors: "investors", "AI Workforce": "workforce" };
 
-export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, changelogOptions = {}, investorsOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
+export function createApp({ store, provider: baseProvider, password, crm = new CrmStore(store.dir), outreachOptions = {}, assistantClient = null, productOptions = {}, studioOptions = {}, billingOptions = {}, adsOptions = {}, successOptions = {}, intelOptions = {}, okrOptions = {}, meetingsOptions = {}, partnersOptions = {}, legalOptions = {}, helpOptions = {}, changelogOptions = {}, investorsOptions = {}, authOptions = {}, backupOptions = {}, statusOptions = {}, env = process.env }) {
   // AI Workforce: every AI call goes through one provider that attributes it to an agent, enforces the
   // agent's pause switch and budget, and records tokens and cost.
   const workforce = new Workforce(store);
@@ -93,22 +96,12 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const changelog = createChangelog({ store, provider, workforce, ...changelogOptions }); // Changelog: public /changelog site and feeds; AI Release notes writer drafts only
   const investors = createInvestors({ store, provider, workforce, ...investorsOptions }); // Investor room: metrics pack, data room, share links; AI Investor relations drafts only
   const legal = createLegal({ store, provider, workforce, ...legalOptions }); // Legal & documents: vault, renewals, templates; AI Legal assistant drafts only // Partners & referrals: links, attribution, commissions; AI Partnerships manager drafts only
-  // Session cookies are signed with a key derived from the password, so changing it logs everyone out.
-  const secret = crypto.createHash("sha256").update("mwiz:" + password).digest();
-  const sign = (v) => v + "." + crypto.createHmac("sha256", secret).update(v).digest("base64url");
-  // Cookie value is "<userId>~<expiry>" (signed). An older cookie with only "<expiry>" is the Owner.
+  // Who is signed in: sessions, two-step login, reset links and the policy live in auth.js (login security).
   const OWNER = { id: "owner", name: "Owner (team password)", email: "", role_id: "owner", team_ids: [], active: true };
   const userById = (id) => (id === "owner" ? OWNER : store.db.users.find((u) => u.id === id && u.active) || null);
-  const sessionUser = (req) => {
-    const m = /(?:^|;\s*)mwiz=([^;]+)/.exec(req.headers.cookie || "");
-    if (!m || !password) return null;
-    const value = m[1].slice(0, m[1].lastIndexOf("."));
-    const expected = sign(value);
-    if (expected.length !== m[1].length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(m[1]))) return null;
-    const [a, b] = value.split("~");
-    const uid = b === undefined ? "owner" : a, exp = Number(b === undefined ? a : b);
-    return exp > Date.now() ? userById(uid) : null;
-  };
+  const auth = createAuth({ store, password, userById, key: tokenKey(env.TOKEN_KEY, password || env.DASHBOARD_PASSWORD || ""), publicUrl: publicBase(env),
+    senders: authOptions.senders || makeSenders(outreach.cfg), mailReady: () => !!authOptions.senders || outreach.cfg.email.ready, ...(authOptions.clock ? { clock: authOptions.clock } : {}) });
+  const sessionUser = (req) => auth.sessionUser(req);
   const validSession = (req) => !!sessionUser(req);
   const permsOf = (user) => ({ ...Object.fromEntries(MODULE_IDS.map((m) => [m, "none"])), ...(store.db.roles.find((r) => r.id === user.role_id)?.perms || {}) });
 
@@ -116,7 +109,7 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb", verify: (req, res, buf) => { if (req.url.startsWith("/hooks/")) req.rawBody = buf; } }));
-  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help; app.locals.changelog = changelog; app.locals.investors = investors;
+  app.locals.crm = crm; app.locals.outreach = outreach; app.locals.workforce = workforce; app.locals.products = products; app.locals.studio = studio; app.locals.backups = backups; app.locals.status = status; app.locals.billing = billing; app.locals.ads = ads; app.locals.success = success; app.locals.intel = intel; app.locals.okr = okr; app.locals.meetings = meetings; app.locals.partners = partners; app.locals.legal = legal; app.locals.help = help; app.locals.changelog = changelog; app.locals.investors = investors; app.locals.auth = auth;
   // Tag each API request with the agent whose work it is (see agentFor) so AI runs are attributed.
   app.use((req, res, next) => {
     const agent = req.path.startsWith("/api/") ? agentFor(req.method, req.path) : null;
@@ -126,32 +119,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   });
   app.use(express.urlencoded({ extended: false }));
 
-  // ---- login (with a simple brute-force brake)
-  const attempts = new Map();
-  app.post("/login", (req, res) => {
-    const ip = req.ip;
-    const a = attempts.get(ip) || { n: 0, t: Date.now() };
-    if (Date.now() - a.t > 15 * 60e3) { a.n = 0; a.t = Date.now(); }
-    if (a.n >= 10) return res.redirect("/login?e=locked");
-    const given = String(req.body.password || "");
-    const email = String(req.body.email || "").trim().toLowerCase();
-    let uid = null;
-    if (email) {
-      // A person's own login.
-      const u = store.db.users.find((x) => x.email === email && x.active);
-      if (password && u && checkPassword(given, u)) uid = u.id;
-    } else if (password && given.length === password.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(password))) uid = "owner";
-    if (!uid) { a.n++; attempts.set(ip, a); return res.redirect("/login?e=" + (password ? "bad" : "unset")); }
-    attempts.delete(ip);
-    if (uid !== "owner") { const u = store.db.users.find((x) => x.id === uid); u.last_login_at = new Date().toISOString(); store.save(); }
-    const expires = Date.now() + 30 * 864e5;
-    res.setHeader("Set-Cookie", `mwiz=${sign(`${uid}~${expires}`)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${30 * 86400}`);
-    res.redirect("/");
-  });
-  app.post("/logout", (req, res) => {
-    res.setHeader("Set-Cookie", "mwiz=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
-    res.redirect("/login");
-  });
+  // ---- login, second step, forgot password and reset pages (authroutes.js), with the brute-force brake
+  mountAuthPublic(app, { store, auth, password, userById });
   app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
   app.get(["/healthz", "/api/ping"], (req, res) => res.json({ ok: true }));
   app.get("/app.css", (req, res) => res.sendFile(path.join(__dirname, "public", "app.css")));
@@ -229,6 +198,11 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
       return res.redirect("/login");
     }
     req.user = user; req.perms = permsOf(user);
+    // Two-step login required by the policy and not set up yet: nothing but the enrolment until it's done.
+    if (auth.needsEnrol(user) && !["/api/me", "/api/me/security"].includes(req.path) && !req.path.startsWith("/api/me/2fa/")) {
+      if (req.path.startsWith("/api/")) return res.status(403).json({ detail: "Set up two-step login first (your role must use it).", enrol_required: true });
+      return res.redirect("/login/enrol");
+    }
     if (req.path.startsWith("/api/")) {
       const mod = moduleFor(req.method, req.path);
       const need = req.method === "GET" ? "view" : "edit";
@@ -245,13 +219,14 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     next();
   });
 
+  mountAuth(app, { store, auth }); // My account two-step login, Teams & roles login security (never through Ask DPA AD)
   mountCrm(app, { store, crm, outreach, provider, workforce, products });
   mountCreative(app, { store, provider, workforce, crm });
   mountStudio(app, { store, provider, studio });
   mountAds(app, { store, ads, crm });
   mountWorkforce(app, { store, workforce });
   mountPeople(app, { store });
-  mountCompliance(app, { store, crm, provider, workforce, backups, status, password, env });
+  mountCompliance(app, { store, crm, provider, workforce, backups, status, password, env, auth });
   mountBilling(app, { store, billing, provider, workforce, crm, coupons });
   mountCustomersLite(app, { store, billing, crm });
   mountSuccess(app, { store, success, billing, crm, provider, workforce });
@@ -287,15 +262,18 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
 
   // ---- me
   app.get("/api/me", (req, res) => res.json({ user: { id: req.user.id, name: req.user.name, email: req.user.email, role_id: req.user.role_id, team_ids: req.user.team_ids || [] },
-    role: store.db.roles.find((r) => r.id === req.user.role_id)?.name || req.user.role_id, perms: req.perms, modules: MODULES, shared_login: req.user.id === "owner" }));
+    role: store.db.roles.find((r) => r.id === req.user.role_id)?.name || req.user.role_id, perms: req.perms, modules: MODULES, shared_login: req.user.id === "owner",
+    two_step: auth.mfaInfo(req.user.id), two_step_required: twoStepRequired(auth.policy(), req.user), enrol_required: auth.needsEnrol(req.user) }));
   app.post("/api/me/password", (req, res) => {
     if (req.user.id === "owner") return res.status(422).json({ detail: "The team password is set in hPanel (DASHBOARD_PASSWORD). Create your own Owner account in Teams & roles instead." });
     const u = store.db.users.find((x) => x.id === req.user.id);
     if (!checkPassword(String(req.body?.current || ""), u)) return res.status(422).json({ detail: "Your current password is wrong." });
-    const pw = String(req.body?.password || "");
-    if (pw.length < 10) return res.status(422).json({ detail: "Use at least 10 characters." });
-    Object.assign(u, hashPassword(pw)); store.save();
-    res.json({ ok: true });
+    const pw = String(req.body?.password || ""), problem = passwordProblem(pw);
+    if (problem) return res.status(422).json({ detail: problem });
+    // Every other browser of this person is signed out, and any reset link stops working.
+    const ended = auth.setPassword(u, pw, auth.sessionOf(req)?.session || null);
+    store.logAudit({ user_id: u.id, user_name: u.name, method: "POST", path: "/api/me/password", module: "admin", summary: `changed their password (${ended} other session${ended === 1 ? "" : "s"} ended)` });
+    res.json({ ok: true, sessions_ended: ended });
   });
 
   // ---- admin: people, roles, teams, activity
@@ -303,7 +281,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
   const owners = () => store.db.users.filter((u) => u.active && u.role_id === "owner");
   const publicUser = ({ hash, salt, ...u }) => u;
   app.get("/api/admin", (req, res) => res.json({
-    users: store.db.users.map(publicUser), roles: store.db.roles, teams: store.db.teams, modules: MODULES, levels: LEVELS,
+    users: store.db.users.map((u) => ({ ...publicUser(u), two_step: auth.mfaOn(u.id), two_step_required: twoStepRequired(auth.policy(), u), sessions: auth.sessionCount(u.id) })),
+    security: { ...auth.policy(), mail_ready: auth.mailReady(), shared_login_enabled: auth.sharedLoginEnabled(), sessions: auth.activeSessions().length, shared_sessions: auth.sessionCount("owner") }, roles: store.db.roles, teams: store.db.teams, modules: MODULES, levels: LEVELS,
     audit: store.db.audit.slice(-300).reverse(), me: req.user.id,
   }));
   app.post("/api/admin/users", (req, res) => {
@@ -331,7 +310,8 @@ export function createApp({ store, provider: baseProvider, password, crm = new C
     if (b.role_id !== undefined) { if (!store.db.roles.some((r) => r.id === b.role_id)) return res.status(422).json({ detail: "Unknown role" }); u.role_id = b.role_id; }
     if (b.team_ids !== undefined) u.team_ids = (b.team_ids || []).map(String).filter((t) => store.db.teams.some((x) => x.id === t));
     if (b.active !== undefined) u.active = !!b.active;
-    if (b.password) { if (String(b.password).length < 10) return res.status(422).json({ detail: "Use at least 10 characters." }); Object.assign(u, hashPassword(b.password)); }
+    if (b.password) { const problem = passwordProblem(b.password); if (problem) return res.status(422).json({ detail: problem }); auth.setPassword(u, String(b.password)); } // signs them out everywhere
+    if (b.active === false) auth.endSessions(u.id);
     store.save();
     res.json(publicUser(u));
   });

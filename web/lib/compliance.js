@@ -65,6 +65,12 @@ export const REGISTER_STARTER = [
     subjects: "Employees, contractors, advisers with a login.", purpose: "Access control and accountability.",
     legal_basis: "[CONFIRM] Employment / service contract; legitimate interest in security.",
     where: "db.json in DATA_DIR on Hostinger [CONFIRM].", retention: "[CONFIRM] Account removed when the person leaves; activity log keeps the last 2,000 changes.", source: "Added by an Owner or Admin." },
+  { key: "login_security", name: "Login security (sessions, two-step login, reset links)", module: "admin",
+    data: "Per signed-in browser: a hashed session id, the person, sign-in time, expiry, last seen, browser family. Per person with two-step login: the TOTP secret (encrypted with TOKEN_KEY), the last used time step and 10 recovery codes (scrypt hashes). Password reset requests: a SHA-256 of the token, expiry, used time. These are credentials of the account, not extra personal data; the activity log records requests and uses but never a token or code.",
+    subjects: "Employees, contractors, advisers with a login.", purpose: "Secure sign-in: sessions, two-step login, password reset.",
+    legal_basis: "[CONFIRM] Legitimate interest in security / the employment or service contract.",
+    where: "db.json in DATA_DIR on Hostinger [CONFIRM]; copies in encrypted backups. Reset emails go through the SMTP provider.",
+    retention: "Sessions 30 days; reset tokens 30 minutes (admin links 24 hours), history kept 7 days; two-step data until the person turns it off or the account is removed.", source: "Created when the person signs in, enrols or asks for a reset." },
   { key: "sales_deals", name: "Sales deals", module: "sales",
     data: "Store name, contact name, email, phone, notes, AI drafts and activity.",
     subjects: "Prospect and customer contacts.", purpose: "Sales pipeline.",
@@ -285,7 +291,7 @@ export function deleteSubject({ store, crm }, subject) {
 }
 
 // ---- security checks computed from the live server
-export function securityChecks({ env = process.env, password = "", store, crm, backupStatus, now = Date.now(), settings = SETTINGS_DEFAULTS }) {
+export function securityChecks({ env = process.env, password = "", store, crm, backupStatus, now = Date.now(), settings = SETTINGS_DEFAULTS, auth = null }) {
   const users = store.db.users.filter((u) => u.active);
   const owners = users.filter((u) => u.role_id === "owner");
   const inactiveCut = now - settings.inactive_days * DAY;
@@ -308,6 +314,27 @@ export function securityChecks({ env = process.env, password = "", store, crm, b
     c("crm_mode", "Store CRM sending mode", "info", liveWs.length ? `Live in: ${liveWs.join(", ")}. Real messages are sent.` : "Test mode everywhere: nothing is sent for real.", "Switch to Live only after a week in Test mode and with consent for the list."),
     c("https", "PUBLIC_URL uses HTTPS", /^https:\/\//i.test(pub) ? "pass" : pub ? "fail" : "warn", pub ? `PUBLIC_URL is ${pub}.` : "PUBLIC_URL is not set (defaults to https://wizard.dpa.ad for links).", "Set PUBLIC_URL=https://wizard.dpa.ad"),
     c("webhook_secret", "Meta webhook secrets are set", !metaUsed ? "info" : metaMissing.length ? "fail" : "pass", !metaUsed ? "Meta / WhatsApp not connected." : metaMissing.length ? `Missing ${metaMissing.join(" and ")}: webhooks can't be verified.` : "Webhook signatures are checked.", "Copy the App Secret from developers.facebook.com into META_APP_SECRET / WA_APP_SECRET."),
+    ...loginChecks({ auth, users, password }),
+  ];
+}
+
+// ---- login security (auth.js): two-step login for Owners/Admins, the shared team password login, reset email, sessions
+function loginChecks({ auth, users, password }) {
+  if (!auth) return [];
+  const c = (id, title, state, detail, fix = "") => ({ id, title, state, detail, fix });
+  const admins = users.filter((u) => ["owner", "admin"].includes(u.role_id)), on = admins.filter((u) => auth.mfaOn(u.id));
+  const pol = auth.policy(), polName = { nobody: "nobody", admins: "Owner and Admin", all: "everyone with a personal login" }[pol.require] || pol.require;
+  const shared = auth.sharedLoginEnabled(), sessions = auth.activeSessions();
+  const people = new Set(sessions.map((s) => s.user_id)).size, sharedN = sessions.filter((s) => s.user_id === "owner").length;
+  return [
+    c("two_step", "Owners/Admins use two-step login", !admins.length ? "fail" : on.length === admins.length ? "pass" : on.length ? "warn" : "fail",
+      admins.length ? `${on.length} of ${admins.length} personal Owner/Admin login${admins.length > 1 ? "s" : ""} use two-step login${admins.length > on.length ? ` (not yet: ${admins.filter((u) => !auth.mfaOn(u.id)).map((u) => u.name).slice(0, 5).join(", ")})` : ""}. Required for: ${polName}.` : "No personal Owner or Admin login: only the shared team password, which can't use two-step login.",
+      "Each Owner/Admin: My account → Two-step login. Then Teams & roles → Login security → Require two-step login for Owner and Admin."),
+    c("shared_login", "Shared team password login is off", !password ? "info" : shared ? "warn" : "pass",
+      !password ? "DASHBOARD_PASSWORD is not set." : shared ? `Anyone with DASHBOARD_PASSWORD signs in as Owner without a second step${sharedN ? ` (${sharedN} session${sharedN > 1 ? "s" : ""} open)` : ""}.` : "The team password no longer signs in; personal logins only.",
+      "Teams & roles → Login security → Disable the shared team password login (Owner only; needs a personal Owner with two-step login)."),
+    c("reset_email", "Password reset email works", "info", auth.mailReady() ? "SMTP is set up: \"Forgot password?\" emails a reset link (30 minutes, single use)." : "SMTP is not set up: no reset email is sent. An Owner/Admin creates a one-time reset link in Teams & roles.", "Set SMTP_HOST, SMTP_USER, SMTP_PASS and MAIL_FROM in hPanel."),
+    c("sessions", "Signed-in sessions", "info", `${sessions.length} active session${sessions.length === 1 ? "" : "s"} for ${people} login${people === 1 ? "" : "s"}${sharedN ? `, ${sharedN} on the shared team password` : ""}. Sessions last 30 days; a password change or reset ends the person's other sessions.`, "Teams & roles → a person → Sign out everywhere."),
   ];
 }
 

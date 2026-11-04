@@ -39,7 +39,7 @@ export function mountCompliancePublic(app, { status }) {
   app.get("/status.json", (req, res) => { res.setHeader("Cache-Control", "no-cache"); res.setHeader("Access-Control-Allow-Origin", "*"); res.json(status.view()); });
 }
 
-export function mountCompliance(app, { store, crm, provider, workforce, backups, status, password = "", env = process.env }) {
+export function mountCompliance(app, { store, crm, provider, workforce, backups, status, password = "", env = process.env, auth = null }) {
   for (const k of COLLS) store.db[k] ||= [];
   const db = store.db;
   const by = (req) => req.user?.name || "you";
@@ -53,7 +53,7 @@ export function mountCompliance(app, { store, crm, provider, workforce, backups,
   function seed() {
     if (db.compliance_seeded) {
       // Register rows for modules added after the first visit (each once, by key).
-      const late = REGISTER_STARTER.filter((r) => ["meetings_notes"].includes(r.key) && !db.compliance_register.some((x) => x.key === r.key));
+      const late = REGISTER_STARTER.filter((r) => ["meetings_notes", "login_security"].includes(r.key) && !db.compliance_register.some((x) => x.key === r.key));
       if (late.length) { for (const r of late) db.compliance_register.push({ id: store.newId(), created_at: now(), starter: true, notes: "", ...r }); store.save(); }
       return;
     }
@@ -67,7 +67,7 @@ export function mountCompliance(app, { store, crm, provider, workforce, backups,
   const rolesWith = (mod) => db.roles.filter((r) => levelOk(r.perms?.[mod], "view")).map((r) => `${r.name} (${r.perms[mod]})`);
   const opsIncidents = () => db.ops_incidents.map((i) => ({ ...i, workspace: store.getWorkspace(i.workspace_id)?.brief?.company_name || i.workspace_id,
     status_page: db.status_incidents.find((s) => s.ops && s.ops.ws === i.workspace_id && s.ops.id === i.id) || null })).sort((a, b) => b.started_at.localeCompare(a.started_at));
-  const checks = () => securityChecks({ env, password, store, crm, backupStatus: backups.status(), settings: complianceSettings(store) });
+  const checks = () => securityChecks({ env, password, store, crm, backupStatus: backups.status(), settings: complianceSettings(store), auth });
   const reqView = (r) => ({ ...r, ...dsrState(r, complianceSettings(store).dsr_days) });
 
   // View-only roles (Team lead, Viewer) see the work but not the people behind requests or logins.
@@ -81,7 +81,7 @@ export function mountCompliance(app, { store, crm, provider, workforce, backups,
       register: db.compliance_register.map((r) => ({ ...r, access: rolesWith(r.module) })), vendors: db.compliance_vendors,
       policies: db.compliance_policies.map(({ history, ...p }) => ({ ...p, history_count: (history || []).length })),
       requests: db.compliance_requests.map(reqView).map(subj).sort((a, b) => b.created_at.localeCompare(a.created_at)),
-      reviews: [...db.compliance_reviews].sort((a, b) => b.created_at.localeCompare(a.created_at)), access: { quarter: quarterOf(), rows: accessRows(store, Date.now(), s.inactive_days).map((u) => (canEdit ? u : { ...u, email: mask(u.email) })), shared_login: !!password },
+      reviews: [...db.compliance_reviews].sort((a, b) => b.created_at.localeCompare(a.created_at)), access: { quarter: quarterOf(), rows: accessRows(store, Date.now(), s.inactive_days).map((u) => (canEdit ? u : { ...u, email: mask(u.email) })), shared_login: !!password && (auth ? auth.sharedLoginEnabled() : true) },
       incidents: opsIncidents(), status: status.admin(), needs: complianceNeeds({ store, backups }),
       meta: { dsr_types: DSR_TYPES, dsr_status: DSR_STATUS, dpa_status: DPA_STATUS, modules: MODULES, components: COMPONENT_IDS, register_fields: REGISTER_FIELDS },
     });
