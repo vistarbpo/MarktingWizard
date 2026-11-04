@@ -55,13 +55,17 @@ export function mountBillingPublic(app, { store, billing }) {
 const num = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money = (n, cur) => `${cur} ${num(n)}`;
 // The discount reason in Arabic for the printed invoice ("Coupon RAMADAN-20; Account credit SAR 10.00").
-const arReason = (r) => String(r || "").replace(/\bCoupon\b/g, "كوبون").replace(/\bAccount credit\b/g, "رصيد الحساب");
+// Escaped first; Latin codes and amounts are isolated left-to-right inside the Arabic label so they never break apart.
+const arReason = (r) => esc(r).replace(/\bCoupon ([A-Z0-9-]+)/g, "كوبون <bdi dir=\"ltr\" class=\"nw\">$1</bdi>").replace(/\bAccount credit ([A-Z]{3} [\d.,]+)/g, "رصيد الحساب <bdi dir=\"ltr\" class=\"nw\">$1</bdi>");
 const dayBefore = (d) => new Date(Date.parse(d + "T00:00:00Z") - 864e5).toISOString().slice(0, 10);
 export function invoiceHtml(inv, c, w, billing) {
   const s = billing.settings(w), seller = inv.seller || billing.sellerOf(w), buyer = inv.buyer || billing.buyerOf(c);
   const credit = inv.kind === "credit_note", vat = inv.vat_rate > 0;
   const title = credit ? ["إشعار دائن", "Credit note"] : !vat ? ["فاتورة", "Invoice"] : inv.zatca_type === "standard" ? ["فاتورة ضريبية", "Tax invoice"] : ["فاتورة ضريبية مبسطة", "Simplified tax invoice"];
   const usd = inv.currency !== "SAR", t = inv.totals, ts = inv.totals_sar;
+  // With a document discount (coupon, account credit) VAT is worked out on the total after it, so per-line VAT and
+  // totals would not add up: lines then show their net only and the summary carries the discount and VAT.
+  const lineTotals = !(t.discount > 0);
   const addr = (a = {}) => [a.building && a.street ? `${a.building} ${a.street}` : a.street, a.district, a.city, a.postal_code, a.country].filter(Boolean).map(esc).join("، ");
   const row = (ar, en, v) => `<tr><th><span lang="ar">${ar}</span><span>${en}</span></th><td dir="auto">${v}</td></tr>`;
   const qr = inv.zatca?.qr ? qrSvg(inv.zatca.qr, { px: 150, label: "ZATCA QR" }) : "";
@@ -72,10 +76,10 @@ export function invoiceHtml(inv, c, w, billing) {
 h1{font-size:22px;margin:0}h1 span{display:block;font-size:20px}.muted{color:#666}.top{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:flex-start}
 .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0}.box{border:1px solid #e3e3e0;border-radius:8px;padding:12px 14px}.box h3{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#666}
 table{width:100%;border-collapse:collapse}.meta th,.sum th{text-align:start;font-weight:500;color:#555;padding:4px 8px 4px 0;width:46%}.meta td,.sum td{padding:4px 0;text-align:end;font-variant-numeric:tabular-nums}
-th span[lang=ar]{display:block;font-family:Tahoma,Arial,sans-serif}
+th span[lang=ar]{display:block;font-family:Tahoma,Arial,sans-serif;unicode-bidi:plaintext;text-align:left}
 .lines-wrap{overflow-x:auto;margin-top:8px}.lines{font-size:12px}.lines th{background:#f4f4f2;text-align:start;padding:8px 6px;font-weight:600;border-bottom:1px solid #ddd;font-size:11px}.lines td{padding:8px 6px;border-bottom:1px solid #eee;vertical-align:top}.lines td:first-child{min-width:200px}.lines .n{text-align:end;white-space:nowrap;font-variant-numeric:tabular-nums}.lines th.n{white-space:normal}
 .bottom{display:flex;gap:24px;justify-content:space-between;align-items:flex-start;margin-top:20px;flex-wrap:wrap}.sum{max-width:380px;margin-inline-start:auto}.sum tr.total td,.sum tr.total th{font-weight:700;font-size:15px;border-top:2px solid #111;padding-top:8px;color:#111}
-.stamp{display:inline-block;border:2px solid #b00;color:#b00;padding:2px 10px;border-radius:6px;font-weight:700;transform:rotate(-4deg)}.paid{border-color:#0a7a3e;color:#0a7a3e}
+.nw{white-space:nowrap}.stamp{display:inline-block;border:2px solid #b00;color:#b00;padding:2px 10px;border-radius:6px;font-weight:700;transform:rotate(-4deg)}.paid{border-color:#0a7a3e;color:#0a7a3e}
 .actions{max-width:820px;margin:16px auto 0;display:flex;gap:8px;justify-content:flex-end;padding:0 16px}.actions button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer}
 @media (max-width:640px){.page{padding:20px 16px;margin:8px;border-radius:0}.parties{grid-template-columns:1fr}}
 @media print{body{background:#fff}.page{border:0;margin:0;max-width:none;padding:0}.actions{display:none}}
@@ -103,8 +107,8 @@ th span[lang=ar]{display:block;font-family:Tahoma,Arial,sans-serif}
     ${inv.period_start && inv.period_end ? row("فترة الاشتراك", "Period", `${esc(inv.period_start)} → ${esc(dayBefore(inv.period_end))}`) : ""}
     ${row("العملة", "Currency", esc(inv.currency))}
   </table>
-  <div class="lines-wrap"><table class="lines"><thead><tr><th>Description · الوصف</th><th class="n">Qty · الكمية</th><th class="n">Unit price · سعر الوحدة</th><th class="n">Discount · خصم</th><th class="n">Taxable · الخاضع للضريبة</th>${vat ? `<th class="n">VAT ${Math.round(inv.vat_rate * 100)}% · الضريبة</th>` : ""}<th class="n">Total (${esc(inv.currency)}) · الإجمالي</th></tr></thead><tbody>
-    ${inv.lines.map((l) => { const lv = r2(l.net * inv.vat_rate); return `<tr><td dir="auto">${esc(l.description)}</td><td class="n">${l.qty}</td><td class="n">${num(l.unit_price)}</td><td class="n">${l.discount ? num(l.discount) : "–"}</td><td class="n">${num(l.net)}</td>${vat ? `<td class="n">${num(lv)}</td>` : ""}<td class="n">${num(l.net + lv)}</td></tr>`; }).join("")}
+  <div class="lines-wrap"><table class="lines"><thead><tr><th>Description · الوصف</th><th class="n">Qty · الكمية</th><th class="n">Unit price · سعر الوحدة</th><th class="n">Discount · خصم</th><th class="n">${lineTotals ? "Taxable · الخاضع للضريبة" : "Net · الصافي"}</th>${lineTotals && vat ? `<th class="n">VAT ${Math.round(inv.vat_rate * 100)}% · الضريبة</th>` : ""}${lineTotals ? `<th class="n">Total (${esc(inv.currency)}) · الإجمالي</th>` : ""}</tr></thead><tbody>
+    ${inv.lines.map((l) => { const lv = r2(l.net * inv.vat_rate); return `<tr><td dir="auto">${esc(l.description)}</td><td class="n">${l.qty}</td><td class="n">${num(l.unit_price)}</td><td class="n">${l.discount ? num(l.discount) : "–"}</td><td class="n">${num(l.net)}</td>${lineTotals && vat ? `<td class="n">${num(lv)}</td>` : ""}${lineTotals ? `<td class="n">${num(l.net + lv)}</td>` : ""}</tr>`; }).join("")}
   </tbody></table></div>
   <div class="bottom">
     <div style="max-width:340px">${s.bank_details && !credit ? `<div class="box"><h3>Bank transfer · تحويل بنكي</h3><div dir="auto" style="white-space:pre-wrap">${esc(s.bank_details)}</div></div>` : ""}
@@ -112,7 +116,7 @@ th span[lang=ar]{display:block;font-family:Tahoma,Arial,sans-serif}
       ${!vat ? `<p class="muted">Not VAT-registered: no VAT charged · المنشأة غير مسجلة في ضريبة القيمة المضافة</p>` : ""}</div>
     <table class="sum">
       ${row("الإجمالي قبل الخصم", "Subtotal", money(t.subtotal, inv.currency))}
-      ${t.discount ? row(`الخصم${inv.discount_reason ? ` <span dir="auto">(${esc(arReason(inv.discount_reason))})</span>` : ""}`, `Discount${inv.discount_reason ? ` (${esc(inv.discount_reason)})` : ""}`, "− " + money(t.discount, inv.currency)) : ""}
+      ${t.discount ? row(`الخصم${inv.discount_reason ? ` <bdi dir="rtl">(${arReason(inv.discount_reason)})</bdi>` : ""}`, `Discount${inv.discount_reason ? ` (${esc(inv.discount_reason)})` : ""}`, "− " + money(t.discount, inv.currency)) : ""}
       ${row("الإجمالي الخاضع للضريبة", "Total excl. VAT", money(t.taxable, inv.currency))}
       ${vat ? row(`ضريبة القيمة المضافة ${Math.round(inv.vat_rate * 100)}%`, `VAT ${Math.round(inv.vat_rate * 100)}%`, money(t.vat, inv.currency)) : ""}
       <tr class="total"><th><span lang="ar">الإجمالي شامل الضريبة</span><span>Total${vat ? " incl. VAT" : ""}</span></th><td>${money(t.total, inv.currency)}</td></tr>

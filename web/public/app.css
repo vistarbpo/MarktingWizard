@@ -1260,7 +1260,9 @@ textarea.pt-dbody { width: 100%; height: auto; min-height: 220px; font-size: var
 .pt-chk { align-self: end; }
 /* Coupons (Partners → Coupons, Billing customer drawer) */
 .pt-cp-code, .bl-cp-code { text-transform: uppercase; }
-.pt-cp-table { min-width: 760px; }
+.pt-cp-table { min-width: 820px; }
+.pt-cp-table code { white-space: nowrap; }
+.pt-cp-table td:nth-child(3) { min-width: 180px; }
 .c-kv.bl-cp-kv { grid-template-columns: minmax(0, 1fr) auto; max-width: 420px; }
 @media (min-width: 1200px) { .pt-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
 @media (max-width: 760px) {

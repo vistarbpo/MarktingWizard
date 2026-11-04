@@ -7454,7 +7454,7 @@ test("coupons on invoices: percent for N months with VAT and the ZATCA QR total,
     assert.ok(!k.st.db.finance_expenses.some((x) => /coupon/i.test(`${x.vendor} ${x.note} ${x.source}`)), "a discount is not an expense");
     // The printable invoice shows the coupon in English and Arabic; the invoice list carries the reason.
     const html = (await k.j(`${k.W}/billing/invoices/${a1.id}/print`)).body;
-    assert.match(html, /Discount \(Coupon P20-M3\)/); assert.match(html, /الخصم <span dir="auto">\(كوبون P20-M3\)<\/span>/);
+    assert.match(html, /Discount \(Coupon P20-M3\)/); assert.match(html, /الخصم <bdi dir="rtl">\(كوبون <bdi dir="ltr" class="nw">P20-M3<\/bdi>\)<\/bdi>/);
     assert.ok((await k.j(`${k.W}/billing/invoices`)).body.some((i) => i.id === a1.id && i.discount_reason === "Coupon P20-M3"));
     assert.match((await k.j(`${k.W}/billing/invoices/${a1.id}/xml`)).body, /<cbc:AllowanceChargeReason>Coupon P20-M3<\/cbc:AllowanceChargeReason>/);
   } finally { k.done(); }
