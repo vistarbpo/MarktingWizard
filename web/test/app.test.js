@@ -7957,3 +7957,73 @@ test("login security: without SMTP no email is sent, an admin's one-time reset l
     assert.equal((await k.j(`mwiz=${legacy}`, "/api/me")).status, 401);
   } finally { k.done(); }
 });
+
+test("page guides: every route has a complete guide with valid actors, related pages and doc files", async () => {
+  const vm = await import("node:vm");
+  const pub = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "public");
+  const docs = path.join(pub, "..", "..", "docs");
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(pub, "guides.js"), "utf8") + "\n;this.G = GUIDES;", ctx);
+  const G = ctx.G;
+  // ROUTE_MODULE and NAV straight from app.js, so a new page without a guide fails here.
+  const appJs = fs.readFileSync(path.join(pub, "app.js"), "utf8");
+  const lit = (name) => vm.runInNewContext("(" + appJs.match(new RegExp(`const ${name} = ([\\s\\S]*?);\\n`))[1] + ")");
+  const routes = Object.keys(lit("ROUTE_MODULE")), NAV = lit("NAV");
+  assert.ok(routes.length >= 30);
+  assert.deepEqual(Object.keys(G).filter((r) => !routes.includes(r)), [], "guides for routes that don't exist");
+  for (const r of routes) {
+    const g = G[r];
+    assert.ok(g, `no guide for route ${r}`);
+    assert.ok(typeof g.what === "string" && g.what.length > 20 && g.what.length < 400, `${r}: what`);
+    assert.ok(g.flow.length >= 3 && g.flow.length <= 6, `${r}: 3-6 flow steps`);
+    for (const s of g.flow) {
+      assert.ok(["ai", "person", "system"].includes(s.actor), `${r}: actor ${s.actor}`);
+      assert.ok(s.label && s.label.length <= 60, `${r}: step label "${s.label}"`);
+    }
+    assert.ok(g.tasks.length >= 2 && g.tasks.length <= 5, `${r}: 2-5 tasks`);
+    for (const t of g.tasks) assert.ok(t.title && t.steps.length >= 1 && t.steps.every((x) => typeof x === "string" && x), `${r}: task ${t.title}`);
+    assert.ok(g.rules.length >= 2 && g.rules.length <= 4, `${r}: 2-4 rules`);
+    assert.ok(Array.isArray(g.docs) && Array.isArray(g.related) && g.related.length, `${r}: docs and related`);
+    for (const d of g.docs) { assert.match(d, /^docs\/[\w.-]+\.md$/, `${r}: ${d}`); assert.ok(fs.existsSync(path.join(docs, d.slice(5))), `${r}: ${d} is missing`); }
+    for (const x of g.related) { assert.ok(routes.includes(x), `${r}: related ${x}`); assert.notEqual(x, r, `${r} links to itself`); }
+  }
+  // Home explains the whole system: one line for every menu group.
+  const keys = G.command.map.map((m) => m.key);
+  for (const n of NAV.filter((n) => n.group)) assert.ok(keys.includes(n.group), `Home map misses ${n.group}`);
+  for (const k of keys) assert.ok(NAV.some((n) => n.group === k || n.route === k), `Home map key ${k}`);
+  // Plain text only: guide-ui.js escapes and lays it out.
+  assert.doesNotMatch(JSON.stringify(G), /<[a-z]/i);
+  // index.html loads the guide scripts before app.js, and the button and dialog are there.
+  const html = fs.readFileSync(path.join(pub, "index.html"), "utf8");
+  assert.ok(html.indexOf("/guides.js") > 0 && html.indexOf("/guides.js") < html.indexOf("/app.js") && html.indexOf("/guide-ui.js") < html.indexOf("/app.js"));
+  assert.match(html, /id="guideBtn"[^>]*aria-label=/); assert.match(html, /<dialog id="guideDlg"/);
+  assert.match(appJs, /gdSync\(\)/);
+  // Every block in app.css is closed (braces balance), including the guide's @media blocks.
+  const css = fs.readFileSync(path.join(pub, "app.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.equal((css.match(/{/g) || []).length, (css.match(/}/g) || []).length);
+});
+
+test("GET /api/guide/meta: needs a login, returns role defaults and agents, levels only with Workforce view, no secrets", async () => {
+  const { DEFAULT_ROLES, MODULE_IDS } = await import("../lib/access.js");
+  const { AGENTS } = await import("../lib/agents.js");
+  assert.equal((await fetch(base + "/api/guide/meta")).status, 401);
+  const m = await json("/api/guide/meta");
+  assert.deepEqual(m.roles.map((r) => r.id), DEFAULT_ROLES.map((r) => r.id));
+  for (const mod of MODULE_IDS) for (const r of DEFAULT_ROLES) assert.equal(m.defaults[mod][r.id], r.perms[mod], `${mod}/${r.id}`);
+  assert.equal(m.defaults.investors.admin, "view"); assert.equal(m.defaults.investors.member, "none");
+  assert.equal(m.agents.length, AGENTS.length);
+  assert.ok(m.agents.every((a) => a.name && a.route && Number.isInteger(a.level)), "the Owner sees levels");
+  assert.ok(m.levels.length >= 4);
+  const text = JSON.stringify(m).toLowerCase();
+  for (const bad of ["hash", "salt", "password", "budget", "token", "secret", "email", "owner_id"]) assert.ok(!text.includes(`"${bad}`), `leaks ${bad}`);
+  // A Finance login has no AI Workforce view: names only, no levels.
+  const u = await (await post("/api/admin/users", { name: "Guide Finance", email: "guide-fin@dpa.ad", password: "guide-fin-pass-1", role_id: "finance" })).json();
+  assert.ok(u.id);
+  const fc = (await fetch(base + "/login", { method: "POST", redirect: "manual", body: new URLSearchParams({ email: "guide-fin@dpa.ad", password: "guide-fin-pass-1" }) })).headers.get("set-cookie").split(";")[0];
+  const fm = await (await fetch(base + "/api/guide/meta", { headers: { cookie: fc } })).json();
+  assert.equal(fm.levels, null);
+  assert.ok(fm.agents.length === AGENTS.length && fm.agents.every((a) => a.level === undefined && a.name));
+  // Every page an agent works on has a guide.
+  const guides = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", "public", "guides.js"), "utf8");
+  for (const r of new Set(AGENTS.map((a) => a.route))) assert.match(guides, new RegExp(`\\n  ${r}: \\{`), `no guide for agent page ${r}`);
+});

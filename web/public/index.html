@@ -46,7 +46,7 @@
       </button>
       <div class="topbar-title">
         <div class="eyebrow" id="crumb"></div>
-        <h1 id="pageTitle"></h1>
+        <div class="gd-titlerow"><h1 id="pageTitle"></h1><button type="button" class="gd-btn" id="guideBtn" aria-label="About this page" title="How this works" aria-haspopup="dialog" hidden><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 9v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="5.75" r="1.25" fill="currentColor"/></svg></button></div>
       </div>
       <div class="row gap-8 page-actions" id="pageActions"></div>
     </header>
@@ -57,7 +57,10 @@
 <div class="nav-scrim" id="navScrim" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <dialog id="dialog" class="dialog"></dialog>
+<dialog id="guideDlg" class="gd-dlg" aria-labelledby="gdTitle"></dialog>
 <script src="/vendor/marked.js"></script>
+<script src="/guides.js"></script>
+<script src="/guide-ui.js"></script>
 <script src="/app.js"></script>
 <script src="/sales.js"></script>
 <script src="/hr.js"></script>
