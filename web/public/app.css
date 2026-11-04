@@ -1258,6 +1258,10 @@ textarea.pt-dbody { width: 100%; height: auto; min-height: 220px; font-size: var
 .pt-hit { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); padding: 6px 8px; cursor: pointer; font: inherit; color: inherit; }
 .pt-hit:hover { border-color: var(--accent); }
 .pt-chk { align-self: end; }
+/* Coupons (Partners → Coupons, Billing customer drawer) */
+.pt-cp-code, .bl-cp-code { text-transform: uppercase; }
+.pt-cp-table { min-width: 760px; }
+.c-kv.bl-cp-kv { grid-template-columns: minmax(0, 1fr) auto; max-width: 420px; }
 @media (min-width: 1200px) { .pt-board { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; } }
 @media (max-width: 760px) {
   .pt-form { grid-template-columns: minmax(0, 1fr); }

@@ -149,11 +149,12 @@ async function blOpen(id) {
       ${c.status === "cancelled" || c.cancel_at_period_end ? act("reactivate", c.cancel_at_period_end ? "Keep subscription" : "Reactivate") : act("cancel", "Cancel at period end")}
       ${c.status !== "cancelled" && !c.cancel_at_period_end ? act("cancel-now", "Cancel now", "btn-sm btn-ghost btn-danger") : ""}
       ${act("new-invoice", "New invoice")}</div></div>` : ""}
+  ${blCouponCard(c, d.coupon, ed)}
   <div class="card card-pad stack"><div class="row between"><h3>Usage ${esc(um.month)}</h3><span class="subtle s-small">${um.limit ? `${um.limit.toLocaleString("en-US")} renders included` : "no render limit on this plan"}</span></div>
     <p class="s-small"><b class="num">${um.renders.toLocaleString("en-US")}</b> renders${um.extra ? ` · <b style="color:var(--warn)">${um.extra.toLocaleString("en-US")} over the limit</b>: ${um.blocks} × 1,000 at $${um.rate_usd} = $${um.amount_usd} on the next invoice` : ""}</p>
     ${ed ? `<form class="row gap-8" id="blUsage"><input class="input input-sm" id="blRenders" type="number" min="0" step="1" placeholder="Renders this month" style="flex:1" aria-label="Renders this month"><button class="btn btn-sm" type="submit">Save usage</button></form>` : ""}
     <p class="subtle s-small">The DPA AD product can post this to <span class="mono">/hooks/billing/usage</span> (Bearer BILLING_USAGE_TOKEN) instead.</p></div>
-  <div class="card card-pad stack"><h3>Invoices</h3>${d.invoices.length ? `<div class="table-wrap"><table class="f-table"><tbody>${d.invoices.map((i) => `<tr><td class="num"><a href="${blP()}/invoices/${esc(i.id)}/print" target="_blank" rel="noopener">${esc(i.number || "Draft")}</a>${i.kind === "credit_note" ? ' <span class="badge">credit</span>' : ""}</td><td class="num">${esc(i.issue_date || "–")}</td><td class="num">${blMoney(i.totals.total, i.currency)}</td><td>${blBadge(i.status)}${i.dunning?.overdue ? ` <span class="badge bad">${i.dunning.days_overdue}d late</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted s-small">No invoices yet.</p>`}</div>
+  <div class="card card-pad stack"><h3>Invoices</h3>${d.invoices.length ? `<div class="table-wrap"><table class="f-table"><tbody>${d.invoices.map((i) => `<tr><td class="num"><a href="${blP()}/invoices/${esc(i.id)}/print" target="_blank" rel="noopener">${esc(i.number || "Draft")}</a>${i.kind === "credit_note" ? ' <span class="badge">credit</span>' : ""}</td><td class="num">${esc(i.issue_date || "–")}</td><td class="num">${blMoney(i.totals.total, i.currency)}${i.coupon ? `<div class="subtle s-small">Coupon ${esc(i.coupon.code)}</div>` : ""}</td><td>${blBadge(i.status)}${i.dunning?.overdue ? ` <span class="badge bad">${i.dunning.days_overdue}d late</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted s-small">No invoices yet.</p>`}</div>
   <div class="card card-pad stack"><h3>Payments</h3>${d.payments.length ? `<ul class="s-timeline">${d.payments.map((p) => `<li><span class="s-small grow">${blMoney(p.amount, p.currency)} · ${esc(p.method.replace(/_/g, " "))}${p.reference ? " · " + esc(p.reference) : ""}${p.status === "failed" ? ` · <b style="color:var(--bad)">failed</b> ${esc(p.note)}` : ""}</span><span class="subtle s-small num">${esc(p.date)}</span></li>`).join("")}</ul>` : `<p class="muted s-small">No payments yet.</p>`}</div>
   <div class="card card-pad stack"><h3>Support tickets</h3>${d.tickets.length ? `<ul class="s-timeline">${d.tickets.map((t) => `<li><span class="s-small grow"><a href="#/${S.ws.id}/support">${esc(t.channel)} · ${esc(t.category || "")}</a> ${blBadge(t.status === "solved" ? "paid" : "issued", t.status)}<div class="subtle" dir="auto">${esc(t.last)}</div></span><span class="subtle s-small num">${fmtDate(t.updated_at)}</span></li>`).join("")}</ul>` : `<p class="muted s-small">No tickets matched by email or domain.</p>`}</div>
   <div class="card card-pad stack"><h3>Onboarding</h3>${d.onboarding ? `<ul class="bl-onb">${d.onboarding.steps.map((s) => `<li class="${d.onboarding.done[s.id] ? "on" : ""}"><span aria-hidden="true">${d.onboarding.done[s.id] ? "✓" : "○"}</span> ${esc(s.name)}</li>`).join("")}</ul><a class="s-small" href="#/${S.ws.id}/crm">Tick steps in the Store CRM</a>` : `<p class="muted s-small">Not linked to a Store CRM store, so the onboarding checklist isn't available.</p>`}</div>
@@ -173,6 +174,29 @@ async function blOpen(id) {
   if (typeof sxBillingHook === "function") sxBillingHook(c.id); // Customer success: trend, open alerts, last NPS
 }
 
+// Coupon on the customer: what it gives, how much it has given, the next invoice with it; apply (with a preview) or remove.
+function blCouponPrev(p) {
+  if (!p) return "";
+  return `<div class="c-kv s-small bl-cp-kv"><span>Next invoice${p.next_date ? ` (${esc(p.next_date)})` : ""}</span><span class="num">${blMoney(p.base, p.currency)}</span><span>Coupon discount</span><span class="num">− ${blMoney(p.discount, p.currency)}</span>
+    <span>Taxable</span><span class="num">${blMoney(p.taxable, p.currency)}</span>${p.vat_rate ? `<span>VAT ${Math.round(p.vat_rate * 100)}%</span><span class="num">${blMoney(p.vat, p.currency)}</span>` : ""}<span><b>Total</b></span><span class="num"><b>${blMoney(p.total, p.currency)}</b></span></div>
+    ${p.credit_note ? `<p class="subtle s-small">${esc(p.credit_note)}</p>` : ""}`;
+}
+function blCouponCard(c, cp, ed) {
+  if (cp) {
+    const tone = { active: "good", ended: "", stopped: "", removed: "" }[cp.status] || "";
+    return `<div class="card card-pad stack bl-cp"><div class="row between gap-8" style="flex-wrap:wrap"><h3>Coupon</h3>${blBadge(tone === "good" ? "active" : "draft", cp.status)}</div>
+      <p class="s-small"><b class="mono">${esc(cp.code)}</b> · ${esc(cp.terms_text)}${cp.partner ? ` · partner <span dir="auto">${esc(cp.partner)}</span>` : " · company coupon"}</p>
+      <p class="subtle s-small">Redeemed ${esc(cp.redeemed_day || "")} (${esc(cp.source)}) · ${cp.invoices} discounted invoice${cp.invoices === 1 ? "" : "s"} · ${blMoney(cp.discount_sar, "SAR")} given so far · MRR ${blMoney(cp.mrr_list_sar, "SAR")} at list price, ${blMoney(cp.mrr_paid_sar, "SAR")} paid</p>
+      ${cp.preview ? blCouponPrev(cp.preview) : ""}
+      ${ed && cp.status === "active" ? `<div><button class="btn btn-sm btn-ghost btn-danger" data-bl="coupon-remove" data-id="${esc(c.id)}">${cp.first_invoice_done ? "Stop future discounts" : "Remove coupon"}</button></div>
+        <p class="subtle s-small">${cp.first_invoice_done ? "Issued invoices keep their discount; only future invoices change." : "No discounted invoice is issued yet, so the coupon is removed as if it was never applied."} One coupon per customer: coupons don't stack.</p>` : ""}</div>`;
+  }
+  if (!ed) return "";
+  return `<div class="card card-pad stack bl-cp"><h3>Coupon</h3>
+    <form class="row gap-8" id="blCpForm" style="flex-wrap:wrap"><input class="input input-sm bl-cp-code" id="blCpCode" maxlength="20" placeholder="Coupon code, e.g. NAJD-10" aria-label="Coupon code" style="flex:1;min-width:160px"><button class="btn btn-sm" type="button" data-bl="coupon-preview" data-id="${esc(c.id)}">Preview</button><button class="btn btn-sm btn-primary" type="submit">Apply coupon</button></form>
+    <div id="blCpPrev"></div><p class="subtle s-small">The coupon becomes the document discount ("Coupon CODE") on subscription invoices; VAT is on the amount after it. Overage is never discounted. A partner's coupon attributes this customer to the partner.</p></div>`;
+}
+
 /* ------------------------------------------------ Invoices */
 async function blInvoices() {
   $("#blBody").innerHTML = `<p class="muted">Loading…</p>`;
@@ -185,7 +209,7 @@ async function blInvoices() {
     ${list.length ? `<section class="card"><div class="table-wrap"><table class="f-table bl-table"><thead><tr><th>Number</th><th>Customer</th><th>Issued</th><th>Due</th><th class="num">Total</th><th class="num">Due now</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map((i) => `<tr><td class="num"><a href="${blP()}/invoices/${esc(i.id)}/print" target="_blank" rel="noopener">${esc(i.number || "Draft")}</a>${i.kind === "credit_note" ? `<div class="subtle s-small">credit for ${esc(i.credit_of_number)}</div>` : ""}${i.zatca ? `<div class="subtle s-small">${i.zatca_type === "standard" ? "B2B" : "B2C"} · ICV ${i.zatca.icv}</div>` : ""}</td>
         <td dir="auto">${esc(i.customer)}</td><td class="num">${esc(i.issue_date || "–")}</td><td class="num">${esc(i.kind === "invoice" ? i.due_date || "–" : "–")}</td>
-        <td class="num">${blMoney(i.totals.total, i.currency)}${i.totals.vat ? `<div class="subtle s-small">VAT ${blMoney(i.totals.vat, i.currency)}</div>` : ""}</td>
+        <td class="num">${blMoney(i.totals.total, i.currency)}${i.totals.vat ? `<div class="subtle s-small">VAT ${blMoney(i.totals.vat, i.currency)}</div>` : ""}${i.totals.discount ? `<div class="subtle s-small" dir="auto">− ${blMoney(i.totals.discount, i.currency)}${i.discount_reason ? ` · ${esc(i.discount_reason)}` : ""}</div>` : ""}</td>
         <td class="num">${i.kind === "invoice" && i.status === "issued" ? `<b>${blMoney(i.due, i.currency)}</b>` : "–"}</td>
         <td>${blBadge(i.status)}${i.dunning?.overdue ? ` <span class="badge bad">${i.dunning.days_overdue}d late</span>` : ""}${i.void_reason ? `<div class="subtle s-small" dir="auto">${esc(i.void_reason)}</div>` : ""}</td>
         <td class="bl-acts">${ed ? [
@@ -290,9 +314,10 @@ function blNewCustomer() {
       <div class="field"><label for="bn-start_date">Start date</label><input class="input" id="bn-start_date" type="date" value="${today}"></div>
       <div class="field"><label for="bn-trial_end">Trial ends</label><input class="input" id="bn-trial_end" type="date"></div>
       <div class="field"><label for="bn-vat_number">Buyer VAT number (B2B)</label><input class="input" id="bn-vat_number" inputmode="numeric" maxlength="15"></div>
+      <div class="field"><label for="bn-coupon">Coupon code (optional)</label><input class="input bl-cp-code" id="bn-coupon" maxlength="20" placeholder="e.g. NAJD-10"><span class="hint">Checked before the customer is created; discounts the first invoice on.</span></div>
     </div>
     <label class="row gap-8 s-small"><input type="checkbox" id="bn-already"> The current period is already paid outside the dashboard (start invoicing from the next renewal)</label>`, "Create customer", async () => {
-    const body = Object.fromEntries(["store_name", "domain", "platform", "owner_name", "owner_email", "plan", "cycle", "currency", "status", "start_date", "trial_end", "vat_number"].map((k) => [k, $("#bn-" + k).value]).filter(([, v]) => v !== ""));
+    const body = Object.fromEntries(["store_name", "domain", "platform", "owner_name", "owner_email", "plan", "cycle", "currency", "status", "start_date", "trial_end", "vat_number", "coupon"].map((k) => [k, $("#bn-" + k).value]).filter(([, v]) => v !== ""));
     body.already_billed = $("#bn-already").checked;
     const c = await api(`${blP()}/customers`, { method: "POST", body: JSON.stringify(body) });
     toast("Customer created"); BL.tab = "customers"; await renderBilling($("#view")); blOpen(c.id);
@@ -328,6 +353,19 @@ async function blAction(a, id, btn) {
         ${p.direction === "trial" ? "" : `<div class="c-kv s-small"><span>Days left</span><span class="num">${p.remaining_days} of ${p.total_days}</span><span>Credit (unused ${esc(p.from)})</span><span class="num">${blMoney(p.credit, p.currency)}</span><span>Charge (${esc(p.to)})</span><span class="num">${blMoney(p.charge, p.currency)}</span><span>Net</span><span class="num"><b>${blMoney(p.net, p.currency)}</b> + VAT</span></div>`}
         <p class="s-small">${esc(p.explain)}</p>${p.from === p.to && !custom ? `<p class="subtle s-small">Pick a different plan to change it.</p>` : `<div><button class="btn btn-primary btn-sm" data-bl="plan-confirm" data-id="${esc(id)}" data-plan="${esc(plan)}" data-custom="${esc(custom)}">Confirm change</button></div>`}</div>`;
       return;
+    }
+    case "coupon-preview": {
+      const code = $("#blCpCode").value.trim();
+      if (!code) return toast("Type a coupon code", true);
+      const r = await api(`${P}/customers/${id}/coupon/preview?code=${encodeURIComponent(code)}`);
+      $("#blCpPrev").innerHTML = r.ok ? `<div class="card card-pad stack bl-prorate"><span class="eyebrow">${esc(r.code)} · ${esc(r.terms)}${r.partner ? ` · <span dir="auto">${esc(r.partner)}</span>` : ""}</span>${blCouponPrev(r.preview)}</div>`
+        : `<p class="s-small" style="color:var(--bad)">${esc(r.reason)} <span dir="rtl" lang="ar">${esc(r.reason_ar)}</span></p>`;
+      return;
+    }
+    case "coupon-remove": {
+      if (!confirm("Remove the coupon from this customer? Issued invoices keep their discount.")) return;
+      const r = await api(`${P}/customers/${id}/coupon`, { method: "DELETE", body: "{}" });
+      toast(r.status === "removed" ? "Coupon removed" : "Coupon stopped: no more discounts"); return blReload();
     }
     case "plan-confirm": {
       const r = await post(`/customers/${id}/plan`, { plan: btn.dataset.plan, custom_price_usd: btn.dataset.custom ? Number(btn.dataset.custom) : null, confirm: true });
@@ -393,7 +431,8 @@ async function blFrom(spec) {
   const [kind, id] = spec.split(":");
   try {
     const c = await api(`/api/workspaces/${S.ws.id}/billing/customers/from-${kind === "deal" ? "deal" : "crm"}/${encodeURIComponent(id)}`, { method: "POST", body: "{}" });
-    toast(`Customer created: ${c.store_name} (${c.plan}, ${c.status})`);
+    toast(`Customer created: ${c.store_name} (${c.plan}, ${c.status})${c.coupon ? ` · coupon ${c.coupon.code}` : ""}`);
+    if (c.coupon_note) toast(c.coupon_note, true);
     if (S.route === "billing") { await blReload(); blOpen(c.id); } else { BL.tab = "customers"; go("billing"); setTimeout(() => blOpen(c.id), 400); }
   } catch (e) { toast(e.message, true); }
 }
@@ -446,6 +485,12 @@ document.addEventListener("submit", async (e) => {
       body.cycle = $("#bld-cycle").value;
       await api(`${blP()}/customers/${BL.openId}`, { method: "PUT", body: JSON.stringify(body) });
       toast("Saved"); return blReload();
+    }
+    if (f.id === "blCpForm") {
+      e.preventDefault();
+      const code = $("#blCpCode").value.trim(); if (!code) return toast("Type a coupon code", true);
+      await api(`${blP()}/customers/${BL.openId}/coupon`, { method: "POST", body: JSON.stringify({ code }) });
+      toast(`Coupon ${code.toUpperCase()} applied`); return blReload();
     }
     if (f.id === "blUsage") { e.preventDefault(); await api(`${blP()}/customers/${BL.openId}/usage`, { method: "POST", body: JSON.stringify({ renders: Number($("#blRenders").value) }) }); toast("Usage saved"); return blReload(); }
     if (f.id === "blNote") { e.preventDefault(); const text = $("#blNoteText").value.trim(); if (!text) return; await api(`${blP()}/customers/${BL.openId}/notes`, { method: "POST", body: JSON.stringify({ text }) }); return blOpen(BL.openId); }
